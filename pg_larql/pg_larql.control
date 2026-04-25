@@ -1,0 +1,5 @@
+comment = 'Query transformer model weights as SQL relations'
+default_version = '0.1.0'
+module_pathname = '$libdir/pg_larql'
+relocatable = false
+superuser = true

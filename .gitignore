@@ -1,0 +1,51 @@
+# Rust
+/target/
+pg_larql/target/
+Cargo.lock
+
+# pgrx
+.pgrx/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+*.so
+*.dylib
+*.dll
+*.o
+*.a
+
+# External dependencies (tracked as submodules or externally)
+_/
+
+# Vindex data (large binaries)
+vindexes/
+
+# User profile files (not project files)
+.bash_profile
+.bashrc
+.zshrc
+.zprofile
+.profile
+.gitconfig
+.ripgreprc
+.mcp.json
+
+# Empty marker files
+HEAD
+config
+hooks
+objects
+refs
+
+# Claude Code
+.claude/
