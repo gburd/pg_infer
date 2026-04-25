@@ -1,6 +1,6 @@
 use pgrx::prelude::*;
 
-use crate::error::PgLarqlError;
+use crate::error::PgInferError;
 use crate::registry;
 
 /// Test whether the model's knowledge supports a directional relationship
@@ -32,16 +32,17 @@ fn implies_impl(
     handle: &registry::ModelHandle,
     subject: &str,
     object: &str,
-) -> Result<bool, PgLarqlError> {
+) -> Result<bool, PgInferError> {
     let object_lower = object.to_lowercase();
-    let threshold = 10.0_f64;
 
-    // Reuse the describe implementation to get edges for the subject.
-    let edges = crate::fn_describe::describe_impl(handle, subject)?;
+    // Reuse the describe implementation with adaptive thresholding.
+    // Pass None so describe_impl uses its own adaptive/GUC threshold.
+    let edges = crate::fn_describe::describe_impl(handle, subject, None)?;
 
-    // Check if any target matches the object.
-    for (_relation, target, confidence, _layer) in &edges {
-        if confidence >= &threshold && target.to_lowercase() == object_lower {
+    // Check if any target matches the object.  Since describe_impl already
+    // filtered by the adaptive threshold, any match is considered implied.
+    for (_relation, target, _confidence, _layer) in &edges {
+        if target.to_lowercase() == object_lower {
             return Ok(true);
         }
     }

@@ -1,10 +1,12 @@
-# pg_larql: Commit & Next Steps
+# VINDEX: Vector Index for Neural Network Knowledge
 
-## What a Vindex Is (and Isn't)
+## What a Vindex Is
 
-A **vindex** (vector index) is an **index over a neural network's internal representations**, analogous to a B-tree index over table rows. It is NOT a compression or summarization of the model — it is a reorganization of specific internal structures into a format optimized for direct lookup queries.
+A **vindex** (vector index) is an index over a neural network's internal representations — specifically the Sparse Autoencoder (SAE) feature decomposition of each transformer layer. It is analogous to a B-tree index over table rows: where a B-tree reorganizes column values for efficient lookup, a vindex reorganizes gate vectors for efficient KNN queries against model knowledge.
 
-### The database-index analogy
+A vindex is NOT a compression or summarization of the model. It is a reorganization of specific internal structures into a format optimized for direct lookup queries.
+
+### The Database-Index Analogy
 
 | Concept | B-tree Index | Vindex |
 |---------|-------------|--------|
@@ -15,161 +17,136 @@ A **vindex** (vector index) is an **index over a neural network's internal repre
 | **What it enables** | Fast WHERE/ORDER BY on indexed columns | Fast "what does this model know about X?" queries |
 | **What it can't do** | Full table scan without heap access | Run inference (generate text) without the full model weights |
 
-### What's in a vindex directory
+## Directory Structure (File-Based Vindex)
 
-At **browse level** (what we extracted for Qwen 0.5B, 480MB):
+At **browse level** (Qwen 0.5B example, ~480MB total):
 
 ```
 qwen05b.vindex/
-├── gate_vectors.bin   (200MB)  — The index keys. One vector per SAE feature per layer.
-│                                 gate_knn() multiplies input embedding × these vectors
-│                                 to find top-K activated features. This IS the index.
+├── gate_vectors.bin   (200MB)  — Index keys. One f16 vector per SAE feature per layer.
+│                                 gate_knn() multiplies input × these vectors → top-K features.
 ├── embeddings.bin     (260MB)  — Token embeddings from the model's embedding layer.
-│                                 Needed to convert text → vector for queries.
+│                                 Converts text → vector for queries.
 ├── down_meta.bin      (9.8MB)  — Per-feature metadata: which output tokens each feature
 │                                 maps to. The "leaf data" of the index.
 ├── tokenizer.json     (11MB)   — Tokenizer for text ↔ token ID conversion.
-└── index.json         (3.8KB)  — Config: layer count, hidden size, vocab size, quant format.
+└── index.json         (3.8KB)  — Config: num_layers, hidden_size, vocab_size, quant format.
 ```
 
-At **inference level**: adds attention weights and FFN weights — enough to run a forward pass. This is a "covering index" (answers queries without touching the original model).
+## Extract Levels
 
-At **all level**: the full model is reconstructable. This is a "materialized view."
+| Level | Contents | Enables | Size (Qwen 0.5B) |
+|-------|----------|---------|-------------------|
+| **browse** | SAE gate vectors + embeddings + down metadata + tokenizer | walk(), describe(), similar_to(), implies() | ~480 MB |
+| **inference** | Browse + FFN weights + attention weights | All browse ops + infer() (forward pass) | ~1.5 GB |
+| **all** | Full model reconstructable | Everything, including fine-tuning | ~2+ GB |
 
-### Why vindexes exist
+Browse is the "index-only scan" — you can query what the model knows without the full model. Inference is the "covering index" — answers queries without the original. All is the "materialized view."
+
+## Why Vindexes Exist
 
 A raw transformer model is a giant tensor of floats. To find "what does this model know about France?", you'd need to either:
 1. Run inference many times with different prompts (slow, indirect, non-deterministic)
 2. Manually inspect billions of parameters (impossible)
 
-LARQL's insight: transformer models learn **sparse features** during training. A Sparse Autoencoder (SAE) can decompose each layer's residual stream into a dictionary of discrete features, each with a gate vector (how to detect it) and a down vector (what output tokens it produces). The vindex reorganizes these gate vectors into a structure where `gate_knn()` can answer "which features activate for this input?" via a single matrix-vector multiply (~0.3ms per layer).
+LARQL's insight: transformer models learn **sparse features** during training. A Sparse Autoencoder (SAE) decomposes each layer's residual stream into a dictionary of discrete features, each with:
+- A **gate vector** (how to detect if this feature activates for a given input)
+- A **down vector** (what output tokens this feature produces)
 
-This is genuinely an index: it trades space (extracting and storing gate vectors separately) for query speed (direct KNN lookup instead of running the full model).
+The vindex reorganizes gate vectors into a structure where `gate_knn()` can answer "which features activate for this input?" via a single matrix-vector multiply (~0.3ms per layer). This is the core index operation.
 
-### What's lost at browse level
+## PostgreSQL Page-Based Binary Format
 
-Browse-level vindexes contain the SAE feature decomposition but NOT the original FFN/attention weights. You can query _what the model knows_ (which features activate, what tokens they map to) but you cannot _run the model_ (generate text, compute exact probabilities). The relationship is like having a full-text index without the original documents — you can search efficiently, but you can't retrieve the original text.
+When stored as a PostgreSQL index via `CREATE INDEX ... USING infer`, vindex data is reorganized into standard 8KB PostgreSQL pages. This enables WAL logging, buffer management, and crash recovery.
 
----
+### Page Layout
 
-## Project Goal Assessment
+Every page has a standard 24-byte `PageHeader` and a 16-byte special section (`InferPageOpaque`) at the tail:
 
-> "The goal of this project is to make models *feel like indexes* and allow them to be used in a wide variety of queries — have we done that?"
+```
+[PageHeader 24B] [... usable data 8152B ...] [InferPageOpaque 16B]
+```
 
-### What works (the index-like parts)
+Usable data per page: 8192 - 24 (header) - 16 (opaque) = **8,152 bytes**.
 
-The SQL interface is genuinely index-like. All these work today with the Qwen 0.5B vindex:
+### InferPageOpaque (16 bytes, at pd_special)
+
+```rust
+#[repr(C)]
+struct InferPageOpaque {
+    page_type: u8,       // META=1, LAYER_DIR=2, GATE=3, EMBED=4, DOWN_META=5, BLOB=6
+    flags: u8,           // compression, quantization indicators
+    layer_id: u16,       // 0xFFFF for non-layer pages
+    next_blkno: u32,     // chain for blob pages (InvalidBlockNumber if none)
+    reserved: [u8; 8],
+}
+```
+
+### Page Types
+
+#### Metapage (block 0)
+
+Contains model metadata: magic number (`0x494E4652` = "INFR"), format version, model dimensions, data type info, and block ranges for each section.
+
+#### Layer Directory (block 1)
+
+Maps layer IDs to their gate and down block ranges. 20 bytes per entry, supports 407 layers per page.
+
+#### Gate Vector Pages
+
+Store f16 gate vectors. 4 vectors per page for hidden_size=896 (Qwen 0.5B: 1,792 bytes/vector).
+
+#### Embedding Pages
+
+Same layout as gate pages. Token ID → page is O(1): `embed_start_blk + token_id / 4`.
+
+#### Down Meta Pages
+
+Per-feature metadata records. 92 records per page (88 bytes each: top_token_id + c_score + 10 × (token_id + logit)).
+
+#### Tokenizer Blob Pages
+
+Tokenizer JSON split into 8,128-byte chunks, chained via `next_blkno`.
+
+### Size Estimate (Qwen 0.5B, f16 browse)
+
+| Section | Pages | Size |
+|---------|-------|------|
+| Meta + layer dir | 2 | 16 KB |
+| Gate vectors | 29,184 | 228 MB |
+| Embeddings | 37,984 | 297 MB |
+| Down metadata | 1,269 | 9.9 MB |
+| Tokenizer | ~1,406 | 11 MB |
+| **Total** | **~69,845** | **~546 MB** |
+
+13.7% overhead vs raw files (480 MB). Comparable to normal PostgreSQL index overhead.
+
+## Relationship to the Index Access Method
+
+The `infer` index AM stores vindex data in PostgreSQL pages:
 
 ```sql
--- "What features activate for this input?" — like an index scan
-SELECT * FROM walk('The capital of France is', top => 10);
--- Returns 240 rows: (layer, feature_id, activation_score, concept_token)
+-- Build a vindex as a PostgreSQL index
+CREATE INDEX qwen05b ON infer._models USING infer (name)
+    WITH (source = '/data/qwen05b.vindex');
 
--- "How similar are these concepts?" — like a distance function
-SELECT similar_to('France', 'Paris');     -- 0.086
-SELECT similar_to('France', 'banana');    -- 0.039
-
--- "Order by semantic distance" — like ORDER BY with an index
-SELECT 'France' <~> 'Paris';             -- 11.6 (closer)
-SELECT 'France' <~> 'banana';            -- 25.5 (farther)
-
--- Model lifecycle mirrors index lifecycle
-SELECT larql_create_model('qwen05b', '/path/to/vindex');  -- like CREATE INDEX
-SELECT larql_drop_model('qwen05b');                        -- like DROP INDEX
+-- Or via the convenience function (internally creates the index)
+SELECT infer_create_model('qwen05b', '/data/qwen05b.vindex');
 ```
 
-Per-backend mmap caching means the vindex "feels instant" after first load, exactly like a B-tree index — the OS shares mmap pages across all PostgreSQL backend processes.
+Benefits of page-based storage:
+- **WAL-logged**: crash recovery, replication
+- **Buffer-managed**: shared_buffers caching, OS page cache
+- **pg_basebackup compatible**: indexes travel with the cluster
+- **VACUUM/ANALYZE aware**: standard maintenance
+- **Per-backend caching**: decoded f32 gate layers cached in process memory after first read
 
-### What's missing (the gaps)
+### Gate KNN Access Strategy
 
-1. **No `CREATE INDEX` syntax** — Models are registered via `larql_create_model()` function calls, not DDL. Extensions can't add parser keywords, so this is a fundamental PostgreSQL limitation. The UX is more like calling a function than managing an index.
+For each layer query:
+1. Allocate f32 buffer: `features_per_layer × hidden_size × 4` bytes
+2. Read gate pages sequentially, decode f16 → f32 into contiguous buffer
+3. Single BLAS GEMV on the contiguous buffer
+4. Top-K selection
 
-2. **No planner integration** — PostgreSQL's query planner doesn't know about vindexes. It can't automatically decide to use a vindex for a `WHERE similar_to(col, 'France') > 0.5` clause the way it uses a B-tree for `WHERE id = 42`. Every vindex query is an explicit function call.
-
-3. **No index access method (AM)** — pgvector registers as a custom AM so `CREATE INDEX ... USING hnsw` works and the planner can use it. pg_larql doesn't have this. This is the biggest gap between "functions that query model weights" and "models that feel like indexes."
-
-4. **`describe()` underperforms on small models** — The gate_threshold (5.0) is calibrated for 4B+ models. For Qwen 0.5B, max gate scores are ~0.12, so describe() returns 0 rows. This needs model-size-aware thresholding.
-
-5. **`infer()` untested** — Requires inference-level vindex extraction (we only did browse). Feature-gated behind `--features inference`.
-
-### Honest verdict
-
-We've built a **functional prototype** that demonstrates the concept convincingly. The core index operations work: KNN feature lookup, semantic similarity, distance ordering. But it doesn't yet "feel like an index" in the PostgreSQL sense — it feels like a set of SQL functions backed by an indexed data structure. The difference is that PostgreSQL indexes are transparent to the query planner; our vindex is opaque.
-
-The path from here to "feels like an index" would be:
-- Custom index AM registration (so `CREATE INDEX ... USING larql` works)
-- GiST/SP-GiST operator class for `<~>` (so `ORDER BY a <~> b LIMIT 10` uses the index)
-- Planner hooks to recognize `similar_to()` predicates and push them down
-
-That said, pgvector started exactly where we are — functions and operators first, index AM later — and it's now the most widely used vector extension. The foundation is correct.
-
----
-
-## Commit Plan
-
-### Files to commit
-
-The repo has no commits. This will be the initial commit.
-
-**Include:**
-- `pg_larql/` — All extension source, Cargo.toml, control file, SQL tests, expected output
-- `CLAUDE.md` — Build environment documentation
-- `PG_LARQL.md` — Design spec
-- `.gitignore` — Rust/pgrx ignores
-- `.gitmodules` — (empty, but present)
-
-**Exclude (add to .gitignore):**
-- `vindexes/` — 480MB of binary model data (add `vindexes/` to .gitignore)
-- `_/` — External dependencies (already partially gitignored; uncomment `_/` in .gitignore)
-- `pg_larql/target/` — Build artifacts (already gitignored)
-- Empty marker files: `HEAD`, `config`, `objects`, `refs`, `hooks` — These are zero-byte files that appear to be artifacts; add them to .gitignore
-- Dotfiles: `.bash_profile`, `.bashrc`, `.zshrc`, `.zprofile`, `.profile`, `.gitconfig`, `.ripgreprc`, `.mcp.json` — User profile files, not project files; add to .gitignore
-
-### .gitignore updates needed
-
-Add to existing `.gitignore`:
-```
-# Vindex data (large binaries)
-vindexes/
-
-# External dependencies
-_/
-
-# User profile files (not project files)
-.bash_profile
-.bashrc
-.zshrc
-.zprofile
-.profile
-.gitconfig
-.ripgreprc
-.mcp.json
-
-# Empty marker files
-HEAD
-config
-hooks
-objects
-refs
-```
-
-### Commit message
-
-```
-Initial pg_larql extension: query transformer weights as SQL relations
-
-pgrx 0.17.0 extension for PostgreSQL 18+ that exposes LARQL vindex
-queries as SQL functions. Implements walk(), describe(), similar_to(),
-implies(), infer(), and the <~> distance operator backed by mmap'd
-vindex files with per-backend handle caching.
-
-10/10 pgrx integration tests passing. End-to-end verified with
-Qwen 0.5B browse-level vindex.
-```
-
-### Steps
-
-1. Update `.gitignore` (add vindexes/, _/, dotfiles, marker files)
-2. `git add` specific files: `.gitignore`, `.gitmodules`, `CLAUDE.md`, `PG_LARQL.md`, `pg_larql/`
-3. `git commit`
-4. Verify with `git status` — only intentionally-excluded files remain untracked
+After first query, gate pages reside in shared_buffers and subsequent reads are fast. A per-backend LRU cache of decoded f32 layers avoids repeated page reads + decode.

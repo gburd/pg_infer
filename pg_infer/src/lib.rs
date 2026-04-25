@@ -2,6 +2,8 @@ use pgrx::prelude::*;
 
 pgrx::pg_module_magic!();
 
+mod am;
+mod build;
 mod error;
 mod fn_describe;
 mod fn_implies;
@@ -10,14 +12,18 @@ mod fn_similar;
 mod fn_walk;
 mod gucs;
 mod model_mgmt;
+mod options;
+mod page_reader;
+mod pages;
 mod registry;
+mod scan;
 
-// Bootstrap the larql schema and model registry table during CREATE EXTENSION.
+// Bootstrap the infer schema and model registry table during CREATE EXTENSION.
 extension_sql!(
     r#"
-    CREATE SCHEMA IF NOT EXISTS larql;
+    CREATE SCHEMA IF NOT EXISTS infer;
 
-    CREATE TABLE IF NOT EXISTS larql.models (
+    CREATE TABLE IF NOT EXISTS infer.models (
         model_name  TEXT PRIMARY KEY,
         vindex_path TEXT NOT NULL,
         source      TEXT NOT NULL,
@@ -68,71 +74,76 @@ mod tests {
 
     #[pg_test]
     fn test_extension_loads() {
-        Spi::run("CREATE EXTENSION IF NOT EXISTS pg_larql").expect("CREATE EXTENSION failed");
+        Spi::run("CREATE EXTENSION IF NOT EXISTS pg_infer").expect("CREATE EXTENSION failed");
     }
 
     #[pg_test]
     fn test_gucs_exist() {
-        Spi::run("CREATE EXTENSION IF NOT EXISTS pg_larql").expect("CREATE EXTENSION failed");
-        Spi::run("SHOW larql.default_model").expect("SHOW default_model failed");
-        Spi::run("SHOW larql.data_directory").expect("SHOW data_directory failed");
-        Spi::run("SHOW larql.max_memory").expect("SHOW max_memory failed");
-        Spi::run("SHOW larql.auto_download").expect("SHOW auto_download failed");
+        Spi::run("CREATE EXTENSION IF NOT EXISTS pg_infer").expect("CREATE EXTENSION failed");
+        Spi::run("SHOW infer.default_model").expect("SHOW default_model failed");
+        Spi::run("SHOW infer.data_directory").expect("SHOW data_directory failed");
+        Spi::run("SHOW infer.max_memory").expect("SHOW max_memory failed");
+        Spi::run("SHOW infer.auto_download").expect("SHOW auto_download failed");
+        Spi::run("SHOW infer.gate_threshold").expect("SHOW gate_threshold failed");
     }
 
     #[pg_test]
     fn test_guc_default_values() {
-        Spi::run("CREATE EXTENSION IF NOT EXISTS pg_larql").expect("CREATE EXTENSION failed");
+        Spi::run("CREATE EXTENSION IF NOT EXISTS pg_infer").expect("CREATE EXTENSION failed");
 
-        let max_mem = Spi::get_one::<String>("SHOW larql.max_memory")
+        let max_mem = Spi::get_one::<String>("SHOW infer.max_memory")
             .expect("SHOW failed");
         assert_eq!(max_mem, Some("8192".to_string()));
 
-        let auto_dl = Spi::get_one::<String>("SHOW larql.auto_download")
+        let auto_dl = Spi::get_one::<String>("SHOW infer.auto_download")
             .expect("SHOW failed");
         assert_eq!(auto_dl, Some("on".to_string()));
 
-        let data_dir = Spi::get_one::<String>("SHOW larql.data_directory")
+        let data_dir = Spi::get_one::<String>("SHOW infer.data_directory")
             .expect("SHOW failed");
-        assert_eq!(data_dir, Some("larql".to_string()));
+        assert_eq!(data_dir, Some("infer".to_string()));
+
+        let gate_thresh = Spi::get_one::<String>("SHOW infer.gate_threshold")
+            .expect("SHOW failed");
+        assert_eq!(gate_thresh, Some("0".to_string()));
     }
 
     #[pg_test]
     fn test_set_default_model() {
-        Spi::run("CREATE EXTENSION IF NOT EXISTS pg_larql").expect("CREATE EXTENSION failed");
-        Spi::run("SET larql.default_model = 'test_model'").expect("SET failed");
-        let val = Spi::get_one::<String>("SHOW larql.default_model")
+        Spi::run("CREATE EXTENSION IF NOT EXISTS pg_infer").expect("CREATE EXTENSION failed");
+        Spi::run("SET infer.default_model = 'test_model'").expect("SET failed");
+        let val = Spi::get_one::<String>("SHOW infer.default_model")
             .expect("SHOW failed");
         assert_eq!(val, Some("test_model".to_string()));
     }
 
     #[pg_test]
     fn test_models_table_exists() {
-        Spi::run("CREATE EXTENSION IF NOT EXISTS pg_larql").expect("CREATE EXTENSION failed");
-        let count = Spi::get_one::<i64>("SELECT count(*) FROM larql.models")
+        Spi::run("CREATE EXTENSION IF NOT EXISTS pg_infer").expect("CREATE EXTENSION failed");
+        let count = Spi::get_one::<i64>("SELECT count(*) FROM infer.models")
             .expect("query failed");
         assert_eq!(count, Some(0));
     }
 
     #[pg_test]
-    fn test_larql_models_function() {
-        Spi::run("CREATE EXTENSION IF NOT EXISTS pg_larql").expect("CREATE EXTENSION failed");
-        let count = Spi::get_one::<i64>("SELECT count(*) FROM larql_models()")
+    fn test_infer_models_function() {
+        Spi::run("CREATE EXTENSION IF NOT EXISTS pg_infer").expect("CREATE EXTENSION failed");
+        let count = Spi::get_one::<i64>("SELECT count(*) FROM infer_models()")
             .expect("query failed");
         assert_eq!(count, Some(0));
     }
 
     #[pg_test]
     fn test_drop_nonexistent_model() {
-        Spi::run("CREATE EXTENSION IF NOT EXISTS pg_larql").expect("CREATE EXTENSION failed");
-        let result = Spi::get_one::<String>("SELECT larql_drop_model('nonexistent')")
+        Spi::run("CREATE EXTENSION IF NOT EXISTS pg_infer").expect("CREATE EXTENSION failed");
+        let result = Spi::get_one::<String>("SELECT infer_drop_model('nonexistent')")
             .expect("query failed");
         assert!(result.is_some());
     }
 
     #[pg_test]
     fn test_function_signatures_exist() {
-        Spi::run("CREATE EXTENSION IF NOT EXISTS pg_larql").expect("CREATE EXTENSION failed");
+        Spi::run("CREATE EXTENSION IF NOT EXISTS pg_infer").expect("CREATE EXTENSION failed");
 
         for func_name in &[
             "walk",
@@ -140,10 +151,10 @@ mod tests {
             "infer",
             "similar_to",
             "implies",
-            "larql_create_model",
-            "larql_drop_model",
-            "larql_models",
-            "larql_distance",
+            "infer_create_model",
+            "infer_drop_model",
+            "infer_models",
+            "infer_distance",
         ] {
             let exists = Spi::get_one::<bool>(&format!(
                 "SELECT EXISTS(SELECT 1 FROM pg_proc WHERE proname = '{}')",
@@ -161,7 +172,7 @@ mod tests {
 
     #[pg_test]
     fn test_distance_operator_exists() {
-        Spi::run("CREATE EXTENSION IF NOT EXISTS pg_larql").expect("CREATE EXTENSION failed");
+        Spi::run("CREATE EXTENSION IF NOT EXISTS pg_infer").expect("CREATE EXTENSION failed");
 
         let exists = Spi::get_one::<bool>(
             "SELECT EXISTS(SELECT 1 FROM pg_operator WHERE oprname = '<~>')",
@@ -172,10 +183,10 @@ mod tests {
 
     #[pg_test]
     fn test_create_model_nonexistent_path() {
-        Spi::run("CREATE EXTENSION IF NOT EXISTS pg_larql").expect("CREATE EXTENSION failed");
+        Spi::run("CREATE EXTENSION IF NOT EXISTS pg_infer").expect("CREATE EXTENSION failed");
         // Creating a model with a path that doesn't exist should fail.
         let result = std::panic::catch_unwind(|| {
-            Spi::run("SELECT larql_create_model('bad', '/nonexistent/path/to/vindex')")
+            Spi::run("SELECT infer_create_model('bad', '/nonexistent/path/to/vindex')")
                 .expect("should not succeed");
         });
         assert!(result.is_err(), "expected error for nonexistent path");

@@ -3,7 +3,7 @@ use std::path::Path;
 use pgrx::datum::{DatumWithOid, TimestampWithTimeZone};
 use pgrx::prelude::*;
 
-use crate::error::PgLarqlError;
+use crate::error::PgInferError;
 use crate::gucs;
 use crate::registry;
 
@@ -13,14 +13,14 @@ use crate::registry;
 /// - An absolute path to an existing `.vindex/` directory,
 /// - A HuggingFace `hf://` URI pointing to a pre-built vindex, or
 /// - A HuggingFace model ID (e.g. `google/gemma-3-4b-it`) which will
-///   be downloaded and extracted if `larql.auto_download` is on.
+///   be downloaded and extracted if `infer.auto_download` is on.
 ///
 /// ```sql
-/// SELECT larql_create_model('qwen05b', '/data/qwen.vindex');
-/// SELECT larql_create_model('gemma4b', 'hf://chrishayuk/gemma-3-4b-it-vindex');
+/// SELECT infer_create_model('qwen05b', '/data/qwen.vindex');
+/// SELECT infer_create_model('gemma4b', 'hf://chrishayuk/gemma-3-4b-it-vindex');
 /// ```
 #[pg_extern]
-fn larql_create_model(
+fn infer_create_model(
     model_name: &str,
     source: &str,
     extract_level: default!(Option<&str>, "NULL"),
@@ -39,7 +39,7 @@ fn larql_create_model(
 
     // Persist to registry table.
     Spi::run_with_args(
-        "INSERT INTO larql.models \
+        "INSERT INTO infer.models \
              (model_name, vindex_path, source, extract_level, \
               num_layers, hidden_size, vocab_size) \
          VALUES ($1, $2, $3, $4, $5, $6, $7) \
@@ -71,12 +71,12 @@ fn larql_create_model(
 /// Remove a model registration and evict it from the per-backend cache.
 ///
 /// ```sql
-/// SELECT larql_drop_model('qwen05b');
+/// SELECT infer_drop_model('qwen05b');
 /// ```
 #[pg_extern]
-fn larql_drop_model(model_name: &str) -> Result<String, Box<dyn std::error::Error>> {
+fn infer_drop_model(model_name: &str) -> Result<String, Box<dyn std::error::Error>> {
     Spi::run_with_args(
-        "DELETE FROM larql.models WHERE model_name = $1",
+        "DELETE FROM infer.models WHERE model_name = $1",
         &[DatumWithOid::from(model_name)],
     )?;
 
@@ -89,10 +89,10 @@ fn larql_drop_model(model_name: &str) -> Result<String, Box<dyn std::error::Erro
 /// List all registered models as a set-returning function.
 ///
 /// ```sql
-/// SELECT * FROM larql_models();
+/// SELECT * FROM infer_models();
 /// ```
 #[pg_extern]
-fn larql_models() -> Result<
+fn infer_models() -> Result<
     TableIterator<
         'static,
         (
@@ -112,7 +112,7 @@ fn larql_models() -> Result<
         let result = client.select(
             "SELECT model_name, vindex_path, source, extract_level, \
                     num_layers, hidden_size, vocab_size, registered_at \
-             FROM larql.models ORDER BY registered_at",
+             FROM infer.models ORDER BY registered_at",
             None,
             &[],
         )?;
@@ -154,7 +154,7 @@ fn larql_models() -> Result<
 // ---------------------------------------------------------------------------
 
 /// Resolve a user-supplied source string into an absolute vindex path.
-fn resolve_source(source: &str) -> Result<String, PgLarqlError> {
+fn resolve_source(source: &str) -> Result<String, PgInferError> {
     // Case 1: absolute or relative local path.
     let as_path = Path::new(source);
     if as_path.exists() {
@@ -168,11 +168,11 @@ fn resolve_source(source: &str) -> Result<String, PgLarqlError> {
     // Case 2: hf:// URI — download the pre-built vindex.
     if source.starts_with("hf://") {
         if !gucs::AUTO_DOWNLOAD.get() {
-            return Err(PgLarqlError::Internal(
-                "larql.auto_download is off — cannot fetch from HuggingFace".into(),
+            return Err(PgInferError::Internal(
+                "infer.auto_download is off — cannot fetch from HuggingFace".into(),
             ));
         }
-        return Err(PgLarqlError::Internal(
+        return Err(PgInferError::Internal(
             "HuggingFace vindex download not yet implemented".into(),
         ));
     }
@@ -180,16 +180,16 @@ fn resolve_source(source: &str) -> Result<String, PgLarqlError> {
     // Case 3: HuggingFace model ID — download weights and extract.
     if source.contains('/') {
         if !gucs::AUTO_DOWNLOAD.get() {
-            return Err(PgLarqlError::Internal(
-                "larql.auto_download is off — cannot fetch from HuggingFace".into(),
+            return Err(PgInferError::Internal(
+                "infer.auto_download is off — cannot fetch from HuggingFace".into(),
             ));
         }
-        return Err(PgLarqlError::Internal(
+        return Err(PgInferError::Internal(
             "HuggingFace model download + extraction not yet implemented".into(),
         ));
     }
 
-    Err(PgLarqlError::Internal(format!(
+    Err(PgInferError::Internal(format!(
         "cannot resolve source '{}': not a local path, hf:// URI, or model ID",
         source
     )))

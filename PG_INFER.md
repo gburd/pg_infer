@@ -1,8 +1,8 @@
-# pg_larql: Neural Knowledge as a PostgreSQL Extension
+# pg_infer: Neural Knowledge as a PostgreSQL Index
 
 ## Executive Summary
 
-pg_larql integrates LARQL's neural network knowledge querying into PostgreSQL as a native extension, enabling SQL queries to directly access and reason with world knowledge embedded in transformer model weights. Unlike vector databases that store pre-computed embeddings, pg_larql queries the model weights themselves, providing access to factual knowledge, semantic relationships, and reasoning capabilities within standard SQL syntax.
+pg_infer integrates LARQL's neural network knowledge querying into PostgreSQL as a native extension, enabling SQL queries to directly access and reason with world knowledge embedded in transformer model weights. Unlike vector databases that store pre-computed embeddings, pg_infer queries the model weights themselves, providing access to factual knowledge, semantic relationships, and reasoning capabilities within standard SQL syntax.
 
 The extension follows PostgreSQL's established patterns (like pg_vector, PostGIS, full-text search) by adding custom types, functions, and operators without modifying the SQL parser. This enables seamless composition with existing PostgreSQL features and extensions.  Conceptually models become indexes useful when querying within Postgres.
 
@@ -63,7 +63,7 @@ Every successful PostgreSQL extension follows this pattern:
 - **pg_trgm**: Adds `%` operator and `similarity()` function
 - **Full-text search**: Adds `tsvector` type and `@@` operator
 
-**No extension modifies PostgreSQL's parser.** pg_larql follows this pattern exactly.
+**No extension modifies PostgreSQL's parser.** pg_infer follows this pattern exactly.
 
 ### 2. Make Model Access Transparent
 
@@ -84,7 +84,7 @@ The system handles:
 Every function returns standard SQL types that compose with JOINs, CTEs, WHERE clauses, and other extensions:
 
 ```sql
--- Combines pg_larql + pg_vector + pg_trgm + BM25
+-- Combines pg_infer + pg_vector + pg_trgm + BM25
 WITH model_concepts AS (
     SELECT target FROM describe('coffee warmer') WHERE confidence > 10
 ),
@@ -118,11 +118,11 @@ CREATE MODEL gemma3_4b FROM 'google/gemma-3-4b-it'
     WITH (extract_level = 'inference', dtype = 'f16', max_memory = '8GB');
 
 -- Set session default
-SET larql.default_model = 'gemma3_4b';
+SET infer.default_model = 'gemma3_4b';
 
 -- Inspect registered models
 SELECT model_name, vindex_path, extract_level, layers, features, memory_usage
-FROM larql_models;
+FROM infer_models;
 
 -- Remove model (unloads from memory, deletes cached vindex)
 DROP MODEL gemma3_4b;
@@ -250,7 +250,7 @@ WHERE NOT implies(c.name, c.headquarters);
 -- Semantic distance operator (wraps 1/similar_to for distance semantics)
 CREATE OPERATOR <~> (
     LEFTARG = text, RIGHTARG = text,
-    FUNCTION = larql_distance,
+    FUNCTION = infer_distance,
     COMMUTATOR = <~>
 );
 
@@ -264,13 +264,13 @@ LIMIT 10;
 
 ### Combined with pg_vector
 
-pg_vector stores your embeddings; pg_larql provides world knowledge. They're complementary:
+pg_vector stores your embeddings; pg_infer provides world knowledge. They're complementary:
 
 ```sql
 -- pg_vector: "find MY documents similar to this query"
 SELECT * FROM docs ORDER BY embedding <-> query_vec LIMIT 10;
 
--- pg_larql: "what does the MODEL know about this topic?"
+-- pg_infer: "what does the MODEL know about this topic?"
 SELECT * FROM describe('quantum computing');
 
 -- Combined: find docs about topics the model associates with a concept
@@ -288,7 +288,7 @@ WHERE d.embedding <-> embed(rt.target) < 0.5;
 -- Entity resolution: string similarity + semantic equivalence
 SELECT a.name AS system_a, b.name AS system_b,
        similarity(a.name, b.name) AS string_sim,      -- pg_trgm
-       similar_to(a.name, b.name) AS semantic_sim     -- pg_larql
+       similar_to(a.name, b.name) AS semantic_sim     -- pg_infer
 FROM suppliers_a a CROSS JOIN suppliers_b b
 WHERE similarity(a.name, b.name) > 0.3                -- fuzzy string match
    OR similar_to(a.name, b.name) > 25.0;              -- semantic match
@@ -319,10 +319,10 @@ ORDER BY relevance DESC;
 ### Extension Structure (No PostgreSQL Core Modifications)
 
 ```
-contrib/pg_larql/
-├── pg_larql--1.0.sql           # CREATE FUNCTION/OPERATOR definitions
-├── pg_larql.control            # Extension metadata
-├── pg_larql.c                  # Extension init, GUC registration, hooks
+contrib/pg_infer/
+├── pg_infer--1.0.sql           # CREATE FUNCTION/OPERATOR definitions
+├── pg_infer.control            # Extension metadata
+├── pg_infer.c                  # Extension init, GUC registration, hooks
 ├── model_registry.c            # CREATE MODEL, model loading lifecycle
 ├── fn_describe.c               # describe() SRF implementation
 ├── fn_walk.c                   # walk() SRF implementation
@@ -361,7 +361,7 @@ pub struct DescribeRow {
 }
 
 #[no_mangle]
-pub extern "C" fn larql_load_model(
+pub extern "C" fn infer_load_model(
     source: *const c_char,      // Model ID, hf:// path, or local path
     extract_level: c_int,       // 1=browse, 2=inference, 3=all
     data_dir: *const c_char,    // Where to cache extracted vindexes
@@ -369,7 +369,7 @@ pub extern "C" fn larql_load_model(
 ) -> *mut VindexHandle;
 
 #[no_mangle]
-pub extern "C" fn larql_describe(
+pub extern "C" fn infer_describe(
     handle: *const VindexHandle,
     entity: *const c_char,
     results: *mut DescribeRow,
@@ -378,7 +378,7 @@ pub extern "C" fn larql_describe(
 ) -> c_int;                     // 0=success, <0=error
 
 #[no_mangle]
-pub extern "C" fn larql_gate_knn(
+pub extern "C" fn infer_gate_knn(
     handle: *const VindexHandle,
     layer: usize,
     residual: *const f32,
@@ -389,7 +389,7 @@ pub extern "C" fn larql_gate_knn(
 ) -> c_int;
 
 #[no_mangle]
-pub extern "C" fn larql_similar_to(
+pub extern "C" fn infer_similar_to(
     handle: *const VindexHandle,
     entity_a: *const c_char,
     entity_b: *const c_char,
@@ -397,10 +397,10 @@ pub extern "C" fn larql_similar_to(
 ) -> c_int;
 
 #[no_mangle]
-pub extern "C" fn larql_free_handle(handle: *mut VindexHandle);
+pub extern "C" fn infer_free_handle(handle: *mut VindexHandle);
 
 #[no_mangle]
-pub extern "C" fn larql_free_cstring(s: *mut c_char);
+pub extern "C" fn infer_free_cstring(s: *mut c_char);
 ```
 
 ### Memory Management Strategy
@@ -410,14 +410,14 @@ pub extern "C" fn larql_free_cstring(s: *mut c_char);
 Vindexes are mmap'd files shared across all PostgreSQL backends:
 
 ```c
-// In pg_larql.c
-typedef struct LarqlSharedState {
+// In pg_infer.c
+typedef struct InferSharedState {
     LWLock     *lock;
     int         num_models;
     Size        total_memory;
-    Size        memory_limit;      // From larql.max_memory GUC
+    Size        memory_limit;      // From infer.max_memory GUC
     HTAB       *model_registry;    // Hash: model_name → VindexEntry
-} LarqlSharedState;
+} InferSharedState;
 
 typedef struct VindexEntry {
     char        model_name[64];
@@ -428,18 +428,18 @@ typedef struct VindexEntry {
     Size        memory_usage;      // Estimated RSS
 } VindexEntry;
 
-static LarqlSharedState *larql_shared = NULL;
+static InferSharedState *infer_shared = NULL;
 
-void larql_shmem_startup(void) {
+void infer_shmem_startup(void) {
     bool found;
-    larql_shared = ShmemInitStruct("pg_larql",
-                                   sizeof(LarqlSharedState),
+    infer_shared = ShmemInitStruct("pg_infer",
+                                   sizeof(InferSharedState),
                                    &found);
     if (!found) {
-        larql_shared->lock = &(GetNamedLWLockTranche("pg_larql"))->lock;
-        larql_shared->num_models = 0;
-        larql_shared->total_memory = 0;
-        larql_shared->memory_limit = larql_max_memory * 1024L * 1024L;
+        infer_shared->lock = &(GetNamedLWLockTranche("pg_infer"))->lock;
+        infer_shared->num_models = 0;
+        infer_shared->total_memory = 0;
+        infer_shared->memory_limit = infer_max_memory * 1024L * 1024L;
         // Create hash table for model registry
     }
 }
@@ -459,8 +459,8 @@ typedef struct DescribeFuncState {
     int             current_row;
 } DescribeFuncState;
 
-PG_FUNCTION_INFO_V1(larql_describe);
-Datum larql_describe(PG_FUNCTION_ARGS) {
+PG_FUNCTION_INFO_V1(infer_describe);
+Datum infer_describe(PG_FUNCTION_ARGS) {
     FuncCallContext *funcctx;
     DescribeFuncState *state;
 
@@ -477,10 +477,10 @@ Datum larql_describe(PG_FUNCTION_ARGS) {
         text *entity = PG_GETARG_TEXT_P(0);
         char *entity_str = text_to_cstring(entity);
 
-        VindexHandle *vindex = get_model_handle(larql_default_model);
+        VindexHandle *vindex = get_model_handle(infer_default_model);
         state->results = palloc(sizeof(DescribeRow) * MAX_DESCRIBE_RESULTS);
 
-        int success = larql_describe(vindex, entity_str, state->results,
+        int success = infer_describe(vindex, entity_str, state->results,
                                     MAX_DESCRIBE_RESULTS, &state->num_results);
         if (success < 0) {
             ereport(ERROR, (errcode(ERRCODE_EXTERNAL_ROUTINE_EXCEPTION),
@@ -522,50 +522,50 @@ Datum larql_describe(PG_FUNCTION_ARGS) {
 VindexHandle* get_model_handle(const char *model_name) {
     VindexEntry *entry;
 
-    LWLockAcquire(larql_shared->lock, LW_SHARED);
-    entry = hash_search(larql_shared->model_registry, model_name, HASH_FIND, NULL);
+    LWLockAcquire(infer_shared->lock, LW_SHARED);
+    entry = hash_search(infer_shared->model_registry, model_name, HASH_FIND, NULL);
 
     if (entry) {
         entry->ref_count++;
         entry->last_accessed = GetCurrentTimestamp();
-        LWLockRelease(larql_shared->lock);
+        LWLockRelease(infer_shared->lock);
         return entry->handle;
     }
-    LWLockRelease(larql_shared->lock);
+    LWLockRelease(infer_shared->lock);
 
     // Model not loaded, need exclusive lock to load
-    LWLockAcquire(larql_shared->lock, LW_EXCLUSIVE);
+    LWLockAcquire(infer_shared->lock, LW_EXCLUSIVE);
 
     // Check again in case another backend loaded it
-    entry = hash_search(larql_shared->model_registry, model_name, HASH_FIND, NULL);
+    entry = hash_search(infer_shared->model_registry, model_name, HASH_FIND, NULL);
     if (entry) {
         entry->ref_count++;
         entry->last_accessed = GetCurrentTimestamp();
-        LWLockRelease(larql_shared->lock);
+        LWLockRelease(infer_shared->lock);
         return entry->handle;
     }
 
     // Load model via FFI
     char error_msg[512];
-    VindexHandle *handle = larql_load_model(model_source, extract_level,
-                                           larql_data_directory, error_msg);
+    VindexHandle *handle = infer_load_model(model_source, extract_level,
+                                           infer_data_directory, error_msg);
     if (!handle) {
-        LWLockRelease(larql_shared->lock);
+        LWLockRelease(infer_shared->lock);
         ereport(ERROR, (errcode(ERRCODE_EXTERNAL_ROUTINE_EXCEPTION),
                        errmsg("Failed to load model %s: %s", model_name, error_msg)));
     }
 
     // Add to registry
-    entry = hash_search(larql_shared->model_registry, model_name, HASH_ENTER, NULL);
+    entry = hash_search(infer_shared->model_registry, model_name, HASH_ENTER, NULL);
     strncpy(entry->model_name, model_name, sizeof(entry->model_name));
     entry->handle = handle;
     entry->ref_count = 1;
     entry->last_accessed = GetCurrentTimestamp();
 
-    larql_shared->num_models++;
-    larql_shared->total_memory += estimate_model_memory(handle);
+    infer_shared->num_models++;
+    infer_shared->total_memory += estimate_model_memory(handle);
 
-    LWLockRelease(larql_shared->lock);
+    LWLockRelease(infer_shared->lock);
     return handle;
 }
 ```
@@ -573,54 +573,54 @@ VindexHandle* get_model_handle(const char *model_name) {
 ### Configuration (GUCs)
 
 ```c
-// In pg_larql.c
-char *larql_default_model = NULL;
-char *larql_data_directory = NULL;
-int larql_max_memory = 8192;        // MB
-bool larql_auto_download = true;
+// In pg_infer.c
+char *infer_default_model = NULL;
+char *infer_data_directory = NULL;
+int infer_max_memory = 8192;        // MB
+bool infer_auto_download = true;
 
 void _PG_init(void) {
-    DefineCustomStringVariable("larql.default_model",
+    DefineCustomStringVariable("infer.default_model",
                               "Default model name for LARQL functions",
                               "Model to use when not explicitly specified",
-                              &larql_default_model,
+                              &infer_default_model,
                               NULL,
                               PGC_USERSET,
                               0, NULL, NULL, NULL);
 
-    DefineCustomStringVariable("larql.data_directory",
+    DefineCustomStringVariable("infer.data_directory",
                               "Directory for cached vindexes",
                               "Where extracted vindexes are stored",
-                              &larql_data_directory,
-                              "larql",  // Default: $PGDATA/larql/
+                              &infer_data_directory,
+                              "infer",  // Default: $PGDATA/infer/
                               PGC_SIGHUP,
                               0, NULL, NULL, NULL);
 
-    DefineCustomIntVariable("larql.max_memory",
+    DefineCustomIntVariable("infer.max_memory",
                            "Maximum memory for loaded models (MB)",
                            "Total memory budget for all loaded vindexes",
-                           &larql_max_memory,
+                           &infer_max_memory,
                            8192,     // 8GB default
                            512,      // Min 512MB
                            65536,    // Max 64GB
                            PGC_SIGHUP,
                            0, NULL, NULL, NULL);
 
-    DefineCustomBoolVariable("larql.auto_download",
+    DefineCustomBoolVariable("infer.auto_download",
                             "Auto-download models from HuggingFace",
                             "Whether CREATE MODEL can download from HF",
-                            &larql_auto_download,
+                            &infer_auto_download,
                             true,
                             PGC_SUSET,
                             0, NULL, NULL, NULL);
 
     // Request shared memory
-    RequestAddinShmemSpace(sizeof(LarqlSharedState) + hash_estimate_size(64, sizeof(VindexEntry)));
-    RequestNamedLWLockTranche("pg_larql", 1);
+    RequestAddinShmemSpace(sizeof(InferSharedState) + hash_estimate_size(64, sizeof(VindexEntry)));
+    RequestNamedLWLockTranche("pg_infer", 1);
 
     // Hook for shared memory initialization
     prev_shmem_startup_hook = shmem_startup_hook;
-    shmem_startup_hook = larql_shmem_startup;
+    shmem_startup_hook = infer_shmem_startup;
 }
 ```
 
@@ -847,21 +847,21 @@ ORDER BY ticket_count DESC;
 ```c
 // Map LARQL errors to PostgreSQL error codes
 typedef struct {
-    int larql_error;
+    int infer_error;
     int pg_error_code;
     const char *pg_error_category;
 } ErrorMapping;
 
 static ErrorMapping error_mappings[] = {
-    {LARQL_ERROR_MODEL_NOT_FOUND, ERRCODE_INVALID_NAME, "model"},
-    {LARQL_ERROR_VINDEX_CORRUPT, ERRCODE_DATA_CORRUPTED, "vindex"},
-    {LARQL_ERROR_INSUFFICIENT_MEMORY, ERRCODE_OUT_OF_MEMORY, "memory"},
-    {LARQL_ERROR_EXTRACT_LEVEL, ERRCODE_FEATURE_NOT_SUPPORTED, "operation"},
+    {INFER_ERROR_MODEL_NOT_FOUND, ERRCODE_INVALID_NAME, "model"},
+    {INFER_ERROR_VINDEX_CORRUPT, ERRCODE_DATA_CORRUPTED, "vindex"},
+    {INFER_ERROR_INSUFFICIENT_MEMORY, ERRCODE_OUT_OF_MEMORY, "memory"},
+    {INFER_ERROR_EXTRACT_LEVEL, ERRCODE_FEATURE_NOT_SUPPORTED, "operation"},
     {0, 0, NULL}  // Sentinel
 };
 
-void report_larql_error(int larql_error, const char *detail) {
-    ErrorMapping *mapping = find_error_mapping(larql_error);
+void report_infer_error(int infer_error, const char *detail) {
+    ErrorMapping *mapping = find_error_mapping(infer_error);
     ereport(ERROR,
             (errcode(mapping->pg_error_code),
              errmsg("LARQL %s error: %s", mapping->pg_error_category, detail),
@@ -873,17 +873,17 @@ void report_larql_error(int larql_error, const char *detail) {
 
 ```sql
 -- Inspect loaded models and memory usage
-CREATE VIEW larql_model_status AS
+CREATE VIEW infer_model_status AS
 SELECT model_name, vindex_path, extract_level,
        memory_usage_mb, ref_count, last_accessed,
        age(now(), last_accessed) AS idle_time
-FROM larql_models_internal();
+FROM infer_models_internal();
 
 -- Monitor query performance
-CREATE VIEW larql_query_stats AS
+CREATE VIEW infer_query_stats AS
 SELECT function_name, total_calls, total_time_ms,
        avg_time_ms, max_time_ms, error_count
-FROM larql_performance_counters();
+FROM infer_performance_counters();
 ```
 
 ## Installation and Configuration
@@ -905,7 +905,7 @@ cd larql/
 cargo build --release -p larql-pg-ffi
 
 # Build PostgreSQL extension
-cd contrib/pg_larql/
+cd contrib/pg_infer/
 make install USE_PGXS=1
 ```
 
@@ -913,19 +913,19 @@ make install USE_PGXS=1
 
 ```sql
 -- Enable extension (requires superuser)
-CREATE EXTENSION pg_larql;
+CREATE EXTENSION pg_infer;
 
 -- Configure memory limit and data directory
-ALTER SYSTEM SET larql.max_memory = '16GB';
-ALTER SYSTEM SET larql.data_directory = '/var/lib/postgresql/larql';
+ALTER SYSTEM SET infer.max_memory = '16GB';
+ALTER SYSTEM SET infer.data_directory = '/var/lib/postgresql/infer';
 SELECT pg_reload_conf();
 
 -- Register first model
 CREATE MODEL gemma3_4b FROM 'hf://chrishayuk/gemma-3-4b-it-vindex';
-SET larql.default_model = 'gemma3_4b';
+SET infer.default_model = 'gemma3_4b';
 
 -- Verify installation
-SELECT * FROM larql_models;
+SELECT * FROM infer_models;
 SELECT * FROM describe('France') LIMIT 3;
 ```
 
@@ -958,14 +958,14 @@ SELECT * FROM describe('artificial intelligence') LIMIT 10;
 -- Should complete in <50ms
 
 -- Memory usage
-SELECT sum(memory_usage_mb) FROM larql_model_status;
+SELECT sum(memory_usage_mb) FROM infer_model_status;
 -- Should be reasonable (< configured limit)
 ```
 
 ### Regression Tests
 
 - Existing LARQL test suite (`cargo test`) should pass unchanged
-- PostgreSQL regression test suite (`pg_regress`) with pg_larql-specific tests
+- PostgreSQL regression test suite (`pg_regress`) with pg_infer-specific tests
 - Concurrency tests (multiple backends querying same model simultaneously)
 - Memory leak detection under repeated SRF calls
 
@@ -992,8 +992,8 @@ GRANT USAGE ON MODEL gemma3_4b TO data_science_team;
 
 ```sql
 -- Per-user resource limits
-ALTER ROLE analyst SET larql.max_memory = '2GB';
-ALTER ROLE analyst SET larql.default_model = 'small_model';
+ALTER ROLE analyst SET infer.max_memory = '2GB';
+ALTER ROLE analyst SET infer.default_model = 'small_model';
 ```
 
 ## Future Enhancements
@@ -1035,6 +1035,6 @@ Teach PostgreSQL's query planner about model operations for better optimization:
 
 ## Conclusion
 
-pg_larql transforms PostgreSQL into the first database to natively support neural network knowledge querying. By working within established PostgreSQL patterns, it enables seamless composition of world knowledge with relational data, opening entirely new classes of applications that blend structured data with AI reasoning.
+pg_infer transforms PostgreSQL into the first database to natively support neural network knowledge querying. By working within established PostgreSQL patterns, it enables seamless composition of world knowledge with relational data, opening entirely new classes of applications that blend structured data with AI reasoning.
 
 The extension's success will be measured not by its technical sophistication, but by how naturally developers adopt it for problems they couldn't solve before — entity resolution, semantic search, automated data enrichment, and commonsense reasoning — all within familiar SQL syntax.

@@ -1,40 +1,40 @@
--- pg_larql regression tests
+-- pg_infer regression tests
 -- Extension lifecycle
-CREATE EXTENSION pg_larql;
+CREATE EXTENSION pg_infer;
 -- GUC parameters
-SHOW larql.default_model;
- larql.default_model
+SHOW infer.default_model;
+ infer.default_model
 ---------------------
 
 (1 row)
 
-SHOW larql.max_memory;
- larql.max_memory
+SHOW infer.max_memory;
+ infer.max_memory
 ------------------
  8192
 (1 row)
 
-SHOW larql.auto_download;
- larql.auto_download
+SHOW infer.auto_download;
+ infer.auto_download
 ---------------------
  on
 (1 row)
 
-SHOW larql.data_directory;
- larql.data_directory
+SHOW infer.data_directory;
+ infer.data_directory
 ----------------------
- larql
+ infer
 (1 row)
 
 -- Model registry table
-SELECT count(*) FROM larql.models;
+SELECT count(*) FROM infer.models;
  count
 -------
      0
 (1 row)
 
 -- Model management functions
-SELECT * FROM larql_models();
+SELECT * FROM infer_models();
  model_name | vindex_path | source | extract_level | num_layers | hidden_size | vocab_size | registered_at
 ------------+-------------+--------+---------------+------------+-------------+------------+---------------
 (0 rows)
@@ -87,38 +87,38 @@ ORDER BY proname;
 
 SELECT proname, pg_get_function_arguments(oid) AS args,
        pg_get_function_result(oid) AS rettype
-FROM pg_proc WHERE proname = 'larql_create_model' AND prokind = 'f'
+FROM pg_proc WHERE proname = 'infer_create_model' AND prokind = 'f'
 ORDER BY proname;
       proname       |                                args                                 | rettype
 --------------------+---------------------------------------------------------------------+---------
- larql_create_model | model_name text, source text, extract_level text DEFAULT NULL::text | text
+ infer_create_model | model_name text, source text, extract_level text DEFAULT NULL::text | text
 (1 row)
 
 SELECT proname, pg_get_function_arguments(oid) AS args,
        pg_get_function_result(oid) AS rettype
-FROM pg_proc WHERE proname = 'larql_drop_model' AND prokind = 'f'
+FROM pg_proc WHERE proname = 'infer_drop_model' AND prokind = 'f'
 ORDER BY proname;
      proname      |      args       | rettype
 ------------------+-----------------+---------
- larql_drop_model | model_name text | text
+ infer_drop_model | model_name text | text
 (1 row)
 
 SELECT proname, pg_get_function_arguments(oid) AS args,
        pg_get_function_result(oid) AS rettype
-FROM pg_proc WHERE proname = 'larql_models' AND prokind = 'f'
+FROM pg_proc WHERE proname = 'infer_models' AND prokind = 'f'
 ORDER BY proname;
    proname    | args |                                                                                    rettype
 --------------+------+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- larql_models |      | TABLE(model_name text, vindex_path text, source text, extract_level text, num_layers integer, hidden_size integer, vocab_size integer, registered_at timestamp with time zone)
+ infer_models |      | TABLE(model_name text, vindex_path text, source text, extract_level text, num_layers integer, hidden_size integer, vocab_size integer, registered_at timestamp with time zone)
 (1 row)
 
 SELECT proname, pg_get_function_arguments(oid) AS args,
        pg_get_function_result(oid) AS rettype
-FROM pg_proc WHERE proname = 'larql_distance' AND prokind = 'f'
+FROM pg_proc WHERE proname = 'infer_distance' AND prokind = 'f'
 ORDER BY proname;
     proname     |      args      |     rettype
 ----------------+----------------+------------------
- larql_distance | a text, b text | double precision
+ infer_distance | a text, b text | double precision
 (1 row)
 
 -- Operator
@@ -130,4 +130,4 @@ FROM pg_operator WHERE oprname = '<~>';
 (1 row)
 
 -- Cleanup
-DROP EXTENSION pg_larql;
+DROP EXTENSION pg_infer;

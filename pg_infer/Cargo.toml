@@ -1,5 +1,5 @@
 [package]
-name = "pg_larql"
+name = "pg_infer"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.80"
@@ -11,7 +11,7 @@ description = "Query transformer model weights as PostgreSQL relations"
 crate-type = ["cdylib", "lib"]
 
 [[bin]]
-name = "pgrx_embed_pg_larql"
+name = "pgrx_embed_pg_infer"
 path = "./src/bin/pgrx_embed.rs"
 
 [features]
@@ -30,6 +30,7 @@ thiserror = "2"
 once_cell = "1.19"
 tracing = "0.1"
 ndarray = "0.16"
+half = "1.8"
 
 # LARQL dependencies (path to local crates)
 larql-vindex = { path = "../_/larql/crates/larql-vindex" }

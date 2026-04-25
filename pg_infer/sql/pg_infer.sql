@@ -1,18 +1,18 @@
--- pg_larql regression tests
+-- pg_infer regression tests
 -- Extension lifecycle
-CREATE EXTENSION pg_larql;
+CREATE EXTENSION pg_infer;
 
 -- GUC parameters
-SHOW larql.default_model;
-SHOW larql.max_memory;
-SHOW larql.auto_download;
-SHOW larql.data_directory;
+SHOW infer.default_model;
+SHOW infer.max_memory;
+SHOW infer.auto_download;
+SHOW infer.data_directory;
 
 -- Model registry table
-SELECT count(*) FROM larql.models;
+SELECT count(*) FROM infer.models;
 
 -- Model management functions
-SELECT * FROM larql_models();
+SELECT * FROM infer_models();
 
 -- Function signatures (verify they exist, even without a loaded model)
 SELECT proname, pg_get_function_arguments(oid) AS args,
@@ -42,22 +42,22 @@ ORDER BY proname;
 
 SELECT proname, pg_get_function_arguments(oid) AS args,
        pg_get_function_result(oid) AS rettype
-FROM pg_proc WHERE proname = 'larql_create_model' AND prokind = 'f'
+FROM pg_proc WHERE proname = 'infer_create_model' AND prokind = 'f'
 ORDER BY proname;
 
 SELECT proname, pg_get_function_arguments(oid) AS args,
        pg_get_function_result(oid) AS rettype
-FROM pg_proc WHERE proname = 'larql_drop_model' AND prokind = 'f'
+FROM pg_proc WHERE proname = 'infer_drop_model' AND prokind = 'f'
 ORDER BY proname;
 
 SELECT proname, pg_get_function_arguments(oid) AS args,
        pg_get_function_result(oid) AS rettype
-FROM pg_proc WHERE proname = 'larql_models' AND prokind = 'f'
+FROM pg_proc WHERE proname = 'infer_models' AND prokind = 'f'
 ORDER BY proname;
 
 SELECT proname, pg_get_function_arguments(oid) AS args,
        pg_get_function_result(oid) AS rettype
-FROM pg_proc WHERE proname = 'larql_distance' AND prokind = 'f'
+FROM pg_proc WHERE proname = 'infer_distance' AND prokind = 'f'
 ORDER BY proname;
 
 -- Operator
@@ -65,4 +65,4 @@ SELECT oprname, oprleft::regtype, oprright::regtype
 FROM pg_operator WHERE oprname = '<~>';
 
 -- Cleanup
-DROP EXTENSION pg_larql;
+DROP EXTENSION pg_infer;

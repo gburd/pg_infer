@@ -1,18 +1,18 @@
 use pgrx::error;
 
-/// Unified error type for pg_larql operations.
+/// Unified error type for pg_infer operations.
 #[derive(Debug, thiserror::Error)]
-pub enum PgLarqlError {
-    #[error("LARQL vindex error: {0}")]
+pub enum PgInferError {
+    #[error("INFER vindex error: {0}")]
     Vindex(#[from] larql_vindex::VindexError),
 
-    #[error("LARQL model error: {0}")]
+    #[error("INFER model error: {0}")]
     Model(#[from] larql_models::ModelError),
 
     #[error("model not found: {name}")]
     ModelNotFound { name: String },
 
-    #[error("no default model configured — SET larql.default_model first")]
+    #[error("no default model configured — SET infer.default_model first")]
     NoDefaultModel,
 
     #[cfg_attr(
@@ -35,35 +35,35 @@ pub enum PgLarqlError {
     Spi(#[from] pgrx::spi::SpiError),
 }
 
-/// Convert a `PgLarqlError` into a PostgreSQL `ereport(ERROR, ...)` and
+/// Convert a `PgInferError` into a PostgreSQL `ereport(ERROR, ...)` and
 /// diverge.  Use this at the boundary where you want to surface the error
 /// to the SQL caller.
 #[allow(dead_code)]
-pub fn report(e: PgLarqlError) -> ! {
+pub fn report(e: PgInferError) -> ! {
     match e {
-        PgLarqlError::ModelNotFound { ref name } => {
-            error!("LARQL: model '{}' not found — register it with larql_create_model()", name);
+        PgInferError::ModelNotFound { ref name } => {
+            error!("INFER: model '{}' not found — register it with infer_create_model()", name);
         }
-        PgLarqlError::NoDefaultModel => {
+        PgInferError::NoDefaultModel => {
             error!(
-                "LARQL: no default model configured. \
-                 Use SET larql.default_model = 'name'; or pass model => 'name'"
+                "INFER: no default model configured. \
+                 Use SET infer.default_model = 'name'; or pass model => 'name'"
             );
         }
-        PgLarqlError::InsufficientExtractLevel {
+        PgInferError::InsufficientExtractLevel {
             ref needed,
             ref have,
         } => {
             error!(
-                "LARQL: operation requires extract level '{}' but model was built at '{}'",
+                "INFER: operation requires extract level '{}' but model was built at '{}'",
                 needed, have
             );
         }
-        PgLarqlError::EmptyPrompt => {
-            error!("LARQL: prompt is empty after tokenization");
+        PgInferError::EmptyPrompt => {
+            error!("INFER: prompt is empty after tokenization");
         }
         _ => {
-            error!("LARQL: {}", e);
+            error!("INFER: {}", e);
         }
     }
 }

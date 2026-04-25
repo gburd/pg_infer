@@ -1,7 +1,7 @@
 use ndarray::Array1;
 use pgrx::prelude::*;
 
-use crate::error::PgLarqlError;
+use crate::error::PgInferError;
 use crate::registry;
 
 /// Trace model activations for a prompt, returning the top-K features
@@ -42,16 +42,16 @@ fn walk_impl(
     handle: &registry::ModelHandle,
     prompt: &str,
     top_k: usize,
-) -> Result<Vec<(i32, i32, f64, String)>, PgLarqlError> {
+) -> Result<Vec<(i32, i32, f64, String)>, PgInferError> {
     // 1. Tokenize the prompt.
     let encoding = handle
         .tokenizer
         .encode(prompt, true)
-        .map_err(|e| PgLarqlError::Tokenize(e.to_string()))?;
+        .map_err(|e| PgInferError::Tokenize(e.to_string()))?;
     let token_ids: Vec<u32> = encoding.get_ids().to_vec();
 
     if token_ids.is_empty() {
-        return Err(PgLarqlError::EmptyPrompt);
+        return Err(PgInferError::EmptyPrompt);
     }
 
     // 2. Build the query vector from the last token's embedding, scaled.
@@ -66,10 +66,9 @@ fn walk_impl(
     let mut results = Vec::new();
 
     for layer in 0..num_layers {
-        let hits = handle.vindex.gate_knn(layer, &query, top_k);
+        let hits = handle.gate_knn(layer, &query, top_k);
         for (feature_idx, gate_score) in hits {
             let concept = handle
-                .vindex
                 .feature_meta(layer, feature_idx)
                 .map(|m| m.top_token.clone())
                 .unwrap_or_default();

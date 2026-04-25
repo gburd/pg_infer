@@ -1,7 +1,7 @@
 use ndarray::Array1;
 use pgrx::prelude::*;
 
-use crate::error::PgLarqlError;
+use crate::error::PgInferError;
 use crate::registry;
 
 /// Semantic similarity between two texts using the model's internal
@@ -44,7 +44,7 @@ fn similar_to_impl(
     handle: &registry::ModelHandle,
     a: &str,
     b: &str,
-) -> Result<f64, PgLarqlError> {
+) -> Result<f64, PgInferError> {
     let embed_a = embed_text(handle, a)?;
     let embed_b = embed_text(handle, b)?;
 
@@ -58,8 +58,8 @@ fn similar_to_impl(
     let mut max_shared_score: f32 = 0.0;
 
     for layer in 0..num_layers {
-        let hits_a = handle.vindex.gate_knn(layer, &embed_a, top_k);
-        let hits_b = handle.vindex.gate_knn(layer, &embed_b, top_k);
+        let hits_a = handle.gate_knn(layer, &embed_a, top_k);
+        let hits_b = handle.gate_knn(layer, &embed_b, top_k);
 
         // Build a set of feature indices activated by B.
         let set_b: std::collections::HashSet<usize> =
@@ -92,7 +92,7 @@ fn similar_to_impl(
 
 /// Distance function for the `<~>` operator (lower = more similar).
 #[pg_extern]
-fn larql_distance(a: &str, b: &str) -> Result<f64, Box<dyn std::error::Error>> {
+fn infer_distance(a: &str, b: &str) -> Result<f64, Box<dyn std::error::Error>> {
     let model_name = registry::resolve_model_name(None)?;
     let score = registry::with_model(&model_name, |handle| {
         similar_to_impl(handle, a, b)
@@ -107,12 +107,12 @@ extension_sql!(
 CREATE OPERATOR <~> (
     LEFTARG  = text,
     RIGHTARG = text,
-    FUNCTION = larql_distance,
+    FUNCTION = infer_distance,
     COMMUTATOR = <~>
 );
 "#,
-    name = "larql_distance_operator",
-    requires = [larql_distance],
+    name = "infer_distance_operator",
+    requires = [infer_distance],
 );
 
 // ---------------------------------------------------------------------------
@@ -123,15 +123,15 @@ CREATE OPERATOR <~> (
 fn embed_text(
     handle: &registry::ModelHandle,
     text: &str,
-) -> Result<Array1<f32>, PgLarqlError> {
+) -> Result<Array1<f32>, PgInferError> {
     let encoding = handle
         .tokenizer
         .encode(text, false)
-        .map_err(|e| PgLarqlError::Tokenize(e.to_string()))?;
+        .map_err(|e| PgInferError::Tokenize(e.to_string()))?;
     let token_ids: Vec<u32> = encoding.get_ids().to_vec();
 
     if token_ids.is_empty() {
-        return Err(PgLarqlError::EmptyPrompt);
+        return Err(PgInferError::EmptyPrompt);
     }
 
     let hidden = handle.config.hidden_size;

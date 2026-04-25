@@ -1,6 +1,6 @@
 use pgrx::prelude::*;
 
-use crate::error::PgLarqlError;
+use crate::error::PgInferError;
 use crate::registry;
 
 /// Run a full forward pass on the prompt and return the top-K predicted
@@ -48,13 +48,13 @@ fn infer_impl(
     handle: &registry::ModelHandle,
     prompt: &str,
     top_k: usize,
-) -> Result<Vec<(String, f64, i32)>, PgLarqlError> {
+) -> Result<Vec<(String, f64, i32)>, PgInferError> {
     use larql_vindex::ExtractLevel;
 
     // Verify the vindex has inference-level weights.
     let level = handle.config.extract_level;
     if level != ExtractLevel::Inference && level != ExtractLevel::All {
-        return Err(PgLarqlError::InsufficientExtractLevel {
+        return Err(PgInferError::InsufficientExtractLevel {
             needed: "inference".to_string(),
             have: format!("{:?}", level).to_lowercase(),
         });
@@ -64,16 +64,16 @@ fn infer_impl(
     let encoding = handle
         .tokenizer
         .encode(prompt, true)
-        .map_err(|e| PgLarqlError::Tokenize(e.to_string()))?;
+        .map_err(|e| PgInferError::Tokenize(e.to_string()))?;
     let token_ids: Vec<u32> = encoding.get_ids().to_vec();
 
     if token_ids.is_empty() {
-        return Err(PgLarqlError::EmptyPrompt);
+        return Err(PgInferError::EmptyPrompt);
     }
 
     // Load the full model weights for inference.
     let weights = larql_inference::load_model_dir(&handle.path)
-        .map_err(|e| PgLarqlError::Internal(format!("failed to load model weights: {}", e)))?;
+        .map_err(|e| PgInferError::Internal(format!("failed to load model weights: {}", e)))?;
 
     // Run the forward pass.
     let result = larql_inference::predict(&weights, &handle.tokenizer, &token_ids, top_k);
@@ -94,8 +94,8 @@ fn infer_impl(
     _handle: &registry::ModelHandle,
     _prompt: &str,
     _top_k: usize,
-) -> Result<Vec<(String, f64, i32)>, PgLarqlError> {
-    Err(PgLarqlError::Internal(
+) -> Result<Vec<(String, f64, i32)>, PgInferError> {
+    Err(PgInferError::Internal(
         "infer() requires the 'inference' feature — \
          rebuild with: cargo pgrx run --features inference"
             .to_string(),
