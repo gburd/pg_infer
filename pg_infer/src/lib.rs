@@ -18,11 +18,13 @@ mod pages;
 mod registry;
 mod scan;
 
-// Bootstrap the infer schema and model registry table during CREATE EXTENSION.
+// Bootstrap the infer schema, model registry table, and dummy heap table
+// for infer indexes during CREATE EXTENSION.
 extension_sql!(
     r#"
     CREATE SCHEMA IF NOT EXISTS infer;
 
+    -- Legacy model registry (mmap path).
     CREATE TABLE IF NOT EXISTS infer.models (
         model_name  TEXT PRIMARY KEY,
         vindex_path TEXT NOT NULL,
@@ -32,6 +34,12 @@ extension_sql!(
         hidden_size   INT,
         vocab_size    INT,
         registered_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    -- Dummy heap table for infer indexes.  CREATE INDEX ... USING infer
+    -- requires a heap relation; the actual data lives in the index pages.
+    CREATE TABLE IF NOT EXISTS infer._models (
+        name TEXT
     );
 "#,
     name = "bootstrap_schema",

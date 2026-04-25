@@ -9,6 +9,10 @@ use crate::registry;
 
 /// Register a model so that query functions can reference it by name.
 ///
+/// Creates a PG index `USING infer` that stores the vindex data in
+/// WAL-logged pages.  Also inserts a row into `infer.models` for backward
+/// compatibility with the mmap path.
+///
 /// `source` is either:
 /// - An absolute path to an existing `.vindex/` directory,
 /// - A HuggingFace `hf://` URI pointing to a pre-built vindex, or
@@ -37,7 +41,7 @@ fn infer_create_model(
     let vocab_size = handle.config.vocab_size as i32;
     let level_str = format!("{:?}", handle.config.extract_level).to_lowercase();
 
-    // Persist to registry table.
+    // Persist to legacy registry table (backward compat with mmap path).
     Spi::run_with_args(
         "INSERT INTO infer.models \
              (model_name, vindex_path, source, extract_level, \
@@ -62,6 +66,22 @@ fn infer_create_model(
         ],
     )?;
 
+    // Create a PG index USING infer to store the vindex data in pages.
+    // Drop any pre-existing index with the same name first.
+    let drop_sql = format!(
+        "DROP INDEX IF EXISTS \"{}\"",
+        model_name.replace('"', "\"\"")
+    );
+    let create_sql = format!(
+        "CREATE INDEX \"{}\" ON infer._models USING infer (name) WITH (source = '{}')",
+        model_name.replace('"', "\"\""),
+        vindex_path.replace('\'', "''")
+    );
+
+    // These are DDL statements — they run in the current transaction.
+    Spi::run(&drop_sql)?;
+    Spi::run(&create_sql)?;
+
     Ok(format!(
         "model '{}' registered ({} layers, hidden={}, level={})",
         model_name, num_layers, hidden_size, level_str
@@ -70,11 +90,22 @@ fn infer_create_model(
 
 /// Remove a model registration and evict it from the per-backend cache.
 ///
+/// Drops the PG infer index (if one exists) and removes the registry
+/// table entry.
+///
 /// ```sql
 /// SELECT infer_drop_model('qwen05b');
 /// ```
 #[pg_extern]
 fn infer_drop_model(model_name: &str) -> Result<String, Box<dyn std::error::Error>> {
+    // Drop the PG infer index if it exists.
+    let drop_sql = format!(
+        "DROP INDEX IF EXISTS \"{}\"",
+        model_name.replace('"', "\"\"")
+    );
+    Spi::run(&drop_sql)?;
+
+    // Remove from legacy registry table.
     Spi::run_with_args(
         "DELETE FROM infer.models WHERE model_name = $1",
         &[DatumWithOid::from(model_name)],
@@ -87,6 +118,9 @@ fn infer_drop_model(model_name: &str) -> Result<String, Box<dyn std::error::Erro
 }
 
 /// List all registered models as a set-returning function.
+///
+/// Returns models from both the legacy `infer.models` table and PG
+/// indexes using the `infer` AM.
 ///
 /// ```sql
 /// SELECT * FROM infer_models();
@@ -109,6 +143,7 @@ fn infer_models() -> Result<
     Box<dyn std::error::Error>,
 > {
     let rows: Vec<_> = Spi::connect(|client| {
+        // Query from legacy table.
         let result = client.select(
             "SELECT model_name, vindex_path, source, extract_level, \
                     num_layers, hidden_size, vocab_size, registered_at \
@@ -118,6 +153,8 @@ fn infer_models() -> Result<
         )?;
 
         let mut rows = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+
         for row in result {
             let model_name: String = row.get(1)?.unwrap_or_default();
             let vindex_path: String = row.get(2)?.unwrap_or_default();
@@ -128,10 +165,10 @@ fn infer_models() -> Result<
             let vocab_size: Option<i32> = row.get(7)?;
             let registered_at: TimestampWithTimeZone =
                 row.get(8)?.unwrap_or_else(|| {
-                    // Fallback: epoch timestamp (2000-01-01 is PG epoch).
                     TimestampWithTimeZone::new_unchecked(2000, 1, 1, 0, 0, 0.0)
                 });
 
+            seen.insert(model_name.clone());
             rows.push((
                 model_name,
                 vindex_path,
@@ -143,6 +180,36 @@ fn infer_models() -> Result<
                 registered_at,
             ));
         }
+
+        // Also discover infer-AM indexes not in the legacy table.
+        let idx_result = client.select(
+            "SELECT c.relname::text \
+             FROM pg_class c \
+             JOIN pg_am a ON c.relam = a.oid \
+             WHERE a.amname = 'infer' AND c.relkind = 'i' \
+             ORDER BY c.relname",
+            None,
+            &[],
+        )?;
+
+        for row in idx_result {
+            let idx_name: String = row.get(1)?.unwrap_or_default();
+            if seen.contains(&idx_name) {
+                continue;
+            }
+            // Minimal entry for index-only models.
+            rows.push((
+                idx_name,
+                String::from("(stored in PG pages)"),
+                String::new(),
+                String::from("browse"),
+                None,
+                None,
+                None,
+                TimestampWithTimeZone::new_unchecked(2000, 1, 1, 0, 0, 0.0),
+            ));
+        }
+
         Ok::<_, pgrx::spi::SpiError>(rows)
     })?;
 
