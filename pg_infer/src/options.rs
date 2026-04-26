@@ -52,7 +52,28 @@ pub unsafe fn infer_amoptions_impl(
 ///
 /// `index_relation` must be a valid open relation.
 pub unsafe fn get_source_option(index_relation: pg_sys::Relation) -> Option<String> {
+    get_reloption(index_relation, "source")
+}
+
+/// Extract the `model` option from an index relation's reloptions.
+///
+/// This is called during ambuild for column indexes to find the model name.
+///
+/// # Safety
+///
+/// `index_relation` must be a valid open relation.
+pub unsafe fn get_model_option(index_relation: pg_sys::Relation) -> Option<String> {
+    get_reloption(index_relation, "model")
+}
+
+/// Generic helper to extract a named option from a relation's reloptions.
+///
+/// # Safety
+///
+/// `index_relation` must be a valid open relation.
+unsafe fn get_reloption(index_relation: pg_sys::Relation, key: &str) -> Option<String> {
     let rel_oid = (*index_relation).rd_id;
+    let prefix = format!("{}=", key);
 
     let query = format!(
         "SELECT unnest(reloptions) FROM pg_class WHERE oid = {}",
@@ -63,15 +84,15 @@ pub unsafe fn get_source_option(index_relation: pg_sys::Relation) -> Option<Stri
         let result = client.select(&query, None, &[]);
         match result {
             Ok(table) => {
-                let mut source = None;
+                let mut value = None;
                 for row in table {
                     if let Ok(Some(opt)) = row.get::<String>(1) {
-                        if let Some(val) = opt.strip_prefix("source=") {
-                            source = Some(val.to_string());
+                        if let Some(val) = opt.strip_prefix(&prefix) {
+                            value = Some(val.to_string());
                         }
                     }
                 }
-                Ok::<_, pgrx::spi::SpiError>(source)
+                Ok::<_, pgrx::spi::SpiError>(value)
             }
             Err(e) => Err(e),
         }

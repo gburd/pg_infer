@@ -27,7 +27,7 @@ const P_NEW: pg_sys::BlockNumber = crate::pages::INVALID_BLOCK_NUMBER;
 /// ```
 #[pg_extern(sql = "
 CREATE FUNCTION infer_am_handler(internal) RETURNS index_am_handler
-    AS 'MODULE_PATHNAME', 'infer_am_handler' LANGUAGE C STRICT;
+    AS 'MODULE_PATHNAME', 'infer_am_handler_wrapper' LANGUAGE C STRICT;
 
 CREATE ACCESS METHOD infer TYPE INDEX HANDLER infer_am_handler;
 ")]
@@ -99,23 +99,36 @@ unsafe extern "C-unwind" fn infer_ambuild(
 ) -> *mut pg_sys::IndexBuildResult {
     let _ = (heap_relation, index_info);
 
-    // Parse the WITH options to get the source path.
+    // Parse the WITH options to determine index type.
     let source = options::get_source_option(index_relation);
+    let model = options::get_model_option(index_relation);
 
-    match source {
-        Some(path) => match build::build_index(index_relation, &path) {
-            Ok(r) => {
-                let ptr = pg_sys::palloc0(std::mem::size_of::<pg_sys::IndexBuildResult>())
-                    as *mut pg_sys::IndexBuildResult;
-                (*ptr) = r;
-                ptr
-            }
-            Err(e) => {
-                pgrx::error!("INFER ambuild failed: {}", e);
-            }
-        },
-        None => {
-            pgrx::error!("INFER: missing required option 'source' — use WITH (source = '/path/to/vindex')");
+    let build_result = match (source, model) {
+        (Some(path), _) => {
+            // Model index: full vindex data stored in PG pages.
+            build::build_index(index_relation, &path)
+        }
+        (None, Some(model_name)) => {
+            // Column index: references a model, enables <~> scans.
+            build::build_column_index(index_relation, &model_name)
+        }
+        (None, None) => {
+            pgrx::error!(
+                "INFER: missing required option — use WITH (source = '...') \
+                 for model indexes or WITH (model = '...') for column indexes"
+            );
+        }
+    };
+
+    match build_result {
+        Ok(r) => {
+            let ptr = pg_sys::palloc0(std::mem::size_of::<pg_sys::IndexBuildResult>())
+                as *mut pg_sys::IndexBuildResult;
+            (*ptr) = r;
+            ptr
+        }
+        Err(e) => {
+            pgrx::error!("INFER ambuild failed: {}", e);
         }
     }
 }
@@ -155,7 +168,8 @@ unsafe extern "C-unwind" fn infer_ambuildempty(index_relation: pg_sys::Relation)
         embed_dtype: 0,
         down_top_k: 0,
         extract_level: 0,
-        _pad: [0u8; 3],
+        index_kind: crate::pages::INDEX_KIND_MODEL,
+        _pad: [0u8; 2],
         layer_dir_blk: 0,
         gate_start_blk: 0,
         gate_end_blk: 0,

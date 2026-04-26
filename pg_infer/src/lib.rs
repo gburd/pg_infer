@@ -190,6 +190,16 @@ mod tests {
     }
 
     #[pg_test]
+    fn test_opclass_exists() {
+        Spi::run("CREATE EXTENSION IF NOT EXISTS pg_infer").expect("CREATE EXTENSION failed");
+        let exists = Spi::get_one::<bool>(
+            "SELECT EXISTS(SELECT 1 FROM pg_opclass WHERE opcname = 'text_infer_ops')",
+        )
+        .expect("query failed");
+        assert_eq!(exists, Some(true));
+    }
+
+    #[pg_test]
     fn test_create_model_nonexistent_path() {
         Spi::run("CREATE EXTENSION IF NOT EXISTS pg_infer").expect("CREATE EXTENSION failed");
         // Creating a model with a path that doesn't exist should fail.

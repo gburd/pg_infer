@@ -5,6 +5,9 @@ use std::path::Path;
 
 use pgrx::pg_sys;
 
+use pgrx::datum::DatumWithOid;
+use pgrx::prelude::*;
+
 use crate::error::PgInferError;
 use crate::pages::*;
 
@@ -95,7 +98,8 @@ pub unsafe fn build_index(
         embed_dtype: 1, // f16
         down_top_k: config.down_top_k as u16,
         extract_level: 0, // browse
-        _pad: [0u8; 3],
+        index_kind: INDEX_KIND_MODEL,
+        _pad: [0u8; 2],
         layer_dir_blk,
         gate_start_blk,
         gate_end_blk,
@@ -221,6 +225,90 @@ pub unsafe fn build_index(
         as *mut pg_sys::IndexBuildResult;
     (*result).heap_tuples = 0.0;
     (*result).index_tuples = total_pages as f64;
+
+    Ok(*result)
+}
+
+// ---------------------------------------------------------------------------
+// Column index builder
+// ---------------------------------------------------------------------------
+
+/// Build a column index: a lightweight index that references a model index
+/// and enables `<~>` operator scans on a user table column.
+///
+/// Writes a single metapage with `index_kind = INDEX_KIND_COLUMN` and the
+/// referenced model name.  No vindex data is stored.
+///
+/// # Safety
+///
+/// Must be called from the ambuild callback with valid relation pointers.
+pub unsafe fn build_column_index(
+    index_relation: pg_sys::Relation,
+    model_name: &str,
+) -> Result<pg_sys::IndexBuildResult, PgInferError> {
+    // Validate that the referenced model exists.
+    let model_exists: Option<bool> = Spi::get_one_with_args(
+        "SELECT EXISTS(\
+             SELECT 1 FROM infer.models WHERE model_name = $1 \
+             UNION ALL \
+             SELECT 1 FROM pg_class c JOIN pg_am a ON c.relam = a.oid \
+             WHERE a.amname = 'infer' AND c.relname = $1 AND c.relkind = 'i'\
+         )",
+        &[DatumWithOid::from(model_name)],
+    )?;
+
+    if model_exists != Some(true) {
+        return Err(PgInferError::ModelNotFound {
+            name: model_name.to_string(),
+        });
+    }
+
+    // Build the metapage for the column index.
+    let mut meta = InferMetaPage {
+        magic: INFER_MAGIC,
+        format_version: INFER_FORMAT_VERSION,
+        model_name: [0u8; 128],
+        num_layers: 0,
+        hidden_size: 0,
+        features_per_layer: 0,
+        vocab_size: 0,
+        embed_scale: 0.0,
+        gate_dtype: 0,
+        embed_dtype: 0,
+        down_top_k: 0,
+        extract_level: 0,
+        index_kind: INDEX_KIND_COLUMN,
+        _pad: [0u8; 2],
+        layer_dir_blk: 0,
+        gate_start_blk: 0,
+        gate_end_blk: 0,
+        embed_start_blk: 0,
+        embed_end_blk: 0,
+        down_start_blk: 0,
+        down_end_blk: 0,
+        tok_start_blk: 0,
+        tok_end_blk: 0,
+        max_gate_score: 0.0,
+        mean_gate_score: 0.0,
+        total_pages: 1,
+        source_uri: [0u8; 256],
+    };
+
+    // Copy model name into metapage.
+    let name_bytes = model_name.as_bytes();
+    let copy_len = name_bytes.len().min(meta.model_name.len() - 1);
+    meta.model_name[..copy_len].copy_from_slice(&name_bytes[..copy_len]);
+
+    // Write the single metapage.
+    write_new_page(index_relation, PageType::Meta, |page| {
+        write_struct_at(page, 0, &meta);
+    })?;
+
+    // Build the result.
+    let result = pg_sys::palloc0(std::mem::size_of::<pg_sys::IndexBuildResult>())
+        as *mut pg_sys::IndexBuildResult;
+    (*result).heap_tuples = 0.0;
+    (*result).index_tuples = 0.0;
 
     Ok(*result)
 }

@@ -40,7 +40,7 @@ fn similar_to(
 /// 2. For each layer, compute gate_knn for both embeddings.
 /// 3. Find features that appear in both top-K sets.
 /// 4. Return the maximum shared gate score.
-fn similar_to_impl(
+pub(crate) fn similar_to_impl(
     handle: &registry::ModelHandle,
     a: &str,
     b: &str,
@@ -101,7 +101,7 @@ fn infer_distance(a: &str, b: &str) -> Result<f64, Box<dyn std::error::Error>> {
     Ok(if score > 0.0 { 1.0 / score } else { f64::MAX })
 }
 
-// Register the <~> operator.
+// Register the <~> operator and its operator class for ORDER BY support.
 extension_sql!(
     r#"
 CREATE OPERATOR <~> (
@@ -110,6 +110,11 @@ CREATE OPERATOR <~> (
     FUNCTION = infer_distance,
     COMMUTATOR = <~>
 );
+
+CREATE OPERATOR CLASS text_infer_ops
+    DEFAULT FOR TYPE text USING infer AS
+        OPERATOR 1 <~> (text, text) FOR ORDER BY float_ops,
+        FUNCTION 1 infer_distance(text, text);
 "#,
     name = "infer_distance_operator",
     requires = [infer_distance],
@@ -120,7 +125,7 @@ CREATE OPERATOR <~> (
 // ---------------------------------------------------------------------------
 
 /// Embed a text string into a single vector by averaging token embeddings.
-fn embed_text(
+pub(crate) fn embed_text(
     handle: &registry::ModelHandle,
     text: &str,
 ) -> Result<Array1<f32>, PgInferError> {
@@ -154,7 +159,7 @@ fn embed_text(
 }
 
 /// Cosine similarity between two 1-D vectors.
-fn cosine_similarity(a: &Array1<f32>, b: &Array1<f32>) -> f64 {
+pub(crate) fn cosine_similarity(a: &Array1<f32>, b: &Array1<f32>) -> f64 {
     let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
     let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
     let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();

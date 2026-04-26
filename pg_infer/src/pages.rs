@@ -25,6 +25,12 @@ pub const INFER_USABLE_PER_PAGE: usize = pg_sys::BLCKSZ as usize - 24 - INFER_OP
 /// Invalid block number sentinel (same as PG's InvalidBlockNumber / P_NEW).
 pub const INVALID_BLOCK_NUMBER: u32 = 0xFFFFFFFF;
 
+/// Index kind: model index (stores full vindex data in PG pages).
+pub const INDEX_KIND_MODEL: u8 = 0;
+
+/// Index kind: column index (references a model index, enables `<~>` scans).
+pub const INDEX_KIND_COLUMN: u8 = 1;
+
 // ---------------------------------------------------------------------------
 // Page type discriminator
 // ---------------------------------------------------------------------------
@@ -122,8 +128,10 @@ pub struct InferMetaPage {
     pub down_top_k: u16,
     /// Extract level: 0=browse, 1=inference, 2=all.
     pub extract_level: u8,
+    /// Index kind: 0=model index, 1=column index.
+    pub index_kind: u8,
     /// Padding for alignment.
-    pub _pad: [u8; 3],
+    pub _pad: [u8; 2],
     // Section block ranges
     pub layer_dir_blk: u32,
     pub gate_start_blk: u32,
