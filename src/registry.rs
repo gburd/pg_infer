@@ -159,12 +159,15 @@ fn load_model(model_name: &str) -> Result<ModelHandle, PgInferError> {
 /// Returns `Ok(None)` if no such index exists, `Ok(Some(handle))` if found
 /// and loaded, or `Err(...)` on load failure.
 fn try_load_from_index(model_name: &str) -> Result<Option<ModelHandle>, PgInferError> {
-    // Find an index using the infer AM with the given name.
+    // Find an index using the infer AM with the given name in the `infer` schema.
+    // Schema-qualify to avoid matching indexes with the same name in other schemas.
     let maybe_oid: Option<pgrx::pg_sys::Oid> = Spi::get_one_with_args(
         "SELECT c.oid \
          FROM pg_class c \
          JOIN pg_am a ON c.relam = a.oid \
+         JOIN pg_namespace n ON c.relnamespace = n.oid \
          WHERE a.amname = 'infer' AND c.relname = $1 AND c.relkind = 'i' \
+               AND n.nspname = 'infer' \
          LIMIT 1",
         &[DatumWithOid::from(model_name)],
     )?;

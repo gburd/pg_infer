@@ -75,9 +75,12 @@ impl PageBackend {
         let meta = read_meta(rel)?;
         if meta.magic != INFER_MAGIC {
             pg_sys::relation_close(rel, pg_sys::AccessShareLock as _);
-            return Err(PgInferError::Internal(
-                "invalid infer index: bad magic number".into(),
-            ));
+            return Err(PgInferError::Internal(format!(
+                "invalid infer index: bad magic number 0x{:08X} (expected 0x{:08X}). \
+                 This may indicate a stale index from a previous build — try: \
+                 SELECT infer_drop_model('...'); then re-register.",
+                meta.magic, INFER_MAGIC,
+            )));
         }
 
         // Layer directory (block 1).

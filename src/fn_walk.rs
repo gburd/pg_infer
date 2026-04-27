@@ -55,9 +55,10 @@ fn walk_impl(
     }
 
     // 2. Build the query vector.
-    //    By default, average all token embeddings (controlled by
-    //    `infer.walk_embed_mode` GUC).  "last" mode uses only the last
-    //    token (matching the original LQL walk behaviour).
+    //    By default, use the last token's embedding (controlled by
+    //    `infer.walk_embed_mode` GUC, default "last").  This matches
+    //    the LARQL CLI behaviour.  "average" mode averages all token
+    //    embeddings instead.
     let query: Array1<f32> = if crate::gucs::walk_embed_mode_is_last() {
         let last_tok = token_ids[token_ids.len() - 1];
         handle

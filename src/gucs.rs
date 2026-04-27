@@ -31,8 +31,15 @@ pub static GATE_THRESHOLD: GucSetting<f64> = GucSetting::<f64>::new(0.0);
 pub static DESCRIBE_TOP_K: GucSetting<i32> = GucSetting::<i32>::new(20);
 
 /// Embedding mode for walk(): "average" or "last".
+///
+/// "last" matches the LARQL CLI behavior: use only the last token's
+/// embedding as the query vector.  This produces stronger, more
+/// interpretable activations because transformers build up a
+/// representation across tokens — the last position captures the full
+/// context.  "average" averages all token embeddings (including any
+/// special tokens), which dilutes the signal for longer prompts.
 pub static WALK_EMBED_MODE: GucSetting<Option<CString>> =
-    GucSetting::<Option<CString>>::new(Some(c"average"));
+    GucSetting::<Option<CString>>::new(Some(c"last"));
 
 /// Register all GUC parameters.
 ///
@@ -104,7 +111,7 @@ pub unsafe fn init() {
     GucRegistry::define_string_guc(
         c"infer.walk_embed_mode",
         c"Embedding mode for walk(): 'average' or 'last'.",
-        c"'average' averages all token embeddings; 'last' uses only the last token. Default: 'average'.",
+        c"'last' uses the last token (matches LARQL); 'average' averages all tokens. Default: 'last'.",
         &WALK_EMBED_MODE,
         GucContext::Userset,
         GucFlags::default(),
