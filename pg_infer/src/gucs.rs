@@ -55,7 +55,7 @@ pub unsafe fn init() {
         c"Base directory for cached vindex files.",
         c"Relative to $PGDATA unless an absolute path. Default: 'infer'.",
         &DATA_DIRECTORY,
-        GucContext::Sighup,
+        GucContext::Suset,
         GucFlags::default(),
     );
 

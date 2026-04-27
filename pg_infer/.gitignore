@@ -1,0 +1,18 @@
+# Rust
+/target/
+Cargo.lock
+
+# pgrx
+.pgrx/
+
+*~
+
+# Build artifacts
+*.so
+*.dylib
+*.dll
+*.o
+*.a
+
+# Vindex data (large binaries)
+vindexes/

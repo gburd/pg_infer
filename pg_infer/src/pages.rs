@@ -349,12 +349,25 @@ pub unsafe fn page_get_data(page: pg_sys::Page) -> *mut u8 {
 
 /// Initialize a new page with our opaque area and set the page type.
 ///
+/// After `PageInit`, `pd_lower = SizeOfPageHeaderData (24)` and
+/// `pd_upper = BLCKSZ - special_size (8176)`.  PostgreSQL's
+/// `GenericXLogFinish` zeros the "hole" between `pd_lower` and `pd_upper`
+/// when applying page changes.  Since we store custom structured data in
+/// this region (not standard PG tuple items), we must advance `pd_lower`
+/// to `pd_upper` so that `GenericXLogFinish` treats the entire data area
+/// as used space and does not zero our data.
+///
 /// # Safety
 ///
 /// `page` must be a valid, writable buffer page. Caller must be inside
 /// a GenericXLog context or otherwise holding appropriate locks.
 pub unsafe fn init_page(page: pg_sys::Page, page_type: PageType) {
     pg_sys::PageInit(page, pg_sys::BLCKSZ as usize, INFER_OPAQUE_SIZE);
+
+    // Prevent GenericXLogFinish from zeroing the data area.
+    let header = page as *mut pg_sys::PageHeaderData;
+    (*header).pd_lower = (*header).pd_upper;
+
     let opaque = page_get_opaque(page);
     (*opaque) = InferPageOpaque::new(page_type);
 }

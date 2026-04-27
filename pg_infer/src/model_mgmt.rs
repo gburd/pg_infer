@@ -68,8 +68,10 @@ fn infer_create_model(
 
     // Create a PG index USING infer to store the vindex data in pages.
     // Drop any pre-existing index with the same name first.
+    // Schema-qualify to ensure we find the index in the `infer` schema,
+    // regardless of the current search_path.
     let drop_sql = format!(
-        "DROP INDEX IF EXISTS \"{}\"",
+        "DROP INDEX IF EXISTS infer.\"{}\"",
         model_name.replace('"', "\"\"")
     );
     let create_sql = format!(
@@ -99,8 +101,9 @@ fn infer_create_model(
 #[pg_extern]
 fn infer_drop_model(model_name: &str) -> Result<String, Box<dyn std::error::Error>> {
     // Drop the PG infer index if it exists.
+    // Schema-qualify to ensure we find the index in the `infer` schema.
     let drop_sql = format!(
-        "DROP INDEX IF EXISTS \"{}\"",
+        "DROP INDEX IF EXISTS infer.\"{}\"",
         model_name.replace('"', "\"\"")
     );
     Spi::run(&drop_sql)?;
