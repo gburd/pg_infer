@@ -54,12 +54,19 @@ fn walk_impl(
         return Err(PgInferError::EmptyPrompt);
     }
 
-    // 2. Build the query vector from the last token's embedding, scaled.
-    //    For multi-token prompts we use the last token (matching LQL's walk
-    //    behaviour); a future version could average all tokens.
-    let last_tok = token_ids[token_ids.len() - 1];
-    let embed_row = handle.embeddings.row(last_tok as usize);
-    let query: Array1<f32> = embed_row.mapv(|v| v * handle.embed_scale);
+    // 2. Build the query vector.
+    //    By default, average all token embeddings (controlled by
+    //    `infer.walk_embed_mode` GUC).  "last" mode uses only the last
+    //    token (matching the original LQL walk behaviour).
+    let query: Array1<f32> = if crate::gucs::walk_embed_mode_is_last() {
+        let last_tok = token_ids[token_ids.len() - 1];
+        handle
+            .embeddings
+            .row(last_tok as usize)
+            .mapv(|v| v * handle.embed_scale)
+    } else {
+        crate::fn_similar::embed_text(handle, prompt)?
+    };
 
     // 3. Scan every owned layer, collect top-K features.
     let num_layers = handle.config.num_layers;

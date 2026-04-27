@@ -8,7 +8,6 @@
 //! distances for every row, sorting, and returning TIDs in distance order.
 
 use pgrx::pg_sys;
-use pgrx::prelude::*;
 
 use crate::error::PgInferError;
 use crate::pages;
@@ -42,7 +41,6 @@ pub unsafe extern "C-unwind" fn infer_ambeginscan(
     nkeys: std::ffi::c_int,
     norderbys: std::ffi::c_int,
 ) -> pg_sys::IndexScanDesc {
-    pg_sys::RelationIncrementReferenceCount(index_relation);
     let scan = pg_sys::RelationGetIndexScan(index_relation, nkeys, norderbys);
 
     // Read the metapage to determine index kind and model name.
@@ -89,15 +87,7 @@ pub unsafe extern "C-unwind" fn infer_amrescan(
         let key = &*orderbys;
         // Check the key is not null.
         if key.sk_flags & pg_sys::SK_ISNULL as i32 == 0 {
-            let cstr = pg_sys::text_to_cstring(key.sk_argument.cast_mut_ptr::<pg_sys::text>());
-            if !cstr.is_null() {
-                let query = std::ffi::CStr::from_ptr(cstr)
-                    .to_str()
-                    .unwrap_or("")
-                    .to_string();
-                pg_sys::pfree(cstr as *mut std::ffi::c_void);
-                state.query_text = Some(query);
-            }
+            state.query_text = datum_text_to_string(key.sk_argument);
         }
 
         // Copy the order-by keys into the scan descriptor so PG knows we
@@ -182,9 +172,6 @@ pub unsafe extern "C-unwind" fn infer_amendscan(scan: pg_sys::IndexScanDesc) {
         let _ = Box::from_raw((*scan).opaque as *mut InferScanState);
         (*scan).opaque = std::ptr::null_mut();
     }
-
-    let index_relation = (*scan).indexRelation;
-    pg_sys::RelationDecrementReferenceCount(index_relation);
 }
 
 // ---------------------------------------------------------------------------
@@ -220,44 +207,51 @@ unsafe fn read_metapage_info(rel: pg_sys::Relation) -> (u8, String) {
     (meta.index_kind, model_name)
 }
 
-/// Get the heap relation OID and indexed column attribute number for an
-/// index, via SPI query on `pg_index`.
-unsafe fn get_heap_info(index_oid: pg_sys::Oid) -> Result<(pg_sys::Oid, i16), PgInferError> {
-    let query = format!(
-        "SELECT indrelid, indkey[0] FROM pg_index WHERE indexrelid = {}",
-        index_oid.to_u32()
-    );
-
-    Spi::connect(|client| {
-        let result = client.select(&query, None, &[])?;
-        for row in result {
-            let heap_oid: pg_sys::Oid = row
-                .get(1)?
-                .ok_or(pgrx::spi::SpiError::InvalidPosition)?;
-            let attnum: i16 = row
-                .get(2)?
-                .ok_or(pgrx::spi::SpiError::InvalidPosition)?;
-            return Ok((heap_oid, attnum));
-        }
-        Err(pgrx::spi::SpiError::InvalidPosition)
-    })
-    .map_err(PgInferError::Spi)
+/// Get the indexed column attribute number directly from the index's
+/// `rd_index` (Form_pg_index) struct, avoiding SPI.
+unsafe fn get_heap_attnum(scan: pg_sys::IndexScanDesc) -> Result<i16, PgInferError> {
+    let rd_index = (*(*scan).indexRelation).rd_index;
+    if rd_index.is_null() {
+        return Err(PgInferError::Internal("rd_index is null".into()));
+    }
+    Ok(*(*rd_index).indkey.values.as_ptr())
 }
 
-/// Perform a brute-force heap scan, computing `infer_distance` for every
+/// Convert a text Datum to a Rust String, pfree-ing the intermediate C string.
+///
+/// Returns `None` if the C string is null or not valid UTF-8.
+unsafe fn datum_text_to_string(datum: pg_sys::Datum) -> Option<String> {
+    let cstr = pg_sys::text_to_cstring(datum.cast_mut_ptr::<pg_sys::text>());
+    if cstr.is_null() {
+        return None;
+    }
+    let result = std::ffi::CStr::from_ptr(cstr)
+        .to_str()
+        .ok()
+        .map(|s| s.to_string());
+    pg_sys::pfree(cstr as *mut std::ffi::c_void);
+    result
+}
+
+/// Perform a brute-force heap scan, computing semantic distance for every
 /// visible tuple, and return results sorted by distance ascending.
+///
+/// The query embedding is pre-computed once and reused for all rows.
 unsafe fn compute_distances(
     scan: pg_sys::IndexScanDesc,
     model_name: &str,
     query_text: &str,
 ) -> Result<Vec<(f64, pg_sys::ItemPointerData)>, PgInferError> {
-    let index_rel = (*scan).indexRelation;
-    let index_oid = (*index_rel).rd_id;
+    let attnum = get_heap_attnum(scan)?;
 
-    let (heap_oid, attnum) = get_heap_info(index_oid)?;
-
-    // Open the heap relation.
-    let heap_rel = pg_sys::relation_open(heap_oid, pg_sys::AccessShareLock as _);
+    // Use heapRelation directly from the scan descriptor — no need to
+    // relation_open/close since the executor already holds the lock.
+    let heap_rel = (*scan).heapRelation;
+    if heap_rel.is_null() {
+        return Err(PgInferError::Internal(
+            "heapRelation is null — scan not initialized correctly".into(),
+        ));
+    }
 
     // Begin a table scan.
     let snap = pg_sys::GetActiveSnapshot();
@@ -267,6 +261,9 @@ unsafe fn compute_distances(
     let mut results = Vec::new();
 
     let scan_result = crate::registry::with_model(model_name, |handle| {
+        // Pre-compute the query embedding once.
+        let query_embedding = crate::fn_similar::embed_text(handle, query_text)?;
+
         loop {
             let got = pg_sys::table_scan_getnextslot(
                 tscan,
@@ -287,22 +284,20 @@ unsafe fn compute_distances(
             }
             let datum = *(*slot).tts_values.add(idx);
 
-            // Convert text datum to a Rust string.
-            let cstr = pg_sys::text_to_cstring(datum.cast_mut_ptr::<pg_sys::text>());
-            if cstr.is_null() {
-                continue;
-            }
-            let col_text = std::ffi::CStr::from_ptr(cstr).to_str().unwrap_or("");
+            let col_text = match datum_text_to_string(datum) {
+                Some(s) => s,
+                None => continue,
+            };
 
-            // Compute similarity score and convert to distance.
-            let score =
-                crate::fn_similar::similar_to_impl(handle, col_text, query_text).unwrap_or(0.0);
-            let distance = if score > 0.0 { 1.0 / score } else { f64::MAX };
+            // Compute similarity with pre-computed query embedding.
+            let score = crate::fn_similar::similar_to_with_embedding(
+                handle, &col_text, &query_embedding,
+            )
+            .unwrap_or(0.0);
+            let distance = crate::fn_similar::score_to_distance(score);
 
             let tid = (*slot).tts_tid;
             results.push((distance, tid));
-
-            pg_sys::pfree(cstr as *mut std::ffi::c_void);
         }
 
         Ok(())
@@ -311,7 +306,6 @@ unsafe fn compute_distances(
     // Clean up the scan resources.
     pg_sys::ExecDropSingleTupleTableSlot(slot);
     pg_sys::table_endscan(tscan);
-    pg_sys::relation_close(heap_rel, pg_sys::AccessShareLock as _);
 
     scan_result?;
 

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use ndarray::{Array1, Array2};
 use once_cell::sync::Lazy;
@@ -79,7 +79,7 @@ impl ModelHandle {
 /// PostgreSQL forks one backend per connection.  Each backend maintains its
 /// own `HashMap`, but the OS kernel shares the underlying mmap pages across
 /// all backends that have the same vindex open.
-static HANDLE_CACHE: Lazy<Mutex<HashMap<String, ModelHandle>>> =
+static HANDLE_CACHE: Lazy<Mutex<HashMap<String, Arc<ModelHandle>>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
 /// Resolve the model name for a query function.
@@ -97,23 +97,30 @@ pub fn resolve_model_name(explicit: Option<&str>) -> Result<String, PgInferError
 ///
 /// On cache miss the function first checks for a PG index using the `infer`
 /// AM with a matching name, then falls back to the `infer.models` table.
+///
+/// The `Arc` is cloned and the mutex is released before calling `f`, so the
+/// closure does not block other model access in the backend.
 pub fn with_model<F, R>(model_name: &str, f: F) -> Result<R, PgInferError>
 where
     F: FnOnce(&ModelHandle) -> Result<R, PgInferError>,
 {
-    let mut cache = HANDLE_CACHE
-        .lock()
-        .map_err(|e| PgInferError::Internal(format!("handle cache lock poisoned: {}", e)))?;
+    let handle = {
+        let mut cache = HANDLE_CACHE
+            .lock()
+            .map_err(|e| PgInferError::Internal(format!("handle cache lock poisoned: {}", e)))?;
 
-    if !cache.contains_key(model_name) {
-        let handle = load_model(model_name)?;
-        cache.insert(model_name.to_string(), handle);
-    }
+        if !cache.contains_key(model_name) {
+            cache.insert(model_name.to_string(), Arc::new(load_model(model_name)?));
+        }
 
-    let handle = cache
-        .get(model_name)
-        .expect("just inserted");
-    f(handle)
+        Arc::clone(
+            cache
+                .get(model_name)
+                .ok_or_else(|| PgInferError::Internal("cache entry missing after insert".into()))?,
+        )
+    }; // lock released
+
+    f(&handle)
 }
 
 /// Evict a model from the process-local cache.

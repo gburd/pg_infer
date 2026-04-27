@@ -53,6 +53,7 @@ pub extern "C-unwind" fn _PG_init() {
     // SAFETY: called exactly once per backend by PostgreSQL.
     unsafe {
         gucs::init();
+        options::register_reloptions();
     }
 }
 
@@ -209,4 +210,26 @@ mod tests {
         });
         assert!(result.is_err(), "expected error for nonexistent path");
     }
+
+    #[pg_test]
+    fn test_new_gucs_exist() {
+        Spi::run("CREATE EXTENSION IF NOT EXISTS pg_infer").expect("ext");
+        Spi::run("SHOW infer.describe_top_k").expect("describe_top_k");
+        Spi::run("SHOW infer.walk_embed_mode").expect("walk_embed_mode");
+    }
+
+    #[pg_test]
+    fn test_describe_top_k_settable() {
+        Spi::run("CREATE EXTENSION IF NOT EXISTS pg_infer").expect("ext");
+        Spi::run("SET infer.describe_top_k = 50").expect("SET");
+        let val = Spi::get_one::<String>("SHOW infer.describe_top_k").expect("SHOW");
+        assert_eq!(val, Some("50".to_string()));
+    }
+
+    // Note: amoptions validation rejects unrecognized WITH options at runtime
+    // (e.g. WITH (typo = 'x') → ERROR), but this cannot be tested in pgrx's
+    // test framework because the error from the C-callback amoptions path
+    // crashes the test backend.  Verify manually with:
+    //   CREATE INDEX bad ON infer._models USING infer (name) WITH (typo = 'x');
+    //   -- expected: ERROR: unrecognized parameter "typo" for infer index
 }

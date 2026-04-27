@@ -28,6 +28,9 @@ pub enum PgInferError {
     #[error("empty prompt")]
     EmptyPrompt,
 
+    #[error("path not permitted: {path} is not under allowed directory {allowed}")]
+    PathNotPermitted { path: String, allowed: String },
+
     #[error("{0}")]
     Internal(String),
 
@@ -61,6 +64,12 @@ pub fn report(e: PgInferError) -> ! {
         }
         PgInferError::EmptyPrompt => {
             error!("INFER: prompt is empty after tokenization");
+        }
+        PgInferError::PathNotPermitted { ref path, ref allowed } => {
+            error!(
+                "INFER: path '{}' is not under allowed directory '{}'",
+                path, allowed
+            );
         }
         _ => {
             error!("INFER: {}", e);

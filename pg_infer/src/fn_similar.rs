@@ -90,6 +90,64 @@ pub(crate) fn similar_to_impl(
     Ok(score)
 }
 
+/// Compute similarity using a pre-computed query embedding.
+///
+/// Same algorithm as `similar_to_impl` but only embeds `col_text` — the
+/// caller provides the query embedding.  Used by index scan to avoid
+/// re-computing the query embedding for every row.
+pub(crate) fn similar_to_with_embedding(
+    handle: &registry::ModelHandle,
+    col_text: &str,
+    query_embedding: &Array1<f32>,
+) -> Result<f64, PgInferError> {
+    let embed_col = embed_text(handle, col_text)?;
+
+    let cosine = cosine_similarity(&embed_col, query_embedding);
+
+    let top_k = 50_usize;
+    let num_layers = handle.config.num_layers;
+    let mut max_shared_score: f32 = 0.0;
+
+    for layer in 0..num_layers {
+        let hits_col = handle.gate_knn(layer, &embed_col, top_k);
+        let hits_q = handle.gate_knn(layer, query_embedding, top_k);
+
+        let set_q: std::collections::HashSet<usize> =
+            hits_q.iter().map(|&(idx, _)| idx).collect();
+
+        for &(idx, score_col) in &hits_col {
+            if set_q.contains(&idx) {
+                if let Some(&(_, score_q)) = hits_q.iter().find(|&&(i, _)| i == idx) {
+                    let shared = score_col.min(score_q);
+                    if shared > max_shared_score {
+                        max_shared_score = shared;
+                    }
+                }
+            }
+        }
+    }
+
+    let score = if max_shared_score > 0.0 {
+        max_shared_score as f64
+    } else {
+        cosine * 10.0
+    };
+
+    Ok(score)
+}
+
+/// Convert a similarity score to a distance value.
+///
+/// Maps to `[0, 1)` range, monotonically decreasing with increasing score.
+/// Avoids the discontinuity of `1/score` near zero.
+pub(crate) fn score_to_distance(score: f64) -> f64 {
+    if score <= 0.0 {
+        f64::MAX
+    } else {
+        1.0 / (1.0 + score)
+    }
+}
+
 /// Distance function for the `<~>` operator (lower = more similar).
 #[pg_extern]
 fn infer_distance(a: &str, b: &str) -> Result<f64, Box<dyn std::error::Error>> {
@@ -98,7 +156,7 @@ fn infer_distance(a: &str, b: &str) -> Result<f64, Box<dyn std::error::Error>> {
         similar_to_impl(handle, a, b)
     })?;
 
-    Ok(if score > 0.0 { 1.0 / score } else { f64::MAX })
+    Ok(score_to_distance(score))
 }
 
 // Register the <~> operator and its operator class for ORDER BY support.

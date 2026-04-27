@@ -1,0 +1,144 @@
+pg_infer
+========
+
+A PostgreSQL extension that exposes transformer model knowledge as
+SQL-queryable relations.  Built on pgrx 0.17 for PostgreSQL 18+.
+
+pg_infer lets you ask questions about what a language model "knows" --
+its internal feature activations, learned associations, and semantic
+relationships -- directly from SQL, without running inference.
+
+
+QUICK START
+-----------
+
+    -- Load a vindex (extracted model knowledge)
+    SELECT infer_create_model('qwen05b', '/data/qwen-0.5b.vindex');
+
+    -- What does the model know about France?
+    SELECT * FROM describe('France');
+
+    -- How similar are two concepts?
+    SELECT similar_to('France', 'Paris');
+
+    -- Trace raw feature activations
+    SELECT * FROM walk('The capital of France is', top => 10);
+
+    -- Does the model's knowledge support this relationship?
+    SELECT implies('France', 'Paris');
+
+    -- ORDER BY semantic similarity (requires column index)
+    CREATE INDEX ON documents USING infer (title) WITH (model = 'qwen05b');
+    SELECT * FROM documents ORDER BY title <~> 'artificial intelligence' LIMIT 5;
+
+
+SQL FUNCTIONS
+-------------
+
+walk(prompt, top, model)
+    Trace gate activations across all layers for a prompt.
+    Returns: layer, feature, activation, concept
+
+describe(entity, model, threshold)
+    Return knowledge edges the model has about an entity.
+    Returns: relation, target, confidence, layer
+
+similar_to(a, b, model)
+    Semantic similarity score between two texts.
+    Returns: float8 (higher = more similar)
+
+implies(subject, object, model)
+    Test whether the model's knowledge supports a directional
+    relationship from subject to object.
+    Returns: boolean
+
+infer(prompt, top, model)
+    Full forward-pass prediction (requires --features inference).
+    Returns: token, probability, rank
+
+infer_distance(a, b)
+    Distance function for the <~> operator (lower = more similar).
+    Returns: float8
+
+infer_create_model(name, source, extract_level)
+    Register a model from a vindex directory or HuggingFace URI.
+
+infer_drop_model(name)
+    Remove a model registration.
+
+infer_models()
+    List all registered models.
+
+
+GUC PARAMETERS
+--------------
+
+infer.default_model        Default model for query functions (text)
+infer.data_directory       Base directory for vindex files (text, default: 'infer')
+infer.max_memory           Max memory per backend in MB (int, default: 8192)
+infer.auto_download        Allow HuggingFace downloads (bool, default: on)
+infer.gate_threshold       Gate score threshold (float, 0 = adaptive)
+infer.describe_top_k       Features per layer for describe (int, default: 20)
+infer.walk_embed_mode      Embedding mode for walk: 'average' or 'last'
+
+
+INDEX ACCESS METHOD
+-------------------
+
+pg_infer provides a custom index AM ("infer") with two modes:
+
+Model index:  Stores the full vindex data in WAL-logged PG pages.
+    CREATE INDEX name ON infer._models USING infer (name)
+        WITH (source = '/path/to/model.vindex');
+
+Column index: Enables ORDER BY <~> queries on text columns.
+    CREATE INDEX ON table USING infer (column)
+        WITH (model = 'model_name');
+
+
+BUILDING
+--------
+
+Requires: Rust nightly, pgrx 0.17, PostgreSQL 18+, OpenSSL, openblas.
+
+    cd pg_infer
+    cargo pgrx run pg18        # start PG with extension loaded
+    cargo pgrx test pg18       # run integration tests
+
+See CLAUDE.md for exact build environment variables needed on
+systems with Nix compiler wrappers.
+
+
+STORAGE
+-------
+
+Model data is stored in standard 8KB PostgreSQL pages using
+GenericXLog for WAL logging.  Page types:
+
+    Meta       - model metadata (name, dimensions, configuration)
+    LayerDir   - per-layer block ranges for gate vectors
+    Gate       - f16 gate activation vectors
+    Embed      - token embedding vectors
+    DownMeta   - feature metadata (labels, top tokens)
+    Blob       - tokenizer data
+
+The OS kernel shares mmap pages across backends that access the
+same model, so memory overhead per-connection is minimal.
+
+
+DEPENDENCIES
+------------
+
+pg_infer depends on LARQL crates (larql-vindex, larql-compute,
+larql-models) as path dependencies.  These provide:
+
+    larql-vindex    VectorIndex loading, gate KNN, tokenizer
+    larql-compute   Linear algebra (BLAS-backed)
+    larql-models    Model configuration and metadata
+    larql-inference (optional) Full forward-pass inference
+
+
+LICENSE
+-------
+
+Apache-2.0

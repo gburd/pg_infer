@@ -99,7 +99,7 @@ pub(crate) fn describe_impl(
 
     // 2. Walk all layers, collect raw hits first (we need them to compute
     //    the adaptive threshold before filtering).
-    let top_k_per_layer = 20_usize;
+    let top_k_per_layer = crate::gucs::describe_top_k();
     let num_layers = handle.config.num_layers;
 
     // Collect all (layer, feature_idx, gate_score) tuples.

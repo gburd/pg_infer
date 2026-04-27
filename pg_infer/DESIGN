@@ -1,0 +1,270 @@
+pg_infer Design Document
+========================
+
+PURPOSE
+-------
+
+pg_infer makes transformer model internals queryable through SQL.
+Instead of treating models as opaque prediction machines, pg_infer
+exposes the learned features, gate activations, and semantic
+relationships that models encode in their weights.
+
+The key insight: transformer models organize knowledge in
+interpretable gate vectors.  Each "feature" in a layer encodes a
+concept (a token or cluster of tokens the model has learned to
+detect).  By querying these gate vectors with an input embedding,
+you can ask "what does the model know about X?" without running
+a forward pass.
+
+
+CORE CONCEPTS
+-------------
+
+Vindex (Vector Index)
+    An extracted, query-optimized representation of a model's
+    internal knowledge.  Contains:
+    - Gate vectors: per-layer feature activation patterns (f16)
+    - Token embeddings: the model's learned word representations
+    - Feature metadata: labels mapping features to concepts
+    - Tokenizer: the model's subword tokenizer
+
+    A vindex is built offline from model weights by the LARQL
+    extraction pipeline and is read-only at query time.
+
+Gate KNN
+    The core query primitive.  Given a text query:
+    1. Tokenize and compute an embedding (average of token vectors)
+    2. For each layer, find the K features whose gate vectors
+       have the highest dot product with the query embedding
+    3. Return feature indices and activation scores
+
+    This is analogous to a nearest-neighbor search, but over the
+    model's internal feature space rather than an external vector
+    database.
+
+Model Handle
+    A loaded, ready-to-query model.  Contains the mmap'd vindex,
+    tokenizer, embeddings, and configuration.  Cached per-backend
+    in a process-local HashMap wrapped in Arc for safe concurrent
+    access.
+
+
+ARCHITECTURE
+------------
+
+PostgreSQL Extension Layer (pgrx 0.17)
+    lib.rs            Extension entry, schema bootstrap, _PG_init
+    gucs.rs           GUC parameters (7 settings)
+    error.rs          Unified error type with PG error mapping
+
+Query Functions
+    fn_walk.rs        Raw gate activations per layer
+    fn_describe.rs    Labeled knowledge edges (deduped, filtered)
+    fn_similar.rs     Semantic similarity via shared gate activations
+    fn_implies.rs     Directional relationship test via describe
+    fn_infer.rs       Forward-pass predictions (feature-gated)
+
+Model Management
+    registry.rs       Per-backend model cache (Arc<ModelHandle>)
+    model_mgmt.rs     SQL functions for model registration
+    options.rs        WITH option parsing and validation
+
+Index Access Method
+    am.rs             IndexAmRoutine callbacks
+    build.rs          ambuild: reads vindex, writes PG pages
+    pages.rs          Page format structs (meta, gate, embed, etc.)
+    page_reader.rs    Read-back from PG pages to ModelHandle
+    scan.rs           Brute-force heap scan for ORDER BY <~>
+
+
+DATA FLOW
+---------
+
+Registration:
+    infer_create_model('name', '/path/to/model.vindex')
+        |
+        v
+    resolve_source() -- validates path is under data_directory
+        |
+        v
+    load_from_path() -- validates vindex can be loaded
+        |
+        v
+    INSERT INTO infer.models -- legacy registry entry
+        |
+        v
+    CREATE INDEX USING infer -- copies vindex data into PG pages
+
+Query (describe/walk/similar_to):
+    SQL call
+        |
+        v
+    resolve_model_name() -- explicit param or GUC default
+        |
+        v
+    with_model() -- acquire Arc from cache (mutex held only for lookup)
+        |
+        v
+    embed_text() -- tokenize + average token embeddings
+        |
+        v
+    gate_knn() per layer -- brute-force dot product + top-K
+        |
+        v
+    format results
+
+Index Scan (ORDER BY col <~> 'query'):
+    amgettuple()
+        |
+        v
+    compute_distances() -- first call only
+        |
+        +-- get_heap_attnum() -- direct from rd_index
+        +-- use heapRelation from scan descriptor
+        +-- embed_text(query) -- pre-compute once
+        |
+        +-- for each heap tuple:
+        |       embed_text(row_value)
+        |       similar_to_with_embedding(row, query_embed)
+        |       score_to_distance()
+        |
+        +-- sort by distance ascending
+        |
+        v
+    return TIDs in distance order
+
+
+STORAGE FORMAT
+--------------
+
+Vindex data is stored in standard 8KB PostgreSQL pages, WAL-logged
+via GenericXLog.  This provides crash safety and replication.
+
+Page Layout:
+    Block 0:     Metapage (model name, dimensions, block ranges)
+    Block 1:     Layer directory (start/end blocks per layer)
+    Blocks N..M: Gate vectors (f16, packed into pages)
+    Blocks M..P: Token embeddings (f32)
+    Blocks P..Q: Feature metadata (labels, compressed)
+    Blocks Q..R: Tokenizer (JSON blob, chunked across pages)
+
+Each page carries a 16-byte opaque area at the end:
+    magic:     u32  (0x494E4652 = "INFR")
+    page_type: u8   (Meta/LayerDir/Gate/Embed/DownMeta/Blob)
+    flags:     u8
+    padding:   [u8; 2]
+    next_blk:  u32  (chain pointer for multi-page data)
+    reserved:  u32
+
+
+DISTANCE METRIC
+---------------
+
+The <~> operator computes semantic distance between two texts:
+
+    score = similar_to(a, b)
+    distance = 1 / (1 + score)
+
+This maps similarity scores to [0, 1) range:
+    - score = 0    -> distance = 1.0  (unrelated)
+    - score = inf  -> distance = 0.0  (identical)
+    - Monotonically decreasing, no discontinuities
+
+The similarity score itself is the maximum shared gate activation:
+    1. Embed both texts (average token embeddings)
+    2. For each layer, find top-50 activated features for each text
+    3. Find features that appear in both sets
+    4. Return the minimum activation score of the best shared feature
+    5. If no features overlap, fall back to cosine similarity * 10
+
+
+COST MODEL
+----------
+
+The planner cost estimate reflects the actual O(N) scan cost:
+
+    startup_cost = 100.0     (query embedding computation)
+    total_cost   = 100 + N * 50  (per-row: tokenize + embed + KNN)
+    selectivity  = 1.0       (scans all rows; LIMIT prunes)
+    correlation  = 0.0       (output in distance order, not physical)
+    index_pages  = heap_pages
+
+The 50x multiplier on cpu_tuple_cost makes the planner prefer
+sequential scan for large tables unless ORDER BY + LIMIT makes
+the index path worthwhile.
+
+
+SECURITY
+--------
+
+Path restriction: infer_create_model() requires local paths to be
+under infer.data_directory (resolved relative to PGDATA).  This
+prevents arbitrary filesystem reads via the source parameter.
+
+Reloption validation: amoptions rejects unrecognized WITH options
+rather than silently accepting them.
+
+
+CONCURRENCY
+-----------
+
+Each PostgreSQL backend maintains its own model cache in a
+process-local HashMap.  The cache is protected by a Mutex, but
+the lock is only held during HashMap lookup/insert (microseconds).
+The actual model data is wrapped in Arc, so the closure that
+performs queries holds an Arc reference without blocking other
+cache operations.
+
+The underlying mmap pages are shared by the OS kernel across all
+backends that have the same vindex open, so physical memory is
+shared even though each backend has its own logical handle.
+
+
+PERFORMANCE PROFILE (Qwen 0.5B, 24 layers, 4864 features)
+----------------------------------------------------------
+
+    Operation              Time        Category
+    -------------------    --------    ---------
+    tokenization           3-27 us     negligible
+    embedding average      0.1-4 us    negligible
+    gate KNN (1 layer)     6.4 ms      core cost
+    gate KNN (24 layers)   154 ms      bottleneck
+    describe()             176 ms      1x gate KNN
+    similar_to()           354 ms      2x gate KNN
+    scan per row           138 ms      dominates scans
+    model loading          2327 ms     one-time
+
+The gate KNN brute-force scan is the dominant cost.  Future
+optimization targets:
+    - Batched gate KNN (pre-compute query features, 50x potential)
+    - Parallel layers via rayon (6-8x potential)
+    - SIMD dot products (2-4x potential)
+    - Approximate KNN (10-100x potential)
+
+
+TESTING
+-------
+
+13 pgrx integration tests covering:
+    - Extension loading and schema creation
+    - GUC parameter registration and default values
+    - Function signature presence in pg_proc
+    - Operator and operator class existence
+    - Model management (create/drop/list)
+    - New Phase 8 GUCs (describe_top_k, walk_embed_mode)
+
+Note: amoptions reloption rejection cannot be tested in pgrx's
+test framework because pgrx::error!() from bare C callbacks
+(without pg_guard) causes SIGABRT in the test backend.  This is
+verified manually.
+
+
+FUTURE WORK
+-----------
+
+- amcanparallel: parallel-aware index scans
+- amvalidate: full operator class signature validation
+- Batched gate KNN for 50x scan speedup
+- LRU eviction based on infer.max_memory GUC
+- HuggingFace download support (hf:// URIs)
+- Model weight extraction pipeline integration

@@ -215,7 +215,7 @@ unsafe extern "C-unwind" fn infer_amoptions(
 
 unsafe extern "C-unwind" fn infer_amcostestimate(
     _root: *mut pg_sys::PlannerInfo,
-    _path: *mut pg_sys::IndexPath,
+    path: *mut pg_sys::IndexPath,
     _loop_count: f64,
     index_startup_cost: *mut pg_sys::Cost,
     index_total_cost: *mut pg_sys::Cost,
@@ -223,11 +223,34 @@ unsafe extern "C-unwind" fn infer_amcostestimate(
     index_correlation: *mut f64,
     index_pages: *mut f64,
 ) {
-    *index_startup_cost = 10.0;
-    *index_total_cost = 100.0;
-    *index_selectivity = 0.01;
-    *index_correlation = 0.0;
-    *index_pages = 1000.0;
+    // Read heap statistics from the planner's IndexPath to produce
+    // realistic cost estimates.  The scan is O(N) with expensive per-row
+    // tokenization + embedding + KNN, so we want the planner to prefer
+    // sequential scan for large tables unless ORDER BY + LIMIT applies.
+    let (heap_rows, heap_pages) = if !path.is_null() {
+        let indexinfo = (*path).indexinfo;
+        if !indexinfo.is_null() {
+            let rel = (*indexinfo).rel;
+            if !rel.is_null() {
+                ((*rel).rows, (*rel).pages as f64)
+            } else {
+                (1000.0, 10.0)
+            }
+        } else {
+            (1000.0, 10.0)
+        }
+    } else {
+        (1000.0, 10.0)
+    };
+
+    let startup = 100.0; // query embedding computation
+    let total = startup + heap_rows * 50.0; // 50x cpu_tuple_cost per row
+
+    *index_startup_cost = startup;
+    *index_total_cost = total;
+    *index_selectivity = 1.0; // we scan all rows; LIMIT prunes
+    *index_correlation = 0.0; // output in distance order, not physical
+    *index_pages = heap_pages;
 }
 
 // ---------------------------------------------------------------------------

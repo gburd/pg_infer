@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use pgrx::datum::{DatumWithOid, TimestampWithTimeZone};
 use pgrx::prelude::*;
@@ -220,19 +220,28 @@ fn infer_models() -> Result<
 // Source resolution
 // ---------------------------------------------------------------------------
 
-/// Resolve a user-supplied source string into an absolute vindex path.
-fn resolve_source(source: &str) -> Result<String, PgInferError> {
-    // Case 1: absolute or relative local path.
-    let as_path = Path::new(source);
-    if as_path.exists() {
-        return Ok(as_path
-            .canonicalize()
-            .unwrap_or_else(|_| as_path.to_path_buf())
-            .to_string_lossy()
-            .into_owned());
+/// Resolve the effective data directory as an absolute path.
+///
+/// If `infer.data_directory` is absolute, use it directly.
+/// If relative, join with `$PGDATA` (fallback: `/var/lib/postgresql/data`).
+fn resolve_data_directory() -> PathBuf {
+    let data_dir = gucs::data_directory();
+    let path = Path::new(&data_dir);
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        let pgdata = std::env::var("PGDATA")
+            .unwrap_or_else(|_| "/var/lib/postgresql/data".to_string());
+        Path::new(&pgdata).join(path)
     }
+}
 
-    // Case 2: hf:// URI — download the pre-built vindex.
+/// Resolve a user-supplied source string into an absolute vindex path.
+///
+/// Local paths are restricted to be under `infer.data_directory` to prevent
+/// arbitrary filesystem reads.
+fn resolve_source(source: &str) -> Result<String, PgInferError> {
+    // Case 1: hf:// URI — download the pre-built vindex.
     if source.starts_with("hf://") {
         if !gucs::AUTO_DOWNLOAD.get() {
             return Err(PgInferError::Internal(
@@ -244,8 +253,8 @@ fn resolve_source(source: &str) -> Result<String, PgInferError> {
         ));
     }
 
-    // Case 3: HuggingFace model ID — download weights and extract.
-    if source.contains('/') {
+    // Case 2: HuggingFace model ID (contains '/' but is not a local path).
+    if source.contains('/') && !Path::new(source).exists() {
         if !gucs::AUTO_DOWNLOAD.get() {
             return Err(PgInferError::Internal(
                 "infer.auto_download is off — cannot fetch from HuggingFace".into(),
@@ -256,8 +265,32 @@ fn resolve_source(source: &str) -> Result<String, PgInferError> {
         ));
     }
 
-    Err(PgInferError::Internal(format!(
-        "cannot resolve source '{}': not a local path, hf:// URI, or model ID",
-        source
-    )))
+    // Case 3: local path (absolute or relative).
+    let data_dir = resolve_data_directory();
+
+    let resolved = if Path::new(source).is_absolute() {
+        PathBuf::from(source)
+    } else {
+        data_dir.join(source)
+    };
+
+    // Canonicalize the resolved path if it exists on disk.
+    let canonical = resolved
+        .canonicalize()
+        .unwrap_or_else(|_| resolved.clone());
+
+    // Canonicalize the data directory for comparison (may not exist yet).
+    let canonical_data_dir = data_dir
+        .canonicalize()
+        .unwrap_or_else(|_| data_dir.clone());
+
+    // Security check: the resolved path must be under the data directory.
+    if !canonical.starts_with(&canonical_data_dir) {
+        return Err(PgInferError::PathNotPermitted {
+            path: canonical.to_string_lossy().into_owned(),
+            allowed: canonical_data_dir.to_string_lossy().into_owned(),
+        });
+    }
+
+    Ok(canonical.to_string_lossy().into_owned())
 }

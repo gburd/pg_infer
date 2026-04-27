@@ -1,30 +1,40 @@
-//! Reloptions parsing for `WITH (source = '...', extract_level = '...')`.
+//! Reloptions parsing for `WITH (source = '...', model = '...')`.
+//!
+//! We validate options manually rather than using PG's `build_reloptions`
+//! because the latter crashes (SIGABRT) in PG18 with custom AM kinds in
+//! pgrx test contexts.  The manual approach parses the `text[]` datum
+//! directly and rejects unrecognized keys.
 
 use pgrx::pg_sys;
 
+/// Known WITH option names for the infer AM.
+const KNOWN_OPTIONS: &[&str] = &["source", "model"];
+
 // ---------------------------------------------------------------------------
-// Reloptions definition
+// Registration (called from _PG_init) — placeholder for future use
 // ---------------------------------------------------------------------------
 
-/// Our custom reloptions struct stored in `rd_options`.
-#[repr(C)]
-#[allow(dead_code)]
-pub struct InferOptions {
-    /// Standard reloptions header (vl_len_ field).
-    pub vl_len_: i32,
-    /// Offset into this struct where the source string starts.
-    pub source_offset: i32,
-    /// Offset for extract_level string.
-    pub extract_level_offset: i32,
+/// Placeholder for reloption registration.
+///
+/// # Safety
+///
+/// Must be called exactly once, inside `_PG_init`.
+pub unsafe fn register_reloptions() {
+    // Manual validation is performed in infer_amoptions_impl instead of
+    // using PG's global relopt registration (build_reloptions).
 }
 
 // ---------------------------------------------------------------------------
 // amoptions implementation
 // ---------------------------------------------------------------------------
 
-/// Parse WITH options.  We accept arbitrary options through PostgreSQL's
-/// standard reloptions mechanism.  The `source` option is extracted during
-/// ambuild via SPI query on pg_class.reloptions.
+/// Parse and validate WITH options.
+///
+/// Checks that all provided options are in the known set (source, model).
+/// Rejects unrecognized options with a PG ERROR when `validate` is true.
+///
+/// Returns null — actual option extraction happens via SPI in
+/// `get_source_option` / `get_model_option` during ambuild.
 ///
 /// # Safety
 ///
@@ -33,10 +43,57 @@ pub unsafe fn infer_amoptions_impl(
     reloptions: pg_sys::Datum,
     validate: bool,
 ) -> *mut pg_sys::bytea {
-    // For custom index AMs that don't use standard relopt parsing,
-    // we can return NULL to accept any options.  The actual parsing
-    // happens in get_source_option via SPI.
-    let _ = (reloptions, validate);
+    if validate && reloptions.value() != 0 {
+        // reloptions is a text[] (Datum pointing to an ArrayType).
+        // Use deconstruct_array to iterate the elements.
+        let arr = reloptions.cast_mut_ptr::<pg_sys::ArrayType>();
+        if !arr.is_null() {
+            let mut nelems: i32 = 0;
+            let mut elems: *mut pg_sys::Datum = std::ptr::null_mut();
+            let mut nulls: *mut bool = std::ptr::null_mut();
+
+            pg_sys::deconstruct_array(
+                arr,
+                pg_sys::TEXTOID,
+                -1,   // typlen for text (varlena)
+                false, // typbyval
+                pg_sys::TYPALIGN_INT as std::ffi::c_char, // typalign
+                &mut elems,
+                &mut nulls,
+                &mut nelems,
+            );
+
+            for i in 0..nelems as usize {
+                if !nulls.is_null() && *nulls.add(i) {
+                    continue;
+                }
+                let datum = *elems.add(i);
+                let cstr = pg_sys::text_to_cstring(
+                    datum.cast_mut_ptr::<pg_sys::text>(),
+                );
+                if cstr.is_null() {
+                    continue;
+                }
+                let opt_str = std::ffi::CStr::from_ptr(cstr)
+                    .to_str()
+                    .unwrap_or("");
+
+                // Each element is "key=value"; extract the key.
+                let key = opt_str.split('=').next().unwrap_or("");
+
+                if !KNOWN_OPTIONS.contains(&key) {
+                    pg_sys::pfree(cstr as *mut std::ffi::c_void);
+                    pgrx::error!(
+                        "unrecognized parameter \"{}\" for infer index",
+                        key
+                    );
+                }
+
+                pg_sys::pfree(cstr as *mut std::ffi::c_void);
+            }
+        }
+    }
+
     std::ptr::null_mut()
 }
 
