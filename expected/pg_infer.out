@@ -1,0 +1,133 @@
+-- pg_infer regression tests
+-- Extension lifecycle
+CREATE EXTENSION pg_infer;
+-- GUC parameters
+SHOW infer.default_model;
+ infer.default_model
+---------------------
+
+(1 row)
+
+SHOW infer.max_memory;
+ infer.max_memory
+------------------
+ 8192
+(1 row)
+
+SHOW infer.auto_download;
+ infer.auto_download
+---------------------
+ on
+(1 row)
+
+SHOW infer.data_directory;
+ infer.data_directory
+----------------------
+ infer
+(1 row)
+
+-- Model registry table
+SELECT count(*) FROM infer.models;
+ count
+-------
+     0
+(1 row)
+
+-- Model management functions
+SELECT * FROM infer_models();
+ model_name | vindex_path | source | extract_level | num_layers | hidden_size | vocab_size | registered_at
+------------+-------------+--------+---------------+------------+-------------+------------+---------------
+(0 rows)
+
+-- Function signatures (verify they exist, even without a loaded model)
+SELECT proname, pg_get_function_arguments(oid) AS args,
+       pg_get_function_result(oid) AS rettype
+FROM pg_proc WHERE proname = 'describe' AND prokind = 'f'
+ORDER BY proname;
+ proname  |                    args                    |                                    rettype
+----------+--------------------------------------------+-------------------------------------------------------------------------------
+ describe | entity text, model text DEFAULT NULL::text | TABLE(relation text, target text, confidence double precision, layer integer)
+(1 row)
+
+SELECT proname, pg_get_function_arguments(oid) AS args,
+       pg_get_function_result(oid) AS rettype
+FROM pg_proc WHERE proname = 'walk' AND prokind = 'f'
+ORDER BY proname;
+ proname |                                     args                                      |                                     rettype
+---------+-------------------------------------------------------------------------------+----------------------------------------------------------------------------------
+ walk    | prompt text, top integer DEFAULT NULL::integer, model text DEFAULT NULL::text | TABLE(layer integer, feature integer, activation double precision, concept text)
+(1 row)
+
+SELECT proname, pg_get_function_arguments(oid) AS args,
+       pg_get_function_result(oid) AS rettype
+FROM pg_proc WHERE proname = 'infer' AND prokind = 'f'
+ORDER BY proname;
+ proname |                                     args                                      |                            rettype
+---------+-------------------------------------------------------------------------------+---------------------------------------------------------------
+ infer   | prompt text, top integer DEFAULT NULL::integer, model text DEFAULT NULL::text | TABLE(token text, probability double precision, rank integer)
+(1 row)
+
+SELECT proname, pg_get_function_arguments(oid) AS args,
+       pg_get_function_result(oid) AS rettype
+FROM pg_proc WHERE proname = 'similar_to' AND prokind = 'f'
+ORDER BY proname;
+  proname   |                     args                      |     rettype
+------------+-----------------------------------------------+------------------
+ similar_to | a text, b text, model text DEFAULT NULL::text | double precision
+(1 row)
+
+SELECT proname, pg_get_function_arguments(oid) AS args,
+       pg_get_function_result(oid) AS rettype
+FROM pg_proc WHERE proname = 'implies' AND prokind = 'f'
+ORDER BY proname;
+ proname |                           args                           | rettype
+---------+----------------------------------------------------------+---------
+ implies | subject text, object text, model text DEFAULT NULL::text | boolean
+(1 row)
+
+SELECT proname, pg_get_function_arguments(oid) AS args,
+       pg_get_function_result(oid) AS rettype
+FROM pg_proc WHERE proname = 'infer_create_model' AND prokind = 'f'
+ORDER BY proname;
+      proname       |                                args                                 | rettype
+--------------------+---------------------------------------------------------------------+---------
+ infer_create_model | model_name text, source text, extract_level text DEFAULT NULL::text | text
+(1 row)
+
+SELECT proname, pg_get_function_arguments(oid) AS args,
+       pg_get_function_result(oid) AS rettype
+FROM pg_proc WHERE proname = 'infer_drop_model' AND prokind = 'f'
+ORDER BY proname;
+     proname      |      args       | rettype
+------------------+-----------------+---------
+ infer_drop_model | model_name text | text
+(1 row)
+
+SELECT proname, pg_get_function_arguments(oid) AS args,
+       pg_get_function_result(oid) AS rettype
+FROM pg_proc WHERE proname = 'infer_models' AND prokind = 'f'
+ORDER BY proname;
+   proname    | args |                                                                                    rettype
+--------------+------+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ infer_models |      | TABLE(model_name text, vindex_path text, source text, extract_level text, num_layers integer, hidden_size integer, vocab_size integer, registered_at timestamp with time zone)
+(1 row)
+
+SELECT proname, pg_get_function_arguments(oid) AS args,
+       pg_get_function_result(oid) AS rettype
+FROM pg_proc WHERE proname = 'infer_distance' AND prokind = 'f'
+ORDER BY proname;
+    proname     |      args      |     rettype
+----------------+----------------+------------------
+ infer_distance | a text, b text | double precision
+(1 row)
+
+-- Operator
+SELECT oprname, oprleft::regtype, oprright::regtype
+FROM pg_operator WHERE oprname = '<~>';
+ oprname | oprleft | oprright
+---------+---------+----------
+ <~>     | text    | text
+(1 row)
+
+-- Cleanup
+DROP EXTENSION pg_infer;
