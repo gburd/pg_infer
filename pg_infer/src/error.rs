@@ -4,10 +4,10 @@ use pgrx::error;
 #[derive(Debug, thiserror::Error)]
 pub enum PgInferError {
     #[error("INFER vindex error: {0}")]
-    Vindex(#[from] larql_vindex::VindexError),
+    Vindex(#[from] infer_vindex::VindexError),
 
     #[error("INFER model error: {0}")]
-    Model(#[from] larql_models::ModelError),
+    Model(#[from] infer_models::ModelError),
 
     #[error("model not found: {name}")]
     ModelNotFound { name: String },

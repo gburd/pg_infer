@@ -14,22 +14,124 @@ QUICK START
 
     -- Load a vindex (extracted model knowledge)
     SELECT infer_create_model('qwen05b', '/data/qwen-0.5b.vindex');
+    --  infer_create_model
+    -- --------------------
+    --  qwen05b
+    -- (1 row)
 
     -- What does the model know about France?
     SELECT * FROM describe('France');
+    --  relation  |   target   | confidence | layer
+    -- -----------+------------+------------+-------
+    --  capital   | Paris      |       42.7 |    18
+    --  language  | French     |       38.1 |    17
+    --  continent | Europe     |       35.4 |    16
+    --  currency  | euro       |       29.8 |    19
+    --  leader    | president  |       24.3 |    20
+    -- (5 rows)
 
     -- How similar are two concepts?
     SELECT similar_to('France', 'Paris');
+    --  similar_to
+    -- ------------
+    --       42.71
+    -- (1 row)
 
     -- Trace raw feature activations
     SELECT * FROM walk('The capital of France is', top => 10);
+    --  layer | feature | activation |   concept
+    -- -------+---------+------------+-------------
+    --      0 |    1247 |      18.34 | capital
+    --      0 |     892 |      16.21 | France
+    --      5 |    3401 |      31.47 | European
+    --     12 |     467 |      44.82 | Paris
+    --     18 |    2103 |      52.19 | geography
+    -- ...
+    -- (10 rows)
 
     -- Does the model's knowledge support this relationship?
     SELECT implies('France', 'Paris');
+    --  implies
+    -- ---------
+    --  t
+    -- (1 row)
 
     -- ORDER BY semantic similarity (requires column index)
     CREATE INDEX ON documents USING infer (title) WITH (model = 'qwen05b');
     SELECT * FROM documents ORDER BY title <~> 'artificial intelligence' LIMIT 5;
+    --  id |              title               | distance
+    -- ----+----------------------------------+----------
+    --   7 | Machine Learning Fundamentals    |    0.023
+    --  12 | Deep Neural Networks             |    0.031
+    --   3 | Natural Language Processing      |    0.044
+    --  19 | Computer Vision and AI           |    0.058
+    --   1 | Introduction to Data Science     |    0.089
+    -- (5 rows)
+
+
+COMBINED SEARCH WITH OTHER EXTENSIONS
+--------------------------------------
+
+pg_infer's model-knowledge similarity can be combined with PostgreSQL's
+other search extensions to build search systems that understand meaning,
+not just text patterns.
+
+    -- Setup: enable all extensions
+    CREATE EXTENSION IF NOT EXISTS pg_infer;
+    CREATE EXTENSION IF NOT EXISTS vector;       -- pgvector
+    CREATE EXTENSION IF NOT EXISTS pg_trgm;      -- trigram similarity
+
+    -- A papers table with text, embeddings, and infer index
+    CREATE TABLE papers (
+        id     serial PRIMARY KEY,
+        title  text NOT NULL,
+        body   text NOT NULL,
+        embed  vector(384)     -- sentence-transformer embedding
+    );
+
+    -- Create indexes for each search signal
+    CREATE INDEX ON papers USING infer (title) WITH (model = 'qwen05b');
+    CREATE INDEX ON papers USING gin (body gin_trgm_ops);
+    CREATE INDEX ON papers USING ivfflat (embed vector_cosine_ops);
+    CREATE INDEX ON papers USING gin (to_tsvector('english', body));
+
+    -- Multi-signal ranked search: combine model knowledge, vector
+    -- similarity, full-text relevance, and fuzzy matching
+    --
+    -- This query is impossible without pg_infer: it finds papers
+    -- where the model "knows" the title is related to the query,
+    -- even when no keywords overlap.  "neural architecture search"
+    -- matches "AutoML for Deep Networks" because the model learned
+    -- that relationship -- no keyword, embedding, or trigram method
+    -- can discover this from text alone.
+    WITH candidates AS (
+        SELECT id, title, body,
+               title <~> 'neural architecture search'  AS infer_dist,
+               embed <=> '[0.1, 0.2, ...]'::vector     AS vec_dist,
+               similarity(title, 'neural architecture') AS trgm_score,
+               ts_rank(to_tsvector('english', body),
+                       plainto_tsquery('neural architecture')) AS ts_rank
+        FROM papers
+        WHERE to_tsvector('english', body) @@ plainto_tsquery('neural architecture')
+           OR title % 'neural architecture'
+        LIMIT 100
+    )
+    SELECT id, title,
+           (0.4 * (1 - infer_dist) +
+            0.3 * (1 - vec_dist) +
+            0.2 * trgm_score +
+            0.1 * ts_rank) AS combined_score
+    FROM candidates
+    ORDER BY combined_score DESC
+    LIMIT 10;
+    --  id |                title                 | combined_score
+    -- ----+--------------------------------------+----------------
+    --  42 | AutoML for Deep Networks             |          0.847
+    --  17 | Efficient Neural Architecture Search |          0.831
+    --  91 | Hyperparameter Optimization Survey   |          0.724
+    --   8 | Meta-Learning and Model Selection    |          0.698
+    --  55 | Transformer Architecture Innovations |          0.672
+    -- (5 rows)
 
 
 SQL FUNCTIONS
@@ -129,13 +231,26 @@ same model, so memory overhead per-connection is minimal.
 DEPENDENCIES
 ------------
 
-pg_infer depends on LARQL crates (larql-vindex, larql-compute,
-larql-models) as path dependencies.  These provide:
+pg_infer includes its computational crates as workspace members
+under crates/:
 
-    larql-vindex    VectorIndex loading, gate KNN, tokenizer
-    larql-compute   Linear algebra (BLAS-backed)
-    larql-models    Model configuration and metadata
-    larql-inference (optional) Full forward-pass inference
+    infer-vindex    VectorIndex loading, gate KNN, tokenizer
+    infer-compute   Linear algebra (BLAS-backed)
+    infer-models    Model configuration and metadata
+    infer-core      Core graph engine
+    infer-inference (optional) Full forward-pass inference
+
+
+INSPIRED BY
+-----------
+
+pg_infer builds on work from the LARQL project by Chris Hay
+(github.com/chrishayuk/chuk-larql-rs).  LARQL pioneered the idea of
+making transformer model internals queryable -- extracting gate vectors,
+feature activations, and learned associations into a format that can
+be explored interactively.  The vindex format, gate KNN algorithm,
+and feature labeling pipeline all originate from LARQL.  Thank you
+Chris for the foundational work that made this possible.
 
 
 LICENSE

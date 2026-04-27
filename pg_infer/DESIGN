@@ -28,7 +28,7 @@ Vindex (Vector Index)
     - Feature metadata: labels mapping features to concepts
     - Tokenizer: the model's subword tokenizer
 
-    A vindex is built offline from model weights by the LARQL
+    A vindex is built offline from model weights by the infer
     extraction pipeline and is read-only at query time.
 
 Gate KNN

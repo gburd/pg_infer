@@ -31,7 +31,7 @@ pub unsafe fn build_index(
     let path = Path::new(source_path);
 
     // Load vindex config to get dimensions.
-    let config = larql_vindex::load_vindex_config(path)?;
+    let config = infer_vindex::load_vindex_config(path)?;
     let num_layers = config.num_layers;
     let hidden_size = config.hidden_size;
     let vocab_size = config.vocab_size;

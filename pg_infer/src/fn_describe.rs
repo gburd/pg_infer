@@ -52,7 +52,7 @@ fn describe(
 
 /// Internal describe implementation.
 ///
-/// Mirrors the algorithm in `larql-lql/src/executor/query/describe.rs`:
+/// Mirrors the algorithm in `infer-lql/src/executor/query/describe.rs`:
 /// 1. Tokenize entity, compute average token embedding (scaled).
 /// 2. For each layer, run gate_knn to find top features.
 /// 3. Aggregate results by target token, keeping the highest score.

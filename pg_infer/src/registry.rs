@@ -7,7 +7,7 @@ use once_cell::sync::Lazy;
 use pgrx::datum::DatumWithOid;
 use pgrx::prelude::*;
 
-use larql_vindex::{FeatureMeta, SilentLoadCallbacks, VectorIndex, VindexConfig};
+use infer_vindex::{FeatureMeta, SilentLoadCallbacks, VectorIndex, VindexConfig};
 
 use crate::error::PgInferError;
 use crate::gucs;
@@ -22,7 +22,7 @@ use crate::page_reader::PageBackend;
 pub struct ModelHandle {
     pub embeddings: Array2<f32>,
     pub embed_scale: f32,
-    pub tokenizer: larql_vindex::tokenizers::Tokenizer,
+    pub tokenizer: infer_vindex::tokenizers::Tokenizer,
     pub config: VindexConfig,
     #[cfg_attr(not(feature = "inference"), allow(dead_code))]
     pub path: PathBuf,
@@ -219,13 +219,13 @@ pub fn load_from_path(path: &Path) -> Result<ModelHandle, PgInferError> {
     let vindex = VectorIndex::load_vindex(path, &mut callbacks)?;
 
     // Load the vindex configuration (layer count, hidden size, etc.)
-    let config = larql_vindex::load_vindex_config(path)?;
+    let config = infer_vindex::load_vindex_config(path)?;
 
     // Load token embeddings and the embedding scale factor.
-    let (embeddings, embed_scale) = larql_vindex::load_vindex_embeddings(path)?;
+    let (embeddings, embed_scale) = infer_vindex::load_vindex_embeddings(path)?;
 
     // Load the tokenizer.
-    let tokenizer = larql_vindex::load_vindex_tokenizer(path)?;
+    let tokenizer = infer_vindex::load_vindex_tokenizer(path)?;
 
     Ok(ModelHandle {
         embeddings,
@@ -248,14 +248,14 @@ fn minimal_config_from_meta(meta: &crate::pages::InferMetaPage) -> VindexConfig 
     };
 
     let extract_level = match meta.extract_level {
-        1 => larql_vindex::ExtractLevel::Inference,
-        2 => larql_vindex::ExtractLevel::All,
-        _ => larql_vindex::ExtractLevel::Browse,
+        1 => infer_vindex::ExtractLevel::Inference,
+        2 => infer_vindex::ExtractLevel::All,
+        _ => infer_vindex::ExtractLevel::Browse,
     };
 
     let dtype = match meta.gate_dtype {
-        0 => larql_vindex::StorageDtype::F32,
-        _ => larql_vindex::StorageDtype::F16,
+        0 => infer_vindex::StorageDtype::F32,
+        _ => infer_vindex::StorageDtype::F16,
     };
 
     VindexConfig {
@@ -271,7 +271,7 @@ fn minimal_config_from_meta(meta: &crate::pages::InferMetaPage) -> VindexConfig 
         embed_scale: meta.embed_scale,
         extract_level,
         dtype,
-        quant: larql_vindex::QuantFormat::None,
+        quant: infer_vindex::QuantFormat::None,
         layer_bands: None,
         layers: vec![],
         down_top_k: meta.down_top_k as usize,

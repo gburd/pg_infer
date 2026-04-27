@@ -10,7 +10,7 @@ use crate::registry;
 /// (i.e., full FFN weights are available in the vindex).
 ///
 /// **Build note:** This function requires the `inference` cargo feature
-/// (`--features inference`) which pulls in `larql-inference`.  Without
+/// (`--features inference`) which pulls in `infer-inference`.  Without
 /// that feature the function always returns an error.
 ///
 /// ```sql
@@ -49,7 +49,7 @@ fn infer_impl(
     prompt: &str,
     top_k: usize,
 ) -> Result<Vec<(String, f64, i32)>, PgInferError> {
-    use larql_vindex::ExtractLevel;
+    use infer_vindex::ExtractLevel;
 
     // Verify the vindex has inference-level weights.
     let level = handle.config.extract_level;
@@ -72,11 +72,11 @@ fn infer_impl(
     }
 
     // Load the full model weights for inference.
-    let weights = larql_inference::load_model_dir(&handle.path)
+    let weights = infer_inference::load_model_dir(&handle.path)
         .map_err(|e| PgInferError::Internal(format!("failed to load model weights: {}", e)))?;
 
     // Run the forward pass.
-    let result = larql_inference::predict(&weights, &handle.tokenizer, &token_ids, top_k);
+    let result = infer_inference::predict(&weights, &handle.tokenizer, &token_ids, top_k);
 
     // Format as rows.
     let rows: Vec<(String, f64, i32)> = result

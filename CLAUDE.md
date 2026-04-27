@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-pg_infer is a PostgreSQL extension (pgrx 0.17.0, PG18+ only) that exposes LARQL's neural network weight querying as SQL functions. It lets you query transformer model knowledge directly from SQL via `walk()`, `describe()`, `infer()`, `similar_to()`, and `implies()`.
+pg_infer is a PostgreSQL extension (pgrx 0.17.0, PG18+ only) that exposes transformer model weight querying as SQL functions. It lets you query transformer model knowledge directly from SQL via `walk()`, `describe()`, `infer()`, `similar_to()`, and `implies()`. Inspired by the LARQL project.
 
 ## Build Commands
 
@@ -41,36 +41,44 @@ cargo pgrx run pg18
 cargo pgrx test pg18
 ```
 
-All cargo commands must be run from `pg_infer/` (the crate directory), not the workspace root.
+All cargo commands must be run from `pg_infer/` (the workspace root).
 
 **Why bypass Nix wrappers:** The Nix `cc` and `ar` wrappers at `/nix/store/.../gcc-wrapper-.../bin/` crash with SIGSEGV. Using `/usr/bin/clang`, `/usr/bin/ar`, and `-C linker=/usr/bin/cc` avoids this entirely.
 
 ## Architecture
 
 ```
-pg_infer/src/
-  lib.rs          - pg_module_magic, extension_sql (schema + models table), _PG_init
-  gucs.rs         - GUC parameters: infer.default_model, data_directory, max_memory, auto_download, gate_threshold
-  error.rs        - PgInferError enum with thiserror, maps to pgrx::error!()
-  registry.rs     - Per-backend ModelHandle cache (Lazy<Mutex<HashMap>>), loads VectorIndex via mmap
-  model_mgmt.rs   - infer_create_model(), infer_drop_model(), infer_models() SQL functions
-  fn_walk.rs      - walk() SRF: raw gate activations per layer
-  fn_describe.rs  - describe() SRF: labeled knowledge edges (deduped, filtered)
-  fn_infer.rs     - infer() SRF: forward pass predictions (feature-gated behind "inference")
-  fn_similar.rs   - similar_to() scalar + <~> operator: semantic similarity via shared gate activations
-  fn_implies.rs   - implies() scalar: directional relationship test via describe
-  am.rs           - Index access method: infer_am_handler() + IndexAmRoutine callbacks
-  build.rs        - ambuild: reads vindex files, writes PG pages via GenericXLog
-  pages.rs        - #[repr(C)] page format structs (meta, layer_dir, gate, embed, blob)
-  scan.rs         - Scan callbacks (minimal — index queried via walk/describe functions)
-  options.rs      - Reloptions parsing: WITH (source = '...')
+pg_infer/
+  Cargo.toml        - Workspace root + extension package
+  src/
+    lib.rs          - pg_module_magic, extension_sql (schema + models table), _PG_init
+    gucs.rs         - GUC parameters: infer.default_model, data_directory, max_memory, auto_download, gate_threshold
+    error.rs        - PgInferError enum with thiserror, maps to pgrx::error!()
+    registry.rs     - Per-backend ModelHandle cache (Lazy<Mutex<HashMap>>), loads VectorIndex via mmap
+    model_mgmt.rs   - infer_create_model(), infer_drop_model(), infer_models() SQL functions
+    fn_walk.rs      - walk() SRF: raw gate activations per layer
+    fn_describe.rs  - describe() SRF: labeled knowledge edges (deduped, filtered)
+    fn_infer.rs     - infer() SRF: forward pass predictions (feature-gated behind "inference")
+    fn_similar.rs   - similar_to() scalar + <~> operator: semantic similarity via shared gate activations
+    fn_implies.rs   - implies() scalar: directional relationship test via describe
+    am.rs           - Index access method: infer_am_handler() + IndexAmRoutine callbacks
+    build.rs        - ambuild: reads vindex files, writes PG pages via GenericXLog
+    pages.rs        - #[repr(C)] page format structs (meta, layer_dir, gate, embed, blob)
+    scan.rs         - Scan callbacks (minimal — index queried via walk/describe functions)
+    options.rs      - Reloptions parsing: WITH (source = '...')
+  crates/
+    infer-models/   - Model architecture definitions, config parsing, tensor key mappings
+    infer-compute/  - Compute backends (CPU/BLAS, Metal GPU optional), matmul dispatch, Q4 kernels
+    infer-vindex/   - VectorIndex loading, gate KNN queries, mmap management, tokenizer
+    infer-core/     - Core graph engine, knowledge graph data types
+    infer-inference/ - (optional) Transformer inference engine, forward pass
 ```
 
 ## Key Dependencies
 
-- **LARQL crates** live in `_/larql/crates/` as path dependencies (larql-vindex, larql-compute, larql-models, optionally larql-inference)
+- **Internal crates** live in `pg_infer/crates/` as workspace members (infer-vindex, infer-compute, infer-models, infer-core, optionally infer-inference)
 - **pgrx 0.17.0** provides the PostgreSQL extension framework
-- There is no workspace root Cargo.toml; pg_infer is a standalone crate (avoids Cargo workspace merge with LARQL's workspace)
+- pg_infer is a Cargo workspace rooted at `pg_infer/Cargo.toml` with the extension as the main crate and internal crates under `crates/`
 
 ## pgrx 0.17.0 API Notes
 

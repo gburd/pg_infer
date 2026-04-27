@@ -11,8 +11,8 @@ use half::f16;
 use ndarray::{Array1, Array2, ArrayView2};
 use pgrx::pg_sys;
 
-use larql_models::TopKEntry;
-use larql_vindex::FeatureMeta;
+use infer_models::TopKEntry;
+use infer_vindex::FeatureMeta;
 
 use crate::error::PgInferError;
 use crate::pages::*;
@@ -65,7 +65,7 @@ impl PageBackend {
             Self,
             Array2<f32>,
             f32,
-            larql_vindex::tokenizers::Tokenizer,
+            infer_vindex::tokenizers::Tokenizer,
         ),
         PgInferError,
     > {
@@ -89,7 +89,7 @@ impl PageBackend {
 
         // Tokenizer blob.
         let tok_json = read_blob_data(rel, meta.tok_start_blk, meta.tok_end_blk);
-        let tokenizer = larql_vindex::tokenizers::Tokenizer::from_bytes(&tok_json)
+        let tokenizer = infer_vindex::tokenizers::Tokenizer::from_bytes(&tok_json)
             .map_err(|e| PgInferError::Internal(format!("parse tokenizer: {}", e)))?;
 
         // Down meta blob.
@@ -156,7 +156,7 @@ impl PageBackend {
         &self,
         layer: usize,
         feature_idx: usize,
-        tokenizer: &larql_vindex::tokenizers::Tokenizer,
+        tokenizer: &infer_vindex::tokenizers::Tokenizer,
     ) -> Option<FeatureMeta> {
         if layer >= self.down_meta_offsets.len() {
             return None;
@@ -361,7 +361,7 @@ unsafe fn read_blob_data(
 
 /// Parse the down_meta binary header to compute per-layer byte offsets.
 ///
-/// The binary format (from larql-vindex):
+/// The binary format (from infer-vindex):
 /// ```text
 /// Header (16 bytes):
 ///   magic: u32 = 0x444D4554 ("DMET")
@@ -419,7 +419,7 @@ fn parse_one_feature(
     data: &[u8],
     offset: usize,
     top_k_count: usize,
-    tokenizer: &larql_vindex::tokenizers::Tokenizer,
+    tokenizer: &infer_vindex::tokenizers::Tokenizer,
 ) -> Option<FeatureMeta> {
     let record_size = 8 + top_k_count * 8;
     if offset + record_size > data.len() {
@@ -489,7 +489,7 @@ fn parse_one_feature(
 }
 
 // ---------------------------------------------------------------------------
-// Top-K selection (matches larql-vindex's algorithm)
+// Top-K selection (matches infer-vindex's algorithm)
 // ---------------------------------------------------------------------------
 
 /// Select the top-K entries by absolute score magnitude.
