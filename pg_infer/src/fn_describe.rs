@@ -140,10 +140,15 @@ pub(crate) fn describe_impl(
 
         // Coherence filter: check that at least one secondary token is
         // also a content word.  This matches LARQL describe.rs:424-448.
+        // Exclude secondaries matching the primary token or the query entity.
         let has_coherent_secondary = meta
             .top_k
             .iter()
-            .filter(|e| e.logit > 0.0 && e.token.to_lowercase() != tok.to_lowercase())
+            .filter(|e| {
+                e.logit > 0.0
+                    && e.token.to_lowercase() != tok.to_lowercase()
+                    && e.token.to_lowercase() != entity_lower
+            })
             .take(5)
             .any(|e| helpers::is_content_token(&e.token));
 
@@ -153,7 +158,11 @@ pub(crate) fn describe_impl(
             let has_readable = meta
                 .top_k
                 .iter()
-                .filter(|e| e.logit > 0.0 && e.token.to_lowercase() != tok.to_lowercase())
+                .filter(|e| {
+                    e.logit > 0.0
+                        && e.token.to_lowercase() != tok.to_lowercase()
+                        && e.token.to_lowercase() != entity_lower
+                })
                 .take(5)
                 .any(|e| helpers::is_readable_token(&e.token));
             if has_readable && gate_score < 20.0 {
