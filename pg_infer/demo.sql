@@ -9,9 +9,11 @@
 \echo '============================================'
 \echo ''
 
--- Load the extension (idempotent).
-\echo 'CREATE EXTENSION IF NOT EXISTS pg_infer CASCADE;'
-CREATE EXTENSION IF NOT EXISTS pg_infer CASCADE;
+-- (Re)load the extension so new function definitions are always applied.
+\echo 'DROP EXTENSION IF EXISTS pg_infer CASCADE;'
+DROP EXTENSION IF EXISTS pg_infer CASCADE;
+\echo 'CREATE EXTENSION pg_infer;'
+CREATE EXTENSION pg_infer;
 
 -- Point data_directory at the vindexes folder so relative paths resolve.
 \echo 'SET infer.data_directory TO ''/home/gburd/ws/larql/vindexes'';'

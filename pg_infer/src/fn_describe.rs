@@ -152,22 +152,11 @@ pub(crate) fn describe_impl(
             .take(5)
             .any(|e| helpers::is_content_token(&e.token));
 
-        if !has_coherent_secondary {
-            // If no secondaries pass content filter, but some are
-            // readable and the gate score is weak, skip the edge.
-            let has_readable = meta
-                .top_k
-                .iter()
-                .filter(|e| {
-                    e.logit > 0.0
-                        && e.token.to_lowercase() != tok.to_lowercase()
-                        && e.token.to_lowercase() != entity_lower
-                })
-                .take(5)
-                .any(|e| helpers::is_readable_token(&e.token));
-            if has_readable && gate_score < 20.0 {
-                continue;
-            }
+        if !has_coherent_secondary && gate_score < 20.0 {
+            // No coherent secondary tokens and gate score is weak —
+            // skip this edge.  Strong scores (≥ 20.0) are accepted on
+            // the primary token alone.
+            continue;
         }
 
         let key = tok.to_lowercase();
