@@ -32,11 +32,13 @@ pub struct ModelHandle {
 
 /// Discriminator for the two storage backends.
 enum ModelBackend {
-    /// Original mmap-based backend (loaded from a vindex directory).
+    /// Mmap-based backend (loaded from a vindex directory).  Zero-copy gate
+    /// access, HNSW support, demand paging.
     Mmap {
         vindex: VectorIndex,
     },
-    /// Page-based backend (loaded from PG index pages).
+    /// Page-based backend (loaded from PG index pages).  Used as a fallback
+    /// when the original vindex directory is no longer on disk.
     Pages(PageBackend),
 }
 
@@ -58,6 +60,20 @@ impl ModelHandle {
             ModelBackend::Mmap { vindex } => vindex.gate_knn(layer, query, top_k),
             ModelBackend::Pages(pages) => {
                 pages.gate_knn(layer, query, top_k, self.config.hidden_size)
+            }
+        }
+    }
+
+    /// Number of features indexed at a given layer.
+    pub fn num_features(&self, layer: usize) -> usize {
+        match &self.backend {
+            ModelBackend::Mmap { vindex } => vindex.num_features(layer),
+            ModelBackend::Pages(pages) => {
+                pages
+                    .layer_dir
+                    .get(layer)
+                    .map(|e| e.num_features as usize)
+                    .unwrap_or(0)
             }
         }
     }
@@ -181,28 +197,53 @@ fn try_load_from_index(model_name: &str) -> Result<Option<ModelHandle>, PgInferE
     Ok(Some(handle))
 }
 
-/// Load a `ModelHandle` from a PG index by reading its pages.
+/// Load a `ModelHandle` from a PG index.
+///
+/// **Fast path**: reads only the metapage (block 0, ~8 KB) to extract
+/// `source_uri`, then loads everything via mmap from the original vindex
+/// directory.  This avoids the expensive page-by-page read of embeddings,
+/// tokenizer, and gate data through the PG buffer manager.
+///
+/// **Slow fallback**: if the vindex directory is missing or mmap fails,
+/// falls back to `PageBackend::load()` which reads all pages.
 ///
 /// # Safety
 ///
-/// The unsafe block reads PG buffer-managed pages.  This requires being
+/// The unsafe blocks read PG buffer-managed pages.  This requires being
 /// inside a valid transaction context (always true when called from a
 /// SQL function).
 fn load_from_index(index_oid: pgrx::pg_sys::Oid) -> Result<ModelHandle, PgInferError> {
-    let (pages, embeddings, embed_scale, tokenizer) = unsafe {
-        PageBackend::load(index_oid)?
-    };
+    // 1. Read ONLY the metapage to extract source_uri (fast — single page).
+    let meta = unsafe { PageBackend::read_metapage(index_oid)? };
 
-    // Construct a minimal VindexConfig from the metapage so that existing
-    // query functions can read `handle.config.hidden_size`, etc.
-    let meta = &pages.meta;
-    let config = minimal_config_from_meta(meta);
-
-    // Source URI from metapage.
     let source_uri = {
         let nul = meta.source_uri.iter().position(|&b| b == 0).unwrap_or(meta.source_uri.len());
         String::from_utf8_lossy(&meta.source_uri[..nul]).into_owned()
     };
+
+    let vindex_path = Path::new(&source_uri);
+
+    // 2. If the vindex directory still exists on disk, load entirely via
+    //    mmap — skip the expensive PageBackend::load() altogether.
+    if vindex_path.join("gate_vectors.bin").exists() {
+        match load_from_path(vindex_path) {
+            Ok(handle) => return Ok(handle),
+            Err(e) => {
+                pgrx::warning!(
+                    "INFER: mmap load failed for '{}': {}; falling back to page backend",
+                    source_uri,
+                    e
+                );
+            }
+        }
+    }
+
+    // 3. Vindex directory missing or mmap failed — fall back to full
+    //    page-based load (reads all embeddings, tokenizer, gates from PG).
+    let (pages, embeddings, embed_scale, tokenizer) = unsafe {
+        PageBackend::load(index_oid)?
+    };
+    let config = minimal_config_from_meta(&pages.meta);
 
     Ok(ModelHandle {
         embeddings,
@@ -220,6 +261,16 @@ pub fn load_from_path(path: &Path) -> Result<ModelHandle, PgInferError> {
 
     // Load the vindex (gate vectors + metadata, mmap'd).
     let vindex = VectorIndex::load_vindex(path, &mut callbacks)?;
+
+    // Pre-decode f16 → f32 for all layers if warmup is enabled.
+    if gucs::warmup_on_load() {
+        vindex.warmup();
+    }
+
+    // Enable HNSW approximate search if configured.
+    if gucs::use_hnsw() {
+        vindex.enable_hnsw(gucs::hnsw_ef_search());
+    }
 
     // Load the vindex configuration (layer count, hidden size, etc.)
     let config = infer_vindex::load_vindex_config(path)?;

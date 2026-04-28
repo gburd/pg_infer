@@ -22,17 +22,32 @@ pub static AUTO_DOWNLOAD: GucSetting<bool> = GucSetting::<bool>::new(true);
 
 /// Gate score threshold for describe()/implies().
 ///
-/// When set to 0 (the default), an adaptive threshold is computed from the
-/// query's actual gate activations: `max_score × 0.1`.  A positive value
-/// overrides with a fixed threshold.
-pub static GATE_THRESHOLD: GucSetting<f64> = GucSetting::<f64>::new(0.0);
+/// Default 5.0 (matches LARQL).  Set to 0 for adaptive mode
+/// (`max_score × 0.1`).  A positive value is a fixed threshold.
+pub static GATE_THRESHOLD: GucSetting<f64> = GucSetting::<f64>::new(5.0);
 
 /// Top-K features per layer for describe().
 pub static DESCRIBE_TOP_K: GucSetting<i32> = GucSetting::<i32>::new(20);
 
 /// Embedding mode for walk(): "average" or "last".
+///
+/// "last" matches the LARQL CLI behavior: use only the last token's
+/// embedding as the query vector.  This produces stronger, more
+/// interpretable activations because transformers build up a
+/// representation across tokens — the last position captures the full
+/// context.  "average" averages all token embeddings (including any
+/// special tokens), which dilutes the signal for longer prompts.
 pub static WALK_EMBED_MODE: GucSetting<Option<CString>> =
-    GucSetting::<Option<CString>>::new(Some(c"average"));
+    GucSetting::<Option<CString>>::new(Some(c"last"));
+
+/// Whether to enable HNSW approximate search for gate_knn queries.
+pub static USE_HNSW: GucSetting<bool> = GucSetting::<bool>::new(true);
+
+/// HNSW beam width (ef_search). Higher values are more accurate but slower.
+pub static HNSW_EF_SEARCH: GucSetting<i32> = GucSetting::<i32>::new(200);
+
+/// Whether to pre-decode f16 gate vectors to f32 on model load.
+pub static WARMUP_ON_LOAD: GucSetting<bool> = GucSetting::<bool>::new(true);
 
 /// Register all GUC parameters.
 ///
@@ -82,7 +97,7 @@ pub unsafe fn init() {
     GucRegistry::define_float_guc(
         c"infer.gate_threshold",
         c"Gate score threshold for describe()/implies().",
-        c"0 = adaptive (max_score * 0.1). A positive value is a fixed threshold.",
+        c"Default 5.0 (matches LARQL). Set to 0 for adaptive (max_score * 0.1).",
         &GATE_THRESHOLD,
         0.0,
         1000.0,
@@ -104,8 +119,37 @@ pub unsafe fn init() {
     GucRegistry::define_string_guc(
         c"infer.walk_embed_mode",
         c"Embedding mode for walk(): 'average' or 'last'.",
-        c"'average' averages all token embeddings; 'last' uses only the last token. Default: 'average'.",
+        c"'last' uses the last token (matches LARQL); 'average' averages all tokens. Default: 'last'.",
         &WALK_EMBED_MODE,
+        GucContext::Userset,
+        GucFlags::default(),
+    );
+
+    GucRegistry::define_bool_guc(
+        c"infer.use_hnsw",
+        c"Enable HNSW approximate search for gate queries.",
+        c"When true, gate_knn uses HNSW index for O(log N) search. Default: true.",
+        &USE_HNSW,
+        GucContext::Userset,
+        GucFlags::default(),
+    );
+
+    GucRegistry::define_int_guc(
+        c"infer.hnsw_ef_search",
+        c"HNSW beam width for approximate search.",
+        c"Higher values are more accurate but slower. Default: 200.",
+        &HNSW_EF_SEARCH,
+        50,
+        500,
+        GucContext::Userset,
+        GucFlags::default(),
+    );
+
+    GucRegistry::define_bool_guc(
+        c"infer.warmup_on_load",
+        c"Pre-decode f16 gate vectors on model load.",
+        c"When true, f16 gates are decoded to f32 on first load for faster queries. Default: true.",
+        &WARMUP_ON_LOAD,
         GucContext::Userset,
         GucFlags::default(),
     );
@@ -139,4 +183,19 @@ pub fn walk_embed_mode_is_last() -> bool {
         .get()
         .map(|s| s.to_string_lossy() == "last")
         .unwrap_or(false)
+}
+
+/// Return true if HNSW approximate search is enabled.
+pub fn use_hnsw() -> bool {
+    USE_HNSW.get()
+}
+
+/// Return the HNSW ef_search beam width.
+pub fn hnsw_ef_search() -> usize {
+    HNSW_EF_SEARCH.get() as usize
+}
+
+/// Return true if warmup-on-load is enabled.
+pub fn warmup_on_load() -> bool {
+    WARMUP_ON_LOAD.get()
 }
