@@ -7,7 +7,6 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-use half::f16;
 use ndarray::{Array1, Array2, ArrayView2};
 use pgrx::pg_sys;
 
@@ -50,6 +49,34 @@ unsafe impl Send for PageBackend {}
 unsafe impl Sync for PageBackend {}
 
 impl PageBackend {
+    /// Read only the metapage (block 0) from a PG index.
+    ///
+    /// This is much faster than `load()` — it reads a single 8KB page
+    /// instead of the entire index.  Used to extract `source_uri` for the
+    /// mmap fast path before committing to the slow page-by-page load.
+    ///
+    /// # Safety
+    ///
+    /// Must be called within a valid PG transaction context.
+    pub unsafe fn read_metapage(
+        index_oid: pg_sys::Oid,
+    ) -> Result<InferMetaPage, PgInferError> {
+        let rel = pg_sys::relation_open(index_oid, pg_sys::AccessShareLock as _);
+        let meta = read_meta(rel)?;
+        pg_sys::relation_close(rel, pg_sys::AccessShareLock as _);
+
+        if meta.magic != INFER_MAGIC {
+            return Err(PgInferError::Internal(format!(
+                "invalid infer index: bad magic number 0x{:08X} (expected 0x{:08X}). \
+                 This may indicate a stale index from a previous build — try: \
+                 SELECT infer_drop_model('...'); then re-register.",
+                meta.magic, INFER_MAGIC,
+            )));
+        }
+
+        Ok(meta)
+    }
+
     /// Load a `PageBackend` by reading from the PG index pages identified
     /// by `index_oid`.
     ///
@@ -217,11 +244,9 @@ impl PageBackend {
             let f16_bytes = num_vectors * hidden_size * 2;
             let f16_slice = std::slice::from_raw_parts(f16_ptr, f16_bytes);
 
-            // Decode f16 → f32.
-            for chunk in f16_slice.chunks_exact(2) {
-                let bits = u16::from_le_bytes([chunk[0], chunk[1]]);
-                result.push(f16::from_bits(bits).to_f32());
-            }
+            // Batch decode f16 → f32.
+            let decoded = infer_models::quant::half::decode_f16(f16_slice);
+            result.extend_from_slice(&decoded);
 
             pg_sys::UnlockReleaseBuffer(buf);
         }
@@ -310,10 +335,9 @@ unsafe fn read_embeddings(
         let f16_bytes = num_vectors * hidden_size * 2;
         let f16_slice = std::slice::from_raw_parts(f16_ptr, f16_bytes);
 
-        for chunk in f16_slice.chunks_exact(2) {
-            let bits = u16::from_le_bytes([chunk[0], chunk[1]]);
-            data.push(f16::from_bits(bits).to_f32());
-        }
+        // Batch decode f16 → f32.
+        let decoded = infer_models::quant::half::decode_f16(f16_slice);
+        data.extend_from_slice(&decoded);
 
         pg_sys::UnlockReleaseBuffer(buf);
     }

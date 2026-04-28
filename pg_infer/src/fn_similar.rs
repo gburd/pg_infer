@@ -90,50 +90,61 @@ pub(crate) fn similar_to_impl(
     Ok(score)
 }
 
-/// Compute similarity using a pre-computed query embedding.
+/// Pre-compute gate_knn results for a query embedding across all layers.
 ///
-/// Same algorithm as `similar_to_impl` but only embeds `col_text` — the
-/// caller provides the query embedding.  Used by index scan to avoid
-/// re-computing the query embedding for every row.
-pub(crate) fn similar_to_with_embedding(
+/// Returns a `Vec` indexed by layer, where each element is a `HashMap`
+/// mapping feature index → gate score.  Used by column index scans to
+/// avoid redundant per-row gate_knn calls for the query side.
+pub(crate) fn precompute_query_gates(
+    handle: &registry::ModelHandle,
+    query_embedding: &Array1<f32>,
+    top_k: usize,
+) -> Vec<std::collections::HashMap<usize, f32>> {
+    (0..handle.config.num_layers)
+        .map(|layer| {
+            handle
+                .gate_knn(layer, query_embedding, top_k)
+                .into_iter()
+                .collect::<std::collections::HashMap<usize, f32>>()
+        })
+        .collect()
+}
+
+/// Compute similarity using pre-computed query gate results.
+///
+/// Same algorithm as `similar_to_with_embedding` but avoids calling
+/// `gate_knn` for the query side — the caller provides the pre-computed
+/// results.  This halves the gate_knn calls during column index scans.
+pub(crate) fn similar_to_with_precomputed(
     handle: &registry::ModelHandle,
     col_text: &str,
     query_embedding: &Array1<f32>,
+    query_gates: &[std::collections::HashMap<usize, f32>],
 ) -> Result<f64, PgInferError> {
     let embed_col = embed_text(handle, col_text)?;
-
     let cosine = cosine_similarity(&embed_col, query_embedding);
 
     let top_k = 50_usize;
-    let num_layers = handle.config.num_layers;
     let mut max_shared_score: f32 = 0.0;
 
-    for layer in 0..num_layers {
+    for (layer, q_gates) in query_gates.iter().enumerate() {
         let hits_col = handle.gate_knn(layer, &embed_col, top_k);
-        let hits_q = handle.gate_knn(layer, query_embedding, top_k);
-
-        let set_q: std::collections::HashSet<usize> =
-            hits_q.iter().map(|&(idx, _)| idx).collect();
 
         for &(idx, score_col) in &hits_col {
-            if set_q.contains(&idx) {
-                if let Some(&(_, score_q)) = hits_q.iter().find(|&&(i, _)| i == idx) {
-                    let shared = score_col.min(score_q);
-                    if shared > max_shared_score {
-                        max_shared_score = shared;
-                    }
+            if let Some(&score_q) = q_gates.get(&idx) {
+                let shared = score_col.min(score_q);
+                if shared > max_shared_score {
+                    max_shared_score = shared;
                 }
             }
         }
     }
 
-    let score = if max_shared_score > 0.0 {
+    Ok(if max_shared_score > 0.0 {
         max_shared_score as f64
     } else {
         cosine * 10.0
-    };
-
-    Ok(score)
+    })
 }
 
 /// Convert a similarity score to a distance value.
