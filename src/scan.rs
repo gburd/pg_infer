@@ -264,6 +264,12 @@ unsafe fn compute_distances(
         // Pre-compute the query embedding once.
         let query_embedding = crate::fn_similar::embed_text(handle, query_text)?;
 
+        // Pre-compute gate_knn results for the query across all layers.
+        // This avoids redundant per-row gate_knn calls for the query side.
+        let query_gates = crate::fn_similar::precompute_query_gates(
+            handle, &query_embedding, 50,
+        );
+
         loop {
             let got = pg_sys::table_scan_getnextslot(
                 tscan,
@@ -289,9 +295,9 @@ unsafe fn compute_distances(
                 None => continue,
             };
 
-            // Compute similarity with pre-computed query embedding.
-            let score = crate::fn_similar::similar_to_with_embedding(
-                handle, &col_text, &query_embedding,
+            // Compute similarity using pre-computed query gates.
+            let score = crate::fn_similar::similar_to_with_precomputed(
+                handle, &col_text, &query_embedding, &query_gates,
             )
             .unwrap_or(0.0);
             let distance = crate::fn_similar::score_to_distance(score);

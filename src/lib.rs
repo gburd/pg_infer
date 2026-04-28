@@ -6,11 +6,15 @@ mod am;
 mod build;
 mod error;
 mod fn_describe;
+mod fn_diff;
 mod fn_implies;
 mod fn_infer;
+mod fn_nearest;
+mod fn_show;
 mod fn_similar;
 mod fn_walk;
 mod gucs;
+mod helpers;
 mod model_mgmt;
 mod options;
 mod page_reader;
@@ -114,7 +118,7 @@ mod tests {
 
         let gate_thresh = Spi::get_one::<String>("SHOW infer.gate_threshold")
             .expect("SHOW failed");
-        assert_eq!(gate_thresh, Some("0".to_string()));
+        assert_eq!(gate_thresh, Some("5".to_string()));
     }
 
     #[pg_test]
@@ -164,6 +168,12 @@ mod tests {
             "infer_drop_model",
             "infer_models",
             "infer_distance",
+            "nearest_to",
+            "infer_show_layers",
+            "infer_show_features",
+            "infer_show_relations",
+            "infer_explain_walk",
+            "infer_diff",
         ] {
             let exists = Spi::get_one::<bool>(&format!(
                 "SELECT EXISTS(SELECT 1 FROM pg_proc WHERE proname = '{}')",

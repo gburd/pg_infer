@@ -190,7 +190,10 @@ impl HnswLayer {
                 (s.id as usize, exact_score)
             })
             .collect();
-        results.sort_unstable_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        // Sort by absolute magnitude to match brute-force top_k_from_scores
+        // semantics: both strongly positive and strongly negative activations
+        // are considered "top" features.
+        results.sort_unstable_by(|a, b| b.1.abs().partial_cmp(&a.1.abs()).unwrap_or(std::cmp::Ordering::Equal));
         results.truncate(top_k);
         results
     }
