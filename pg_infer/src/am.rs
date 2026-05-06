@@ -103,6 +103,15 @@ unsafe extern "C-unwind" fn infer_ambuild(
     let source = options::get_source_option(index_relation);
     let model = options::get_model_option(index_relation);
 
+    // Fall back to infer.default_model GUC if no model option specified.
+    let model = model.or_else(|| {
+        crate::gucs::DEFAULT_MODEL
+            .get()
+            .as_ref()
+            .and_then(|cs| cs.to_str().ok())
+            .map(|s| s.to_string())
+    });
+
     let build_result = match (source, model) {
         (Some(path), _) => {
             // Model index: full vindex data stored in PG pages.
@@ -115,7 +124,8 @@ unsafe extern "C-unwind" fn infer_ambuild(
         (None, None) => {
             pgrx::error!(
                 "INFER: missing required option — use WITH (source = '...') \
-                 for model indexes or WITH (model = '...') for column indexes"
+                 for model indexes or WITH (model = '...') for column indexes, \
+                 or set infer.default_model"
             );
         }
     };

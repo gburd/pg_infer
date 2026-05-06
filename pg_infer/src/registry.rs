@@ -270,6 +270,25 @@ pub fn load_from_path(path: &Path) -> Result<ModelHandle, PgInferError> {
     // Enable HNSW approximate search if configured.
     if gucs::use_hnsw() {
         vindex.enable_hnsw(gucs::hnsw_ef_search());
+
+        // Eagerly build HNSW indexes for all layers if configured.
+        // This moves the HNSW build cost from first query to registration,
+        // making all queries fast and predictable.
+        if gucs::build_hnsw_on_load() {
+            pgrx::log!("Building HNSW indexes for all {} layers...", vindex.num_layers);
+            for layer in 0..vindex.num_layers {
+                // Trigger HNSW build by calling gate_knn once per layer.
+                // The get_or_build_hnsw() path will build and cache the index.
+                let dummy_vec = ndarray::Array1::<f32>::zeros(vindex.hidden_size);
+                let _ = vindex.gate_knn(layer, &dummy_vec, 1);
+
+                // Log progress for large models
+                if layer > 0 && (layer + 1) % 10 == 0 {
+                    pgrx::log!("  Built HNSW for {}/{} layers", layer + 1, vindex.num_layers);
+                }
+            }
+            pgrx::log!("HNSW build complete for all {} layers", vindex.num_layers);
+        }
     }
 
     // Load the vindex configuration (layer count, hidden size, etc.)

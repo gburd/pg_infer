@@ -132,18 +132,26 @@ unsafe fn get_reloption(index_relation: pg_sys::Relation, key: &str) -> Option<S
     let rel_oid = (*index_relation).rd_id;
     let prefix = format!("{}=", key);
 
+    pgrx::log!("get_reloption: looking for key '{}' in relation OID {}", key, rel_oid);
+
     let query = format!(
         "SELECT unnest(reloptions) FROM pg_class WHERE oid = {}",
         rel_oid
     );
 
+    pgrx::log!("get_reloption: executing SPI query: {}", query);
+
     let result = pgrx::Spi::connect(|client| {
+        pgrx::log!("get_reloption: SPI connected");
         let result = client.select(&query, None, &[]);
+        pgrx::log!("get_reloption: SPI select completed");
         match result {
             Ok(table) => {
+                pgrx::log!("get_reloption: processing {} rows", table.len());
                 let mut value = None;
                 for row in table {
                     if let Ok(Some(opt)) = row.get::<String>(1) {
+                        pgrx::log!("get_reloption: found option: {}", opt);
                         if let Some(val) = opt.strip_prefix(&prefix) {
                             value = Some(val.to_string());
                         }
@@ -151,9 +159,14 @@ unsafe fn get_reloption(index_relation: pg_sys::Relation, key: &str) -> Option<S
                 }
                 Ok::<_, pgrx::spi::SpiError>(value)
             }
-            Err(e) => Err(e),
+            Err(e) => {
+                pgrx::log!("get_reloption: SPI error: {:?}", e);
+                Err(e)
+            }
         }
     });
+
+    pgrx::log!("get_reloption: result = {:?}", result);
 
     match result {
         Ok(s) => s,

@@ -44,17 +44,26 @@ pub unsafe fn build_index(
         .map(|l| l.num_features)
         .unwrap_or(0);
 
-    // Load the raw data files we need.
-    let gate_data = std::fs::read(path.join("gate_vectors.bin"))
-        .map_err(|e| PgInferError::Internal(format!("read gate_vectors.bin: {}", e)))?;
-    let embed_data = std::fs::read(path.join("embeddings.bin"))
-        .map_err(|e| PgInferError::Internal(format!("read embeddings.bin: {}", e)))?;
+    // Memory-map the data files to avoid loading GBs into RAM.
+    // The OS will page them in as needed.
+    let gate_file = std::fs::File::open(path.join("gate_vectors.bin"))
+        .map_err(|e| PgInferError::Internal(format!("open gate_vectors.bin: {}", e)))?;
+    let gate_mmap = unsafe { memmap2::Mmap::map(&gate_file) }
+        .map_err(|e| PgInferError::Internal(format!("mmap gate_vectors.bin: {}", e)))?;
+    let gate_data = &gate_mmap[..];
+
+    let embed_file = std::fs::File::open(path.join("embeddings.bin"))
+        .map_err(|e| PgInferError::Internal(format!("open embeddings.bin: {}", e)))?;
+    let embed_mmap = unsafe { memmap2::Mmap::map(&embed_file) }
+        .map_err(|e| PgInferError::Internal(format!("mmap embeddings.bin: {}", e)))?;
+    let embed_data = &embed_mmap[..];
+
+    // Small files can still be read directly.
     let tok_data = std::fs::read(path.join("tokenizer.json"))
         .map_err(|e| PgInferError::Internal(format!("read tokenizer.json: {}", e)))?;
 
-    // down_meta is NDJSON, read as raw bytes for blob storage.
     let down_data = std::fs::read(path.join("down_meta.bin"))
-        .unwrap_or_default(); // may not exist
+        .unwrap_or_default();
 
     let bytes_per_gate_vec = hidden_size * 2; // f16
     let bytes_per_embed_vec = hidden_size * 2;
@@ -246,7 +255,10 @@ pub unsafe fn build_column_index(
     index_relation: pg_sys::Relation,
     model_name: &str,
 ) -> Result<pg_sys::IndexBuildResult, PgInferError> {
+    pgrx::log!("build_column_index: starting for model '{}'", model_name);
+
     // Validate that the referenced model exists.
+    pgrx::log!("build_column_index: checking if model exists via SPI");
     let model_exists: Option<bool> = Spi::get_one_with_args(
         "SELECT EXISTS(\
              SELECT 1 FROM infer.models WHERE model_name = $1 \
@@ -256,6 +268,7 @@ pub unsafe fn build_column_index(
          )",
         &[DatumWithOid::from(model_name)],
     )?;
+    pgrx::log!("build_column_index: SPI query completed, result: {:?}", model_exists);
 
     if model_exists != Some(true) {
         return Err(PgInferError::ModelNotFound {
@@ -299,10 +312,12 @@ pub unsafe fn build_column_index(
     let copy_len = name_bytes.len().min(meta.model_name.len() - 1);
     meta.model_name[..copy_len].copy_from_slice(&name_bytes[..copy_len]);
 
+    pgrx::log!("build_column_index: writing metapage");
     // Write the single metapage.
     write_new_page(index_relation, PageType::Meta, |page| {
         write_struct_at(page, 0, &meta);
     })?;
+    pgrx::log!("build_column_index: metapage written successfully");
 
     // Build the result.
     let result = pg_sys::palloc0(std::mem::size_of::<pg_sys::IndexBuildResult>())
@@ -381,8 +396,10 @@ unsafe fn write_new_page<F>(
 where
     F: FnOnce(pg_sys::Page),
 {
+    pgrx::log!("write_new_page: starting for page_type {:?}", page_type);
     // Extend the relation to get a new block.
     pg_sys::LockRelationForExtension(rel, pg_sys::ExclusiveLock as pg_sys::LOCKMODE);
+    pgrx::log!("write_new_page: relation locked for extension");
 
     let buf = pg_sys::ReadBufferExtended(
         rel,
@@ -409,8 +426,11 @@ where
     fill(page);
 
     // Finish WAL logging and release.
+    pgrx::log!("write_new_page: finishing GenericXLog");
     pg_sys::GenericXLogFinish(state);
+    pgrx::log!("write_new_page: unlocking and releasing buffer");
     pg_sys::UnlockReleaseBuffer(buf);
+    pgrx::log!("write_new_page: completed successfully");
 
     Ok(())
 }
