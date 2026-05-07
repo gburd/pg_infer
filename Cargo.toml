@@ -6,6 +6,7 @@ members = [
     "crates/infer-vindex",
     "crates/infer-core",
     "crates/infer-inference",
+    "crates/infer-client",
 ]
 resolver = "2"
 
