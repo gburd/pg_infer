@@ -36,8 +36,8 @@ fn infer(
     let model_name = registry::resolve_model_name(model)?;
     let top_k = top.unwrap_or(5) as usize;
 
-    let rows = registry::with_model(&model_name, |handle| {
-        let preds = mmap_infer(handle, prompt, top_k)?;
+    let rows = registry::with_backend(&model_name, |backend| {
+        let preds = backend.infer(prompt, top_k)?;
         Ok(preds
             .into_iter()
             .map(|p| (p.token, p.probability, p.rank))

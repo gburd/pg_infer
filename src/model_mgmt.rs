@@ -7,21 +7,22 @@ use crate::error::PgInferError;
 use crate::gucs;
 use crate::registry;
 
-/// Register a model so that query functions can reference it by name.
+/// Register a model so query functions can reference it by name.
 ///
-/// Inserts a row into the `infer.models` registry table after validating
-/// that the vindex can be loaded.
-///
-/// `source` is either:
-/// - An absolute path to an existing `.vindex/` directory,
-/// - A HuggingFace `hf://` URI pointing to a pre-built vindex, or
-/// - A HuggingFace model ID (e.g. `google/gemma-3-4b-it`) which will
-///   be downloaded and extracted if `infer.auto_download` is on.
-///
+/// Local (mmap) registration — the default:
 /// ```sql
 /// SELECT infer_create_model('qwen05b', '/data/qwen.vindex');
-/// SELECT infer_create_model('gemma4b', 'hf://chrishayuk/gemma-3-4b-it-vindex');
 /// ```
+///
+/// Remote registration (points at a larql-server):
+/// ```sql
+/// SELECT infer_create_model_remote('qwen05b', 'http://localhost:8080');
+/// ```
+///
+/// `source` is either:
+/// - An absolute path to an existing `.vindex/` directory, or
+/// - A relative path resolved under `infer.data_directory`.
+/// HuggingFace auto-download is declared but not yet wired.
 #[pg_extern]
 fn infer_create_model(
     model_name: &str,
@@ -30,21 +31,94 @@ fn infer_create_model(
 ) -> Result<String, Box<dyn std::error::Error>> {
     let _level = extract_level.unwrap_or("browse");
 
-    // Resolve the vindex path from the source.
     let vindex_path = resolve_source(source)?;
 
-    // Validate that the vindex can actually be loaded.
+    // Validate the vindex loads before persisting anything.
     let handle = registry::load_from_path(Path::new(&vindex_path))?;
     let num_layers = handle.config.num_layers as i32;
     let hidden_size = handle.config.hidden_size as i32;
     let vocab_size = handle.config.vocab_size as i32;
     let level_str = format!("{:?}", handle.config.extract_level).to_lowercase();
 
+    upsert_registry(
+        model_name,
+        &vindex_path,
+        source,
+        &level_str,
+        num_layers,
+        hidden_size,
+        vocab_size,
+        "local",
+        None,
+    )?;
+
+    registry::evict(model_name);
+
+    Ok(format!(
+        "model '{}' registered (local, {} layers, hidden={}, level={})",
+        model_name, num_layers, hidden_size, level_str
+    ))
+}
+
+/// Register a model that lives on a remote `larql-server`.
+///
+/// The server is contacted at registration time so `/v1/stats` can be
+/// cached into `infer.models`.  Subsequent queries run against the
+/// server's shared vindex and activation cache.
+///
+/// ```sql
+/// SELECT infer_create_model_remote('gemma4b', 'http://localhost:8080');
+/// SELECT infer_create_model_remote('shared', 'http://pg-infer-server:8080');
+/// ```
+#[pg_extern]
+fn infer_create_model_remote(
+    model_name: &str,
+    server_url: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    use crate::backend::remote::RemoteBackend;
+
+    // Probe the server.  This also validates the URL.
+    let backend = RemoteBackend::connect(server_url, gucs::remote_timeout())?;
+    let num_layers = backend.num_layers as i32;
+    let hidden_size = backend.hidden_size as i32;
+
+    upsert_registry(
+        model_name,
+        "",
+        server_url,
+        "remote",
+        num_layers,
+        hidden_size,
+        0,
+        "remote",
+        Some(server_url),
+    )?;
+
+    registry::evict(model_name);
+
+    Ok(format!(
+        "model '{}' registered (remote={}, {} layers, hidden={})",
+        model_name, server_url, num_layers, hidden_size
+    ))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn upsert_registry(
+    model_name: &str,
+    vindex_path: &str,
+    source: &str,
+    extract_level: &str,
+    num_layers: i32,
+    hidden_size: i32,
+    vocab_size: i32,
+    backend: &str,
+    server_url: Option<&str>,
+) -> Result<(), PgInferError> {
     Spi::run_with_args(
         "INSERT INTO infer.models \
              (model_name, vindex_path, source, extract_level, \
-              num_layers, hidden_size, vocab_size) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7) \
+              num_layers, hidden_size, vocab_size, backend, server_url) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
          ON CONFLICT (model_name) DO UPDATE SET \
              vindex_path   = EXCLUDED.vindex_path, \
              source        = EXCLUDED.source, \
@@ -52,26 +126,22 @@ fn infer_create_model(
              num_layers    = EXCLUDED.num_layers, \
              hidden_size   = EXCLUDED.hidden_size, \
              vocab_size    = EXCLUDED.vocab_size, \
+             backend       = EXCLUDED.backend, \
+             server_url    = EXCLUDED.server_url, \
              registered_at = NOW()",
         &[
             DatumWithOid::from(model_name),
-            DatumWithOid::from(vindex_path.as_str()),
+            DatumWithOid::from(vindex_path),
             DatumWithOid::from(source),
-            DatumWithOid::from(level_str.as_str()),
+            DatumWithOid::from(extract_level),
             DatumWithOid::from(num_layers),
             DatumWithOid::from(hidden_size),
             DatumWithOid::from(vocab_size),
+            DatumWithOid::from(backend),
+            DatumWithOid::from(server_url),
         ],
     )?;
-
-    // Evict any stale cached handle for this name so the next query reloads
-    // from the newly registered path.
-    registry::evict(model_name);
-
-    Ok(format!(
-        "model '{}' registered ({} layers, hidden={}, level={})",
-        model_name, num_layers, hidden_size, level_str
-    ))
+    Ok(())
 }
 
 /// Remove a model registration and evict it from the per-backend cache.
@@ -85,18 +155,11 @@ fn infer_drop_model(model_name: &str) -> Result<String, Box<dyn std::error::Erro
         "DELETE FROM infer.models WHERE model_name = $1",
         &[DatumWithOid::from(model_name)],
     )?;
-
-    // Evict from process-local cache (if present).
     registry::evict(model_name);
-
     Ok(format!("model '{}' dropped", model_name))
 }
 
 /// List all registered models as a set-returning function.
-///
-/// ```sql
-/// SELECT * FROM infer_models();
-/// ```
 #[pg_extern]
 fn infer_models() -> Result<
     TableIterator<
@@ -180,31 +243,20 @@ fn resolve_data_directory() -> PathBuf {
 /// Local paths are restricted to be under `infer.data_directory` to prevent
 /// arbitrary filesystem reads.
 fn resolve_source(source: &str) -> Result<String, PgInferError> {
-    // Case 1: hf:// URI — download the pre-built vindex.
+    // hf:// URI — pre-built vindex download, not yet wired.
     if source.starts_with("hf://") {
-        if !gucs::AUTO_DOWNLOAD.get() {
-            return Err(PgInferError::Internal(
-                "infer.auto_download is off — cannot fetch from HuggingFace".into(),
-            ));
-        }
         return Err(PgInferError::Internal(
             "HuggingFace vindex download not yet implemented".into(),
         ));
     }
 
-    // Case 2: HuggingFace model ID (contains '/' but is not a local path).
+    // HuggingFace model ID (contains '/' but is not a local path).
     if source.contains('/') && !Path::new(source).exists() {
-        if !gucs::AUTO_DOWNLOAD.get() {
-            return Err(PgInferError::Internal(
-                "infer.auto_download is off — cannot fetch from HuggingFace".into(),
-            ));
-        }
         return Err(PgInferError::Internal(
             "HuggingFace model download + extraction not yet implemented".into(),
         ));
     }
 
-    // Case 3: local path (absolute or relative).
     let data_dir = resolve_data_directory();
 
     let resolved = if Path::new(source).is_absolute() {
@@ -213,17 +265,14 @@ fn resolve_source(source: &str) -> Result<String, PgInferError> {
         data_dir.join(source)
     };
 
-    // Canonicalize the resolved path if it exists on disk.
     let canonical = resolved
         .canonicalize()
         .unwrap_or_else(|_| resolved.clone());
 
-    // Canonicalize the data directory for comparison (may not exist yet).
     let canonical_data_dir = data_dir
         .canonicalize()
         .unwrap_or_else(|_| data_dir.clone());
 
-    // Security check: the resolved path must be under the data directory.
     if !canonical.starts_with(&canonical_data_dir) {
         return Err(PgInferError::PathNotPermitted {
             path: canonical.to_string_lossy().into_owned(),

@@ -34,8 +34,8 @@ fn infer_show_layers(
 > {
     let model_name = registry::resolve_model_name(model)?;
 
-    let rows = registry::with_model(&model_name, |handle| {
-        let infos = mmap_show_layers(handle)?;
+    let rows = registry::with_backend(&model_name, |backend| {
+        let infos = backend.show_layers()?;
         Ok(infos
             .into_iter()
             .map(|i| (i.layer, i.band, i.num_features))
@@ -103,8 +103,8 @@ fn infer_show_features(
     let filter_lower = filter.map(|f| f.to_lowercase());
     let min_c = min_score.unwrap_or(0.0) as f32;
 
-    let rows = registry::with_model(&model_name, |handle| {
-        let feats = mmap_show_features(handle, layer_idx, filter_lower.as_deref(), min_c, limit)?;
+    let rows = registry::with_backend(&model_name, |backend| {
+        let feats = backend.show_features(layer_idx, filter_lower.as_deref(), min_c, limit)?;
         Ok(feats
             .into_iter()
             .map(|f| (f.feature, f.token, f.score, f.also))
@@ -202,8 +202,8 @@ fn infer_show_relations(
 > {
     let model_name = registry::resolve_model_name(model)?;
 
-    let rows = registry::with_model(&model_name, |handle| {
-        let rels = mmap_show_relations(handle)?;
+    let rows = registry::with_backend(&model_name, |backend| {
+        let rels = backend.show_relations()?;
         Ok(rels
             .into_iter()
             .map(|r| (r.relation, r.count, r.max_score, r.layers, r.examples))

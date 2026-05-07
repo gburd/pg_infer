@@ -1,6 +1,5 @@
 use pgrx::prelude::*;
 
-use crate::error::PgInferError;
 use crate::registry;
 
 /// Test whether the model's knowledge supports a directional relationship
@@ -21,24 +20,9 @@ fn implies(
 ) -> Result<bool, Box<dyn std::error::Error>> {
     let model_name = registry::resolve_model_name(model)?;
 
-    let result = registry::with_model(&model_name, |handle| {
-        implies_impl(handle, subject, object)
+    let result = registry::with_backend(&model_name, |backend| {
+        backend.implies(subject, object)
     })?;
 
     Ok(result)
-}
-
-fn implies_impl(
-    handle: &registry::ModelHandle,
-    subject: &str,
-    object: &str,
-) -> Result<bool, PgInferError> {
-    let object_lower = object.to_lowercase();
-
-    // Reuse the describe implementation with adaptive thresholding.
-    let edges = crate::fn_describe::mmap_describe(handle, subject, None)?;
-
-    Ok(edges
-        .iter()
-        .any(|e| e.target.to_lowercase() == object_lower))
 }

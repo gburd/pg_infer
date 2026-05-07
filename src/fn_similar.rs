@@ -26,8 +26,8 @@ fn similar_to(
 ) -> Result<f64, Box<dyn std::error::Error>> {
     let model_name = registry::resolve_model_name(model)?;
 
-    let score = registry::with_model(&model_name, |handle| {
-        similar_to_impl(handle, a, b)
+    let score = registry::with_backend(&model_name, |backend| {
+        backend.similar_to(a, b)
     })?;
 
     Ok(score)
@@ -215,9 +215,7 @@ pub(crate) fn score_to_distance(score: f64) -> f64 {
 #[pg_extern]
 fn infer_distance(a: &str, b: &str) -> Result<f64, Box<dyn std::error::Error>> {
     let model_name = registry::resolve_model_name(None)?;
-    let score = registry::with_model(&model_name, |handle| {
-        similar_to_impl(handle, a, b)
-    })?;
+    let score = registry::with_backend(&model_name, |backend| backend.similar_to(a, b))?;
 
     Ok(score_to_distance(score))
 }

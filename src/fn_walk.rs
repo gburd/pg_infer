@@ -32,8 +32,8 @@ fn walk(
     let model_name = registry::resolve_model_name(model)?;
     let top_k = top.unwrap_or(20) as usize;
 
-    let rows = registry::with_model(&model_name, |handle| {
-        let hits = mmap_walk(handle, prompt, top_k)?;
+    let rows = registry::with_backend(&model_name, |backend| {
+        let hits = backend.walk(prompt, top_k)?;
         Ok(hits
             .into_iter()
             .map(|h| (h.layer, h.feature, h.gate_score, h.concept))
@@ -132,8 +132,8 @@ fn infer_explain_walk(
     let model_name = registry::resolve_model_name(model)?;
     let top_k = top.unwrap_or(5) as usize;
 
-    let rows = registry::with_model(&model_name, |handle| {
-        let hits = mmap_explain_walk(handle, prompt, top_k)?;
+    let rows = registry::with_backend(&model_name, |backend| {
+        let hits = backend.explain_walk(prompt, top_k)?;
         Ok(hits
             .into_iter()
             .map(|h| (h.layer, h.band, h.feature, h.gate_score, h.token, h.also))

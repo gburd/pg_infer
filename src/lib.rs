@@ -33,6 +33,8 @@ extension_sql!(
         num_layers    INT,
         hidden_size   INT,
         vocab_size    INT,
+        backend       TEXT NOT NULL DEFAULT 'local',
+        server_url    TEXT,
         registered_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 "#,

@@ -62,6 +62,7 @@ rayon = "1.10"
 infer-vindex = { path = "crates/infer-vindex" }
 infer-compute = { path = "crates/infer-compute" }
 infer-models = { path = "crates/infer-models" }
+infer-client = { path = "crates/infer-client" }
 
 # Optional: full inference (forward pass).  Heavy dependency chain.
 infer-inference = { path = "crates/infer-inference", optional = true }

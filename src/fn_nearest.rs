@@ -40,8 +40,8 @@ fn nearest_to(
     let top_k = top.unwrap_or(20) as usize;
     let layer_idx = layer as usize;
 
-    let rows = registry::with_model(&model_name, |handle| {
-        let hits = mmap_nearest_to(handle, entity, layer_idx, top_k)?;
+    let rows = registry::with_backend(&model_name, |backend| {
+        let hits = backend.nearest_to(entity, layer_idx, top_k)?;
         Ok(hits
             .into_iter()
             .map(|h| (h.feature, h.concept, h.gate_score, h.also))

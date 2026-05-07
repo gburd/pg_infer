@@ -37,12 +37,17 @@ fn infer_diff(
 > {
     let limit = top.unwrap_or(20) as usize;
 
-    let a_data = registry::with_model(model_a, |handle_a| {
-        mmap_snapshot_features(handle_a, layer)
+    let a_data = registry::with_backend(model_a, |backend| {
+        backend.snapshot_features(layer)
     })?;
 
-    let rows = registry::with_model(model_b, |handle_b| {
-        diff_impl(&a_data, handle_b, layer, limit)
+    // We need per-feature metadata from B to synthesize diff rows.  The
+    // trait exposes `feature_meta_at` — remote backends return `None`
+    // there, which the differ treats as "feature missing" and records
+    // as a removal.  Snapshot call also rejects remote backends, which
+    // is correct: diff requires enumeration only the mmap path offers.
+    let rows = registry::with_backend(model_b, |backend_b| {
+        diff_impl(&a_data, backend_b, layer, limit)
     })?;
 
     Ok(TableIterator::new(rows))
@@ -89,11 +94,11 @@ pub(crate) fn mmap_snapshot_features(
 /// Compare model A's collected features against model B.
 fn diff_impl(
     a_data: &[crate::backend::FeatureSnapshot],
-    handle_b: &registry::ModelHandle,
+    backend_b: &dyn crate::backend::Backend,
     layer_filter: Option<i32>,
     limit: usize,
 ) -> Result<Vec<(i32, i32, String, String, f64, f64, String)>, PgInferError> {
-    let num_layers_b = handle_b.config.num_layers;
+    let num_layers_b = backend_b.num_layers();
     let mut results = Vec::new();
 
     for snap_a in a_data {
@@ -102,7 +107,6 @@ fn diff_impl(
         }
 
         let layer = snap_a.layer;
-        // Skip if model B doesn't have this layer.
         if layer >= num_layers_b {
             results.push((
                 layer as i32,
@@ -116,21 +120,7 @@ fn diff_impl(
             continue;
         }
 
-        let nf_b = handle_b.num_features(layer);
-        if snap_a.feature >= nf_b {
-            results.push((
-                layer as i32,
-                snap_a.feature as i32,
-                snap_a.top_token.clone(),
-                String::new(),
-                snap_a.c_score as f64,
-                0.0,
-                "removed".to_string(),
-            ));
-            continue;
-        }
-
-        match handle_b.feature_meta(layer, snap_a.feature) {
+        match backend_b.feature_meta_at(layer, snap_a.feature) {
             Some(meta_b) => {
                 let token_differs = snap_a.top_token != meta_b.top_token;
                 let score_differs = (snap_a.c_score - meta_b.c_score).abs() > 0.01;
@@ -161,45 +151,29 @@ fn diff_impl(
         }
     }
 
-    // Also check for features in B that don't exist in A (at the same layers).
-    // Only if we haven't hit the limit yet.
+    // Also check for features in B that don't exist in A.  Uses B's
+    // snapshot; rejects if B is remote.
     if results.len() < limit {
-        let (start, end) = match layer_filter {
-            Some(l) => (l as usize, l as usize + 1),
-            None => (0, num_layers_b),
-        };
-
-        // Build a set of (layer, feature) pairs from A for fast lookup.
+        let b_snapshot = backend_b.snapshot_features(layer_filter)?;
         let a_set: std::collections::HashSet<(usize, usize)> =
             a_data.iter().map(|s| (s.layer, s.feature)).collect();
 
-        for layer in start..end.min(num_layers_b) {
+        for snap_b in &b_snapshot {
             if results.len() >= limit {
                 break;
             }
-            // Only look for "added" features in layers beyond A's range
-            // or features beyond A's count at that layer.
-            let nf_b = handle_b.num_features(layer);
-            for feat in 0..nf_b {
-                if results.len() >= limit {
-                    break;
-                }
-                if a_set.contains(&(layer, feat)) {
-                    continue;
-                }
-                // Feature exists in B but not in A.
-                if let Some(meta_b) = handle_b.feature_meta(layer, feat) {
-                    results.push((
-                        layer as i32,
-                        feat as i32,
-                        String::new(),
-                        meta_b.top_token,
-                        0.0,
-                        meta_b.c_score as f64,
-                        "added".to_string(),
-                    ));
-                }
+            if a_set.contains(&(snap_b.layer, snap_b.feature)) {
+                continue;
             }
+            results.push((
+                snap_b.layer as i32,
+                snap_b.feature as i32,
+                String::new(),
+                snap_b.top_token.clone(),
+                0.0,
+                snap_b.c_score as f64,
+                "added".to_string(),
+            ));
         }
     }
 

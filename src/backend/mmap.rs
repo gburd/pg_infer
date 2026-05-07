@@ -5,7 +5,7 @@
 //! preserving the existing algorithms in `fn_describe`, `fn_walk`,
 //! `fn_similar`, etc.  The trait boundary is purely a dispatch seam.
 
-#![allow(dead_code)] // Consumed by registry dispatch in Phase C2.
+#![allow(dead_code)] // `mmap_*` helpers are also called directly by fn_*.rs.
 
 use std::sync::Arc;
 

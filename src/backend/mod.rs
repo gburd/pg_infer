@@ -23,7 +23,7 @@
 //! defeat the cache and blow up round-trip counts.  Instead we let each
 //! backend assemble the result its own way.
 
-#![allow(dead_code)] // Wired into registry dispatch in Phase C2.
+#![allow(dead_code)] // Some trait methods are only used on the non-active backend at build time.
 
 pub mod mmap;
 pub mod remote;

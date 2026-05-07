@@ -44,8 +44,8 @@ fn describe(
 > {
     let model_name = registry::resolve_model_name(model)?;
 
-    let rows = registry::with_model(&model_name, |handle| {
-        let raw = mmap_describe(handle, entity, threshold)?;
+    let rows = registry::with_backend(&model_name, |backend| {
+        let raw = backend.describe(entity, threshold)?;
         Ok(raw
             .into_iter()
             .map(|e| (e.relation, e.target, e.gate_score, e.layer))
