@@ -14,6 +14,7 @@ mod fn_similar;
 mod fn_walk;
 mod gucs;
 mod helpers;
+mod interrupt;
 mod model_mgmt;
 mod registry;
 

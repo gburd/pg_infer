@@ -76,10 +76,12 @@ impl RemoteBackend {
             .map_err(|e| PgInferError::Remote(format!("connect {server_url}: {e}")))?;
 
         // Pull /v1/stats to learn layer count + hidden size + bands.
+        // At connect time there's no PG backend yet (this runs from
+        // infer_create_model_remote), so a plain no-tick GET is fine.
         let cancel = CancelToken::new();
         let stats: infer_client::StatsResponse = client
             .get_json("/v1/stats", &cancel)
-            .map_err(map_err)?;
+            .map_err(|e| PgInferError::Remote(format!("stats {server_url}: {e}")))?;
 
         let layer_bands = stats.layer_bands.map(|b| LayerBandsCached {
             syntax: (b.syntax[0], b.syntax[1]),
@@ -97,16 +99,49 @@ impl RemoteBackend {
     }
 
     fn cancel_for_current_call(&self) -> CancelToken {
-        // Phase C3 will tie this to PG's QueryCancelPending.  For now the
-        // token is fresh-per-call and only signalled on reqwest-level
-        // timeout (which reqwest handles itself via Builder::timeout).
+        // Fresh per-call token.  The tick callback (`pg_interrupt_tick`)
+        // observes PG's `InterruptPending` flag and flips this token via
+        // the `CancellableClient::*_with_tick` APIs.
         CancelToken::new()
+    }
+
+    /// Shorthand for issuing a GET to the server, with PG interrupt
+    /// polling wired into the wait loop.
+    fn get_json<T: serde::de::DeserializeOwned>(
+        &self,
+        path: &str,
+    ) -> Result<T, PgInferError> {
+        let cancel = self.cancel_for_current_call();
+        self.client
+            .get_json_with_tick(path, &cancel, crate::interrupt::pg_interrupt_tick)
+            .map_err(map_err)
+    }
+
+    /// Shorthand for issuing a POST to the server, with PG interrupt
+    /// polling wired into the wait loop.
+    fn post_json<T: serde::de::DeserializeOwned>(
+        &self,
+        path: &str,
+        body: serde_json::Value,
+    ) -> Result<T, PgInferError> {
+        let cancel = self.cancel_for_current_call();
+        self.client
+            .post_json_with_tick(path, body, &cancel, crate::interrupt::pg_interrupt_tick)
+            .map_err(map_err)
     }
 }
 
 fn map_err(e: ClientError) -> PgInferError {
     match e {
-        ClientError::Cancelled => PgInferError::Remote("request cancelled".into()),
+        ClientError::Cancelled => {
+            // PG's InterruptPending was observed; turn that into a
+            // proper SQL-level ERROR via ProcessInterrupts.  If the
+            // cancel came from somewhere else (unlikely given how the
+            // tick callback is wired) this is a no-op and we fall
+            // through to the plain Remote error below.
+            crate::interrupt::raise_if_pending();
+            PgInferError::Remote("request cancelled".into())
+        }
         other => PgInferError::Remote(other.to_string()),
     }
 }
@@ -135,11 +170,7 @@ impl Backend for RemoteBackend {
         // `/v1/stats` (it reports total + per-layer-0).  Approximate by
         // using features_per_layer as a uniform value until a `/v1/layers`
         // endpoint lands upstream.
-        let cancel = self.cancel_for_current_call();
-        let stats: serde_json::Value = self
-            .client
-            .get_json("/v1/stats", &cancel)
-            .map_err(map_err)?;
+        let stats: serde_json::Value = self.get_json("/v1/stats")?;
 
         let uniform = stats
             .get("features_per_layer")
@@ -183,9 +214,7 @@ impl Backend for RemoteBackend {
             path.push_str(&format!("&min_score={threshold}"));
         }
 
-        let cancel = self.cancel_for_current_call();
-        let resp: infer_client::DescribeResponse =
-            self.client.get_json(&path, &cancel).map_err(map_err)?;
+        let resp: infer_client::DescribeResponse = self.get_json(&path)?;
 
         Ok(resp
             .edges
@@ -205,9 +234,7 @@ impl Backend for RemoteBackend {
             urlencoding(prompt),
             top_k
         );
-        let cancel = self.cancel_for_current_call();
-        let resp: infer_client::WalkResponse =
-            self.client.get_json(&path, &cancel).map_err(map_err)?;
+        let resp: infer_client::WalkResponse = self.get_json(&path)?;
 
         Ok(resp
             .hits
@@ -254,9 +281,7 @@ impl Backend for RemoteBackend {
             top_k,
             layer
         );
-        let cancel = self.cancel_for_current_call();
-        let resp: infer_client::WalkResponse =
-            self.client.get_json(&path, &cancel).map_err(map_err)?;
+        let resp: infer_client::WalkResponse = self.get_json(&path)?;
 
         Ok(resp
             .hits
@@ -281,11 +306,8 @@ impl Backend for RemoteBackend {
         let path_a = format!("/v1/walk?prompt={}&top={}", urlencoding(a), top_k);
         let path_b = format!("/v1/walk?prompt={}&top={}", urlencoding(b), top_k);
 
-        let cancel = self.cancel_for_current_call();
-        let resp_a: infer_client::WalkResponse =
-            self.client.get_json(&path_a, &cancel).map_err(map_err)?;
-        let resp_b: infer_client::WalkResponse =
-            self.client.get_json(&path_b, &cancel).map_err(map_err)?;
+        let resp_a: infer_client::WalkResponse = self.get_json(&path_a)?;
+        let resp_b: infer_client::WalkResponse = self.get_json(&path_b)?;
 
         // Build (layer, feature) → score for B.
         let mut b_map: HashMap<(usize, usize), f32> = HashMap::new();
@@ -316,11 +338,7 @@ impl Backend for RemoteBackend {
             "prompt": prompt,
             "top": top_k,
         });
-        let cancel = self.cancel_for_current_call();
-        let resp: infer_client::InferResponse = self
-            .client
-            .post_json("/v1/infer", body, &cancel)
-            .map_err(map_err)?;
+        let resp: infer_client::InferResponse = self.post_json("/v1/infer", body)?;
 
         Ok(resp
             .predictions
@@ -335,11 +353,7 @@ impl Backend for RemoteBackend {
     }
 
     fn show_relations(&self) -> Result<Vec<RelationRow>, PgInferError> {
-        let cancel = self.cancel_for_current_call();
-        let resp: infer_client::RelationsResponse = self
-            .client
-            .get_json("/v1/relations", &cancel)
-            .map_err(map_err)?;
+        let resp: infer_client::RelationsResponse = self.get_json("/v1/relations")?;
 
         Ok(resp
             .relations

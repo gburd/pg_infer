@@ -9,7 +9,7 @@
 //!   runtime, plus a `reqwest::Client` for connection pooling.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{sync_channel, SyncSender};
+use std::sync::mpsc::{sync_channel, RecvTimeoutError, SyncSender};
 use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -17,7 +17,6 @@ use std::time::Duration;
 use reqwest::{Client, StatusCode};
 use serde::de::DeserializeOwned;
 use tokio::runtime::Builder;
-use tokio::sync::oneshot;
 
 /// Maximum request body size the client will build.  64 MiB matches
 /// larql-server's `REQUEST_BODY_LIMIT_BYTES`.
@@ -103,10 +102,10 @@ struct RequestJob {
     body: Option<serde_json::Value>,
     method: Method,
     cancel: CancelToken,
-    /// Oneshot for the JSON response bytes.  The caller deserialises on
-    /// the foreground thread so the runtime thread doesn't need the target
-    /// type.
-    reply: oneshot::Sender<Result<Vec<u8>, ClientError>>,
+    /// std::sync::mpsc sender.  Chosen over `tokio::oneshot` so the
+    /// foreground thread can call `recv_timeout` and interleave
+    /// `tick()` calls for PG's `CHECK_FOR_INTERRUPTS`.
+    reply: SyncSender<Result<Vec<u8>, ClientError>>,
 }
 
 #[derive(Clone, Copy)]
@@ -157,7 +156,7 @@ impl CancellableClient {
         path: &str,
         cancel: &CancelToken,
     ) -> Result<T, ClientError> {
-        self.run(Method::Get, path, None, cancel)
+        self.run(Method::Get, path, None, cancel, no_tick)
     }
 
     /// `POST {base_url}{path}` with a JSON body.
@@ -167,18 +166,56 @@ impl CancellableClient {
         body: serde_json::Value,
         cancel: &CancelToken,
     ) -> Result<T, ClientError> {
-        self.run(Method::Post, path, Some(body), cancel)
+        self.run(Method::Post, path, Some(body), cancel, no_tick)
     }
 
-    fn run<T: DeserializeOwned>(
+    /// Same as [`get_json`] but invokes `tick` between every ~50 ms
+    /// poll interval while waiting for the response.  The callback is
+    /// expected to check any external cancellation signal (e.g. PG's
+    /// `QueryCancelPending` flag) and return `Err(ClientError::Cancelled)`
+    /// — or flip the provided `CancelToken` — to abort.
+    pub fn get_json_with_tick<T, F>(
+        &self,
+        path: &str,
+        cancel: &CancelToken,
+        tick: F,
+    ) -> Result<T, ClientError>
+    where
+        T: DeserializeOwned,
+        F: FnMut() -> Result<(), ClientError>,
+    {
+        self.run(Method::Get, path, None, cancel, tick)
+    }
+
+    /// POST variant of [`get_json_with_tick`].
+    pub fn post_json_with_tick<T, F>(
+        &self,
+        path: &str,
+        body: serde_json::Value,
+        cancel: &CancelToken,
+        tick: F,
+    ) -> Result<T, ClientError>
+    where
+        T: DeserializeOwned,
+        F: FnMut() -> Result<(), ClientError>,
+    {
+        self.run(Method::Post, path, Some(body), cancel, tick)
+    }
+
+    fn run<T, F>(
         &self,
         method: Method,
         path: &str,
         body: Option<serde_json::Value>,
         cancel: &CancelToken,
-    ) -> Result<T, ClientError> {
+        mut tick: F,
+    ) -> Result<T, ClientError>
+    where
+        T: DeserializeOwned,
+        F: FnMut() -> Result<(), ClientError>,
+    {
         let url = format!("{}{}", self.base_url, path);
-        let (reply_tx, reply_rx) = oneshot::channel();
+        let (reply_tx, reply_rx) = sync_channel::<Result<Vec<u8>, ClientError>>(1);
 
         self.tx
             .send(Cmd::Request(RequestJob {
@@ -190,19 +227,39 @@ impl CancellableClient {
             }))
             .map_err(|_| ClientError::Runtime("runtime thread gone".into()))?;
 
-        // Block the PG foreground thread on the oneshot.  We purposely do
-        // NOT call CHECK_FOR_INTERRUPTS here — that's the caller's job (it
-        // knows the pgrx macro) and we don't want a longjmp inside the
-        // crate.  Instead the caller loops on a short-timeout variant.
-        //
-        // For callers that don't need interrupt wiring (tests) the blocking
-        // recv is fine.
-        let bytes = reply_rx
-            .blocking_recv()
-            .map_err(|_| ClientError::Runtime("reply channel dropped".into()))??;
-
-        serde_json::from_slice::<T>(&bytes).map_err(|e| ClientError::Parse(e.to_string()))
+        // Poll with 50 ms cadence.  Between waits invoke the tick
+        // callback; if it returns an error (typically `Cancelled`) we
+        // signal the runtime-side future and drain the reply, which
+        // will shortly come back as `ClientError::Cancelled`.
+        loop {
+            match reply_rx.recv_timeout(Duration::from_millis(50)) {
+                Ok(Ok(bytes)) => {
+                    return serde_json::from_slice::<T>(&bytes)
+                        .map_err(|e| ClientError::Parse(e.to_string()));
+                }
+                Ok(Err(e)) => return Err(e),
+                Err(RecvTimeoutError::Disconnected) => {
+                    return Err(ClientError::Runtime("reply channel dropped".into()));
+                }
+                Err(RecvTimeoutError::Timeout) => {
+                    if let Err(e) = tick() {
+                        cancel.cancel();
+                        // Drain whatever response comes back (likely
+                        // `Cancelled`) so we don't leak a dangling
+                        // sender on the runtime side.
+                        let _ = reply_rx.recv();
+                        return Err(e);
+                    }
+                }
+            }
+        }
     }
+}
+
+/// Default no-op tick — used by the plain `get_json`/`post_json` paths
+/// that don't need external cancellation polling.
+fn no_tick() -> Result<(), ClientError> {
+    Ok(())
 }
 
 impl Drop for CancellableClient {
@@ -353,5 +410,35 @@ mod tests {
             "cancellation took {:?}",
             elapsed
         );
+    }
+
+    #[test]
+    fn tick_driven_cancellation() {
+        // Same non-routable target; this time no external thread flips
+        // the token.  The tick callback fires cancellation after a
+        // counter-based delay.
+        let c = CancellableClient::connect("http://198.51.100.1:9999", Duration::from_secs(30))
+            .expect("client builds");
+        let cancel = CancelToken::new();
+        let mut ticks = 0;
+        let start = std::time::Instant::now();
+        let tick = || {
+            ticks += 1;
+            if ticks >= 3 {
+                // ~150ms after the request was issued.
+                Err(ClientError::Cancelled)
+            } else {
+                Ok(())
+            }
+        };
+        let r: Result<serde_json::Value, _> = c.get_json_with_tick("/v1/health", &cancel, tick);
+        let elapsed = start.elapsed();
+        assert!(matches!(r, Err(ClientError::Cancelled)), "got {:?}", r);
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "tick cancel took {:?}",
+            elapsed
+        );
+        assert!(cancel.is_cancelled(), "token should have been signalled");
     }
 }
