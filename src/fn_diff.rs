@@ -37,10 +37,8 @@ fn infer_diff(
 > {
     let limit = top.unwrap_or(20) as usize;
 
-    // Load model A's metadata into a local vector first, then release the
-    // lock before loading model B.
     let a_data = registry::with_model(model_a, |handle_a| {
-        collect_model_features(handle_a, layer)
+        mmap_snapshot_features(handle_a, layer)
     })?;
 
     let rows = registry::with_model(model_b, |handle_b| {
@@ -50,19 +48,11 @@ fn infer_diff(
     Ok(TableIterator::new(rows))
 }
 
-/// Per-feature snapshot from one model: (layer, feature, top_token, c_score).
-struct FeatureSnapshot {
-    layer: usize,
-    feature: usize,
-    top_token: String,
-    c_score: f32,
-}
-
 /// Collect feature metadata from a model for comparison.
-fn collect_model_features(
+pub(crate) fn mmap_snapshot_features(
     handle: &registry::ModelHandle,
     layer_filter: Option<i32>,
-) -> Result<Vec<FeatureSnapshot>, PgInferError> {
+) -> Result<Vec<crate::backend::FeatureSnapshot>, PgInferError> {
     let num_layers = handle.config.num_layers;
     let (start, end) = match layer_filter {
         Some(l) => {
@@ -83,7 +73,7 @@ fn collect_model_features(
         let nf = handle.num_features(layer);
         for feat in 0..nf {
             if let Some(meta) = handle.feature_meta(layer, feat) {
-                features.push(FeatureSnapshot {
+                features.push(crate::backend::FeatureSnapshot {
                     layer,
                     feature: feat,
                     top_token: meta.top_token,
@@ -98,7 +88,7 @@ fn collect_model_features(
 
 /// Compare model A's collected features against model B.
 fn diff_impl(
-    a_data: &[FeatureSnapshot],
+    a_data: &[crate::backend::FeatureSnapshot],
     handle_b: &registry::ModelHandle,
     layer_filter: Option<i32>,
     limit: usize,

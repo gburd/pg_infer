@@ -37,18 +37,22 @@ fn infer(
     let top_k = top.unwrap_or(5) as usize;
 
     let rows = registry::with_model(&model_name, |handle| {
-        infer_impl(handle, prompt, top_k)
+        let preds = mmap_infer(handle, prompt, top_k)?;
+        Ok(preds
+            .into_iter()
+            .map(|p| (p.token, p.probability, p.rank))
+            .collect::<Vec<_>>())
     })?;
 
     Ok(TableIterator::new(rows))
 }
 
 #[cfg(feature = "inference")]
-fn infer_impl(
+pub(crate) fn mmap_infer(
     handle: &registry::ModelHandle,
     prompt: &str,
     top_k: usize,
-) -> Result<Vec<(String, f64, i32)>, PgInferError> {
+) -> Result<Vec<crate::backend::Prediction>, PgInferError> {
     use infer_vindex::ExtractLevel;
 
     // Verify the vindex has inference-level weights.
@@ -78,23 +82,27 @@ fn infer_impl(
     // Run the forward pass.
     let result = infer_inference::predict(&weights, &handle.tokenizer, &token_ids, top_k);
 
-    // Format as rows.
-    let rows: Vec<(String, f64, i32)> = result
+    // Format as Prediction records.
+    let rows: Vec<crate::backend::Prediction> = result
         .predictions
         .into_iter()
         .enumerate()
-        .map(|(i, (token, prob))| (token, prob, (i + 1) as i32))
+        .map(|(i, (token, prob))| crate::backend::Prediction {
+            token,
+            probability: prob,
+            rank: (i + 1) as i32,
+        })
         .collect();
 
     Ok(rows)
 }
 
 #[cfg(not(feature = "inference"))]
-fn infer_impl(
+pub(crate) fn mmap_infer(
     _handle: &registry::ModelHandle,
     _prompt: &str,
     _top_k: usize,
-) -> Result<Vec<(String, f64, i32)>, PgInferError> {
+) -> Result<Vec<crate::backend::Prediction>, PgInferError> {
     Err(PgInferError::Internal(
         "infer() requires the 'inference' feature — \
          rebuild with: cargo pgrx run --features inference"

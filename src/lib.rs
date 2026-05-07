@@ -2,6 +2,7 @@ use pgrx::prelude::*;
 
 pgrx::pg_module_magic!();
 
+mod backend;
 mod error;
 mod fn_describe;
 mod fn_diff;

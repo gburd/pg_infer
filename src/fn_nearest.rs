@@ -41,18 +41,22 @@ fn nearest_to(
     let layer_idx = layer as usize;
 
     let rows = registry::with_model(&model_name, |handle| {
-        nearest_to_impl(handle, entity, layer_idx, top_k)
+        let hits = mmap_nearest_to(handle, entity, layer_idx, top_k)?;
+        Ok(hits
+            .into_iter()
+            .map(|h| (h.feature, h.concept, h.gate_score, h.also))
+            .collect::<Vec<_>>())
     })?;
 
     Ok(TableIterator::new(rows))
 }
 
-fn nearest_to_impl(
+pub(crate) fn mmap_nearest_to(
     handle: &registry::ModelHandle,
     entity: &str,
     layer: usize,
     top_k: usize,
-) -> Result<Vec<(i32, String, f64, String)>, PgInferError> {
+) -> Result<Vec<crate::backend::Hit>, PgInferError> {
     if layer >= handle.config.num_layers {
         return Err(PgInferError::Internal(format!(
             "layer {} out of range (model has {} layers)",
@@ -110,12 +114,13 @@ fn nearest_to_impl(
             .collect::<Vec<_>>()
             .join(", ");
 
-        results.push((
-            feature_idx as i32,
-            meta.top_token,
-            gate_score as f64,
+        results.push(crate::backend::Hit {
+            layer: layer as i32,
+            feature: feature_idx as i32,
+            gate_score: gate_score as f64,
+            concept: meta.top_token,
             also,
-        ));
+        });
     }
 
     Ok(results)

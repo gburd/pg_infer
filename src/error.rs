@@ -31,6 +31,13 @@ pub enum PgInferError {
     #[error("path not permitted: {path} is not under allowed directory {allowed}")]
     PathNotPermitted { path: String, allowed: String },
 
+    #[error("operation '{operation}' is not supported by the remote backend")]
+    RemoteUnsupported { operation: String },
+
+    #[error("remote inference error: {0}")]
+    #[allow(dead_code)] // Constructed by RemoteBackend in Phase C2.
+    Remote(String),
+
     #[error("{0}")]
     Internal(String),
 

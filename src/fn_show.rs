@@ -35,23 +35,37 @@ fn infer_show_layers(
     let model_name = registry::resolve_model_name(model)?;
 
     let rows = registry::with_model(&model_name, |handle| {
-        let num_layers = handle.config.num_layers;
-        let bands = &handle.config.layer_bands;
-
-        let mut results = Vec::with_capacity(num_layers);
-        for layer in 0..num_layers {
-            let nf = handle.num_features(layer);
-            let band = bands
-                .as_ref()
-                .map(|b| b.band_for_layer(layer).to_string())
-                .unwrap_or_default();
-
-            results.push((layer as i32, band, nf as i32));
-        }
-        Ok(results)
+        let infos = mmap_show_layers(handle)?;
+        Ok(infos
+            .into_iter()
+            .map(|i| (i.layer, i.band, i.num_features))
+            .collect::<Vec<_>>())
     })?;
 
     Ok(TableIterator::new(rows))
+}
+
+pub(crate) fn mmap_show_layers(
+    handle: &registry::ModelHandle,
+) -> Result<Vec<crate::backend::LayerInfo>, PgInferError> {
+    let num_layers = handle.config.num_layers;
+    let bands = &handle.config.layer_bands;
+
+    let mut results = Vec::with_capacity(num_layers);
+    for layer in 0..num_layers {
+        let nf = handle.num_features(layer);
+        let band = bands
+            .as_ref()
+            .map(|b| b.band_for_layer(layer).to_string())
+            .unwrap_or_default();
+
+        results.push(crate::backend::LayerInfo {
+            layer: layer as i32,
+            band,
+            num_features: nf as i32,
+        });
+    }
+    Ok(results)
 }
 
 // ---------------------------------------------------------------------------
@@ -90,19 +104,23 @@ fn infer_show_features(
     let min_c = min_score.unwrap_or(0.0) as f32;
 
     let rows = registry::with_model(&model_name, |handle| {
-        show_features_impl(handle, layer_idx, filter_lower.as_deref(), min_c, limit)
+        let feats = mmap_show_features(handle, layer_idx, filter_lower.as_deref(), min_c, limit)?;
+        Ok(feats
+            .into_iter()
+            .map(|f| (f.feature, f.token, f.score, f.also))
+            .collect::<Vec<_>>())
     })?;
 
     Ok(TableIterator::new(rows))
 }
 
-fn show_features_impl(
+pub(crate) fn mmap_show_features(
     handle: &registry::ModelHandle,
     layer: usize,
     filter: Option<&str>,
     min_score: f32,
     limit: usize,
-) -> Result<Vec<(i32, String, f64, String)>, PgInferError> {
+) -> Result<Vec<crate::backend::FeatureRow>, PgInferError> {
     if layer >= handle.config.num_layers {
         return Err(PgInferError::Internal(format!(
             "layer {} out of range (model has {} layers)",
@@ -138,7 +156,12 @@ fn show_features_impl(
             .collect::<Vec<_>>()
             .join(", ");
 
-        results.push((feat as i32, meta.top_token, meta.c_score as f64, also));
+        results.push(crate::backend::FeatureRow {
+            feature: feat as i32,
+            token: meta.top_token,
+            score: meta.c_score as f64,
+            also,
+        });
 
         if results.len() >= limit {
             break;
@@ -180,7 +203,11 @@ fn infer_show_relations(
     let model_name = registry::resolve_model_name(model)?;
 
     let rows = registry::with_model(&model_name, |handle| {
-        show_relations_impl(handle)
+        let rels = mmap_show_relations(handle)?;
+        Ok(rels
+            .into_iter()
+            .map(|r| (r.relation, r.count, r.max_score, r.layers, r.examples))
+            .collect::<Vec<_>>())
     })?;
 
     Ok(TableIterator::new(rows))
@@ -194,9 +221,9 @@ struct RelationAgg {
     examples: Vec<String>,
 }
 
-fn show_relations_impl(
+pub(crate) fn mmap_show_relations(
     handle: &registry::ModelHandle,
-) -> Result<Vec<(String, i32, f64, String, String)>, PgInferError> {
+) -> Result<Vec<crate::backend::RelationRow>, PgInferError> {
     let num_layers = handle.config.num_layers;
 
     // Determine layer range: prefer knowledge band if available.
@@ -269,13 +296,13 @@ fn show_relations_impl(
                 .collect::<Vec<_>>()
                 .join(",");
             let examples_str = agg.examples.join(", ");
-            (
-                token,
-                agg.count as i32,
-                agg.max_score as f64,
-                layers_str,
-                examples_str,
-            )
+            crate::backend::RelationRow {
+                relation: token,
+                count: agg.count as i32,
+                max_score: agg.max_score as f64,
+                layers: layers_str,
+                examples: examples_str,
+            }
         })
         .collect();
 

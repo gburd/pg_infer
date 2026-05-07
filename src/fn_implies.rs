@@ -36,16 +36,9 @@ fn implies_impl(
     let object_lower = object.to_lowercase();
 
     // Reuse the describe implementation with adaptive thresholding.
-    // Pass None so describe_impl uses its own adaptive/GUC threshold.
-    let edges = crate::fn_describe::describe_impl(handle, subject, None)?;
+    let edges = crate::fn_describe::mmap_describe(handle, subject, None)?;
 
-    // Check if any target matches the object.  Since describe_impl already
-    // filtered by the adaptive threshold, any match is considered implied.
-    for (_relation, target, _confidence, _layer) in &edges {
-        if target.to_lowercase() == object_lower {
-            return Ok(true);
-        }
-    }
-
-    Ok(false)
+    Ok(edges
+        .iter()
+        .any(|e| e.target.to_lowercase() == object_lower))
 }

@@ -33,17 +33,21 @@ fn walk(
     let top_k = top.unwrap_or(20) as usize;
 
     let rows = registry::with_model(&model_name, |handle| {
-        walk_impl(handle, prompt, top_k)
+        let hits = mmap_walk(handle, prompt, top_k)?;
+        Ok(hits
+            .into_iter()
+            .map(|h| (h.layer, h.feature, h.gate_score, h.concept))
+            .collect::<Vec<_>>())
     })?;
 
     Ok(TableIterator::new(rows))
 }
 
-fn walk_impl(
+pub(crate) fn mmap_walk(
     handle: &registry::ModelHandle,
     prompt: &str,
     top_k: usize,
-) -> Result<Vec<(i32, i32, f64, String)>, PgInferError> {
+) -> Result<Vec<crate::backend::Hit>, PgInferError> {
     // 1. Tokenize the prompt.
     let encoding = handle
         .tokenizer
@@ -82,12 +86,13 @@ fn walk_impl(
                 .map(|m| m.top_token.clone())
                 .unwrap_or_default();
 
-            results.push((
-                layer as i32,
-                feature_idx as i32,
-                gate_score as f64,
+            results.push(crate::backend::Hit {
+                layer: layer as i32,
+                feature: feature_idx as i32,
+                gate_score: gate_score as f64,
                 concept,
-            ));
+                also: String::new(),
+            });
         }
     }
 
@@ -128,17 +133,21 @@ fn infer_explain_walk(
     let top_k = top.unwrap_or(5) as usize;
 
     let rows = registry::with_model(&model_name, |handle| {
-        explain_walk_impl(handle, prompt, top_k)
+        let hits = mmap_explain_walk(handle, prompt, top_k)?;
+        Ok(hits
+            .into_iter()
+            .map(|h| (h.layer, h.band, h.feature, h.gate_score, h.token, h.also))
+            .collect::<Vec<_>>())
     })?;
 
     Ok(TableIterator::new(rows))
 }
 
-fn explain_walk_impl(
+pub(crate) fn mmap_explain_walk(
     handle: &registry::ModelHandle,
     prompt: &str,
     top_k: usize,
-) -> Result<Vec<(i32, String, i32, f64, String, String)>, PgInferError> {
+) -> Result<Vec<crate::backend::ExplainedHit>, PgInferError> {
     // 1. Tokenize the prompt.
     let encoding = handle
         .tokenizer
@@ -188,14 +197,14 @@ fn explain_walk_impl(
                 .collect::<Vec<_>>()
                 .join(", ");
 
-            results.push((
-                layer as i32,
-                band.clone(),
-                feature_idx as i32,
-                gate_score as f64,
-                meta.top_token,
+            results.push(crate::backend::ExplainedHit {
+                layer: layer as i32,
+                band: band.clone(),
+                feature: feature_idx as i32,
+                gate_score: gate_score as f64,
+                token: meta.top_token,
                 also,
-            ));
+            });
         }
     }
 

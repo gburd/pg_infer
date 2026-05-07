@@ -45,27 +45,23 @@ fn describe(
     let model_name = registry::resolve_model_name(model)?;
 
     let rows = registry::with_model(&model_name, |handle| {
-        describe_impl(handle, entity, threshold)
+        let raw = mmap_describe(handle, entity, threshold)?;
+        Ok(raw
+            .into_iter()
+            .map(|e| (e.relation, e.target, e.gate_score, e.layer))
+            .collect::<Vec<_>>())
     })?;
 
     Ok(TableIterator::new(rows))
 }
 
-/// Internal describe implementation.
-///
-/// Mirrors the algorithm in `infer-lql/src/executor/query/describe.rs`:
-/// 1. Tokenize entity, compute average token embedding (scaled).
-/// 2. For each layer, run gate_knn to find top features.
-/// 3. Aggregate results by target token, keeping the highest score.
-/// 4. Filter out trivial tokens and self-references.
-///
-/// `explicit_threshold`: caller-provided threshold.  `None` or `Some(0.0)`
-/// means "use adaptive thresholding" (checked after the GUC fallback).
-pub(crate) fn describe_impl(
+/// Mmap-backed describe.  Lifted from the old `describe_impl` so the
+/// `MmapBackend` trait impl can call it.  Returns rich `Edge` records.
+pub(crate) fn mmap_describe(
     handle: &registry::ModelHandle,
     entity: &str,
     explicit_threshold: Option<f64>,
-) -> Result<Vec<(String, String, f64, i32)>, PgInferError> {
+) -> Result<Vec<crate::backend::Edge>, PgInferError> {
     let entity_lower = entity.to_lowercase();
 
     // 1. Tokenize and build query vector.
@@ -175,13 +171,14 @@ pub(crate) fn describe_impl(
     let mut ranked: Vec<_> = edges.into_values().collect();
     ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
-    let results: Vec<(String, String, f64, i32)> = ranked
+    let results: Vec<crate::backend::Edge> = ranked
         .into_iter()
-        .map(|(target, score, layer, _count)| {
+        .map(|(target, score, layer, _count)| crate::backend::Edge {
             // Relation labelling requires a trained classifier (Phase 2).
-            // For now we leave the relation column as an empty string.
-            let relation = String::new();
-            (relation, target, score as f64, layer as i32)
+            relation: String::new(),
+            target,
+            gate_score: score as f64,
+            layer: layer as i32,
         })
         .collect();
 
