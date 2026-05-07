@@ -16,3 +16,6 @@ Cargo.lock
 
 # Vindex data (large binaries)
 vindexes/
+
+# Memelord persistent memory (local)
+.memelord/

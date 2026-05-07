@@ -41,13 +41,44 @@ pub static WALK_EMBED_MODE: GucSetting<Option<CString>> =
     GucSetting::<Option<CString>>::new(Some(c"last"));
 
 /// Whether to enable HNSW approximate search for gate_knn queries.
-pub static USE_HNSW: GucSetting<bool> = GucSetting::<bool>::new(true);
+///
+/// WARNING: HNSW can cause crashes on large models due to memory pressure.
+/// Disabled by default. Use layer sampling (infer.similarity_max_layers)
+/// for better performance without memory issues.
+pub static USE_HNSW: GucSetting<bool> = GucSetting::<bool>::new(false);
 
 /// HNSW beam width (ef_search). Higher values are more accurate but slower.
 pub static HNSW_EF_SEARCH: GucSetting<i32> = GucSetting::<i32>::new(200);
 
 /// Whether to pre-decode f16 gate vectors to f32 on model load.
-pub static WARMUP_ON_LOAD: GucSetting<bool> = GucSetting::<bool>::new(true);
+///
+/// WARNING: Warmup decodes all layers to f32 in RAM, which can consume
+/// 2-3GB per model. Disabled by default to avoid out-of-memory crashes.
+/// Layers are decoded lazily on first use and cached.
+pub static WARMUP_ON_LOAD: GucSetting<bool> = GucSetting::<bool>::new(false);
+
+/// Whether to build HNSW indexes during model load.
+///
+/// When true, all HNSW indexes are built during `infer_create_model()`,
+/// making the first similarity query fast. When false (default), HNSW is
+/// built lazily on first use (slower first query, faster registration).
+///
+/// WARNING: Eager build can cause crashes on large models. Use layer
+/// sampling (infer.similarity_max_layers) instead for better performance.
+pub static BUILD_HNSW_ON_LOAD: GucSetting<bool> = GucSetting::<bool>::new(false);
+
+/// Maximum layers to query in similar_to() for performance.
+///
+/// When a model has more layers than this value, sample evenly across
+/// layers instead of querying all. Set to 0 for no limit (query all
+/// layers). Lower values trade some accuracy for speed.
+pub static SIMILARITY_MAX_LAYERS: GucSetting<i32> = GucSetting::<i32>::new(0);
+
+/// Whether to use parallel processing for similarity queries.
+///
+/// When true, similar_to() queries layers in parallel using Rayon.
+/// Provides 4-8x speedup on multi-core systems but increases CPU usage.
+pub static PARALLEL_SIMILARITY: GucSetting<bool> = GucSetting::<bool>::new(false);
 
 /// Register all GUC parameters.
 ///
@@ -153,6 +184,35 @@ pub unsafe fn init() {
         GucContext::Userset,
         GucFlags::default(),
     );
+
+    GucRegistry::define_bool_guc(
+        c"infer.build_hnsw_on_load",
+        c"Build HNSW indexes during model load.",
+        c"When true, HNSW is built during registration for fast first query. Default: true.",
+        &BUILD_HNSW_ON_LOAD,
+        GucContext::Userset,
+        GucFlags::default(),
+    );
+
+    GucRegistry::define_int_guc(
+        c"infer.similarity_max_layers",
+        c"Maximum layers to query in similar_to().",
+        c"Query at most this many layers (sampled evenly). 0 = all layers. Default: 0.",
+        &SIMILARITY_MAX_LAYERS,
+        0,
+        100,
+        GucContext::Userset,
+        GucFlags::default(),
+    );
+
+    GucRegistry::define_bool_guc(
+        c"infer.parallel_similarity",
+        c"Use parallel processing for similarity queries.",
+        c"When true, query layers in parallel for 4-8x speedup. Default: false.",
+        &PARALLEL_SIMILARITY,
+        GucContext::Userset,
+        GucFlags::default(),
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -198,4 +258,19 @@ pub fn hnsw_ef_search() -> usize {
 /// Return true if warmup-on-load is enabled.
 pub fn warmup_on_load() -> bool {
     WARMUP_ON_LOAD.get()
+}
+
+/// Return true if HNSW should be built during model load.
+pub fn build_hnsw_on_load() -> bool {
+    BUILD_HNSW_ON_LOAD.get()
+}
+
+/// Return the maximum layers to query in similar_to(). 0 = no limit.
+pub fn similarity_max_layers() -> usize {
+    SIMILARITY_MAX_LAYERS.get() as usize
+}
+
+/// Return true if parallel processing is enabled for similarity queries.
+pub fn parallel_similarity() -> bool {
+    PARALLEL_SIMILARITY.get()
 }

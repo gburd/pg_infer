@@ -2,8 +2,6 @@ use pgrx::prelude::*;
 
 pgrx::pg_module_magic!();
 
-mod am;
-mod build;
 mod error;
 mod fn_describe;
 mod fn_diff;
@@ -16,34 +14,25 @@ mod fn_walk;
 mod gucs;
 mod helpers;
 mod model_mgmt;
-mod options;
-mod page_reader;
-mod pages;
 mod registry;
-mod scan;
 
-// Bootstrap the infer schema, model registry table, and dummy heap table
-// for infer indexes during CREATE EXTENSION.
+// Bootstrap the infer schema and model registry table during CREATE EXTENSION.
 extension_sql!(
     r#"
     CREATE SCHEMA IF NOT EXISTS infer;
 
-    -- Legacy model registry (mmap path).
+    -- Model registry.  One row per registered model; the row points at
+    -- either a local vindex directory (backend = 'local') or a remote
+    -- larql-server endpoint (backend = 'remote').
     CREATE TABLE IF NOT EXISTS infer.models (
-        model_name  TEXT PRIMARY KEY,
-        vindex_path TEXT NOT NULL,
-        source      TEXT NOT NULL,
+        model_name    TEXT PRIMARY KEY,
+        vindex_path   TEXT NOT NULL,
+        source        TEXT NOT NULL,
         extract_level TEXT NOT NULL DEFAULT 'browse',
         num_layers    INT,
         hidden_size   INT,
         vocab_size    INT,
         registered_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-
-    -- Dummy heap table for infer indexes.  CREATE INDEX ... USING infer
-    -- requires a heap relation; the actual data lives in the index pages.
-    CREATE TABLE IF NOT EXISTS infer._models (
-        name TEXT
     );
 "#,
     name = "bootstrap_schema",
@@ -57,7 +46,6 @@ pub extern "C-unwind" fn _PG_init() {
     // SAFETY: called exactly once per backend by PostgreSQL.
     unsafe {
         gucs::init();
-        options::register_reloptions();
     }
 }
 
@@ -201,16 +189,6 @@ mod tests {
     }
 
     #[pg_test]
-    fn test_opclass_exists() {
-        Spi::run("CREATE EXTENSION IF NOT EXISTS pg_infer").expect("CREATE EXTENSION failed");
-        let exists = Spi::get_one::<bool>(
-            "SELECT EXISTS(SELECT 1 FROM pg_opclass WHERE opcname = 'text_infer_ops')",
-        )
-        .expect("query failed");
-        assert_eq!(exists, Some(true));
-    }
-
-    #[pg_test]
     fn test_create_model_nonexistent_path() {
         Spi::run("CREATE EXTENSION IF NOT EXISTS pg_infer").expect("CREATE EXTENSION failed");
         // Creating a model with a path that doesn't exist should fail.
@@ -235,11 +213,4 @@ mod tests {
         let val = Spi::get_one::<String>("SHOW infer.describe_top_k").expect("SHOW");
         assert_eq!(val, Some("50".to_string()));
     }
-
-    // Note: amoptions validation rejects unrecognized WITH options at runtime
-    // (e.g. WITH (typo = 'x') → ERROR), but this cannot be tested in pgrx's
-    // test framework because the error from the C-callback amoptions path
-    // crashes the test backend.  Verify manually with:
-    //   CREATE INDEX bad ON infer._models USING infer (name) WITH (typo = 'x');
-    //   -- expected: ERROR: unrecognized parameter "typo" for infer index
 }

@@ -55,6 +55,7 @@ tracing = "0.1"
 ndarray = "0.16"
 half = "2"
 memmap2 = "0.9"
+rayon = "1.10"
 
 # Internal crates
 infer-vindex = { path = "crates/infer-vindex" }
