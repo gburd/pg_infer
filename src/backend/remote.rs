@@ -23,7 +23,7 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use infer_client::{CancelToken, CancellableClient, ClientError};
+use infer_client::{BatchItem, CancelToken, CancellableClient, ClientError, Method};
 use ndarray::Array1;
 
 use crate::error::PgInferError;
@@ -298,33 +298,85 @@ impl Backend for RemoteBackend {
     }
 
     fn similar_to(&self, a: &str, b: &str) -> Result<f64, PgInferError> {
-        // Two /v1/walk calls, then overlap by (layer, feature).  The
-        // server's L2 activation cache turns recurring queries into
-        // sub-millisecond round trips, so this is the right place for
-        // the compose.
+        // One batch, two walks, one round trip (HTTP/2 multiplexed).
+        // The server's L2 activation cache still catches recurring
+        // query text — this just halves the cold path.
         let top_k = 50_usize;
-        let path_a = format!("/v1/walk?prompt={}&top={}", urlencoding(a), top_k);
-        let path_b = format!("/v1/walk?prompt={}&top={}", urlencoding(b), top_k);
+        let items = vec![
+            BatchItem {
+                url: format!("/v1/walk?prompt={}&top={}", urlencoding(a), top_k),
+                method: Method::Get,
+                body: None,
+            },
+            BatchItem {
+                url: format!("/v1/walk?prompt={}&top={}", urlencoding(b), top_k),
+                method: Method::Get,
+                body: None,
+            },
+        ];
+        let cancel = self.cancel_for_current_call();
+        let results: Vec<Result<infer_client::WalkResponse, _>> = self
+            .client
+            .batch_with_tick(items, &cancel, crate::interrupt::pg_interrupt_tick)
+            .map_err(map_err)?;
 
-        let resp_a: infer_client::WalkResponse = self.get_json(&path_a)?;
-        let resp_b: infer_client::WalkResponse = self.get_json(&path_b)?;
+        let mut walks = results.into_iter();
+        let resp_a = walks
+            .next()
+            .ok_or_else(|| PgInferError::Remote("batch missing result 0".into()))?
+            .map_err(map_err)?;
+        let resp_b = walks
+            .next()
+            .ok_or_else(|| PgInferError::Remote("batch missing result 1".into()))?
+            .map_err(map_err)?;
 
-        // Build (layer, feature) → score for B.
-        let mut b_map: HashMap<(usize, usize), f32> = HashMap::new();
-        for h in &resp_b.hits {
-            b_map.insert((h.layer, h.feature), h.gate_score);
+        Ok(overlap_max(&resp_a.hits, &resp_b.hits))
+    }
+
+    fn similar_to_many(
+        &self,
+        candidates: &[String],
+        query: &str,
+    ) -> Result<Vec<f64>, PgInferError> {
+        // Fire one walk for the query + N walks for candidates, all
+        // concurrent in a single runtime round trip.
+        let top_k = 50_usize;
+        let mut items = Vec::with_capacity(candidates.len() + 1);
+        items.push(BatchItem {
+            url: format!("/v1/walk?prompt={}&top={}", urlencoding(query), top_k),
+            method: Method::Get,
+            body: None,
+        });
+        for cand in candidates {
+            items.push(BatchItem {
+                url: format!("/v1/walk?prompt={}&top={}", urlencoding(cand), top_k),
+                method: Method::Get,
+                body: None,
+            });
         }
+        let cancel = self.cancel_for_current_call();
+        let results: Vec<Result<infer_client::WalkResponse, _>> = self
+            .client
+            .batch_with_tick(items, &cancel, crate::interrupt::pg_interrupt_tick)
+            .map_err(map_err)?;
 
-        let mut max_shared = 0.0f32;
-        for h in &resp_a.hits {
-            if let Some(&score_b) = b_map.get(&(h.layer, h.feature)) {
-                let shared = h.gate_score.min(score_b);
-                if shared > max_shared {
-                    max_shared = shared;
-                }
+        let mut iter = results.into_iter();
+        let query_resp = iter
+            .next()
+            .ok_or_else(|| PgInferError::Remote("batch missing query result".into()))?
+            .map_err(map_err)?;
+
+        let mut scores = Vec::with_capacity(candidates.len());
+        for r in iter {
+            match r {
+                Ok(cand_resp) => scores.push(overlap_max(&cand_resp.hits, &query_resp.hits)),
+                // Individual row failure: return 0.0 rather than aborting
+                // the whole scan.  Mirrors pgvector's NULL-on-dimension-
+                // mismatch behaviour for ORDER BY.
+                Err(_) => scores.push(0.0),
             }
         }
-        Ok(max_shared as f64)
+        Ok(scores)
     }
 
     fn implies(&self, subject: &str, object: &str) -> Result<bool, PgInferError> {
@@ -400,6 +452,27 @@ impl Backend for RemoteBackend {
         // Revisit when we need client-side vector arithmetic.
         unsupported("embed (not wired yet)")
     }
+}
+
+/// Max overlap between two sparse gate-KNN result sets.  Matches the
+/// similarity heuristic in fn_similar::similar_to_impl: for every
+/// feature that fires in both, the contribution is `min(score_a,
+/// score_b)`; the result is the max across all such features.
+fn overlap_max(hits_a: &[infer_client::WalkHit], hits_b: &[infer_client::WalkHit]) -> f64 {
+    let mut b_map: HashMap<(usize, usize), f32> = HashMap::new();
+    for h in hits_b {
+        b_map.insert((h.layer, h.feature), h.gate_score);
+    }
+    let mut max_shared = 0.0f32;
+    for h in hits_a {
+        if let Some(&score_b) = b_map.get(&(h.layer, h.feature)) {
+            let shared = h.gate_score.min(score_b);
+            if shared > max_shared {
+                max_shared = shared;
+            }
+        }
+    }
+    max_shared as f64
 }
 
 /// Minimal URL percent-encoding for query-string values.

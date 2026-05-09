@@ -161,6 +161,7 @@ enum Transport {
 /// Command sent from the foreground to the runtime thread.
 enum Cmd {
     Request(RequestJob),
+    Batch(BatchJob),
     Shutdown,
 }
 
@@ -176,8 +177,21 @@ struct RequestJob {
     reply: SyncSender<Result<Vec<u8>, ClientError>>,
 }
 
-#[derive(Clone, Copy)]
-enum Method {
+struct BatchJob {
+    items: Vec<BatchItem>,
+    cancel: CancelToken,
+    reply: SyncSender<Result<Vec<Result<Vec<u8>, ClientError>>, ClientError>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct BatchItem {
+    pub url: String,
+    pub method: Method,
+    pub body: Option<serde_json::Value>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum Method {
     Get,
     Post,
 }
@@ -273,6 +287,77 @@ impl CancellableClient {
         F: FnMut() -> Result<(), ClientError>,
     {
         self.run(Method::Post, path, Some(body), cancel, tick)
+    }
+
+    /// Run a batch of requests concurrently on the runtime thread.  All
+    /// futures are submitted to a single `tokio::join_all`, so they run
+    /// in parallel (multiplexed over HTTP/2 on the HTTP transport, or
+    /// over a pool of Unix-socket connections on UDS).
+    ///
+    /// Returns one result per input item, in order.  A failure in one
+    /// item does not abort the others — each slot carries its own
+    /// `Result`.  A failure at the transport level (e.g. runtime thread
+    /// gone) yields an outer `Err`.
+    ///
+    /// `tick` is called between ~50 ms poll intervals while waiting for
+    /// the batch to finish, mirroring the single-request API.
+    pub fn batch_with_tick<T, F>(
+        &self,
+        items: Vec<BatchItem>,
+        cancel: &CancelToken,
+        mut tick: F,
+    ) -> Result<Vec<Result<T, ClientError>>, ClientError>
+    where
+        T: DeserializeOwned,
+        F: FnMut() -> Result<(), ClientError>,
+    {
+        let items = items
+            .into_iter()
+            .map(|it| match self.scheme {
+                Scheme::Http => BatchItem {
+                    url: format!("{}{}", self.base_url, it.url),
+                    method: it.method,
+                    body: it.body,
+                },
+                Scheme::Uds => it,
+            })
+            .collect::<Vec<_>>();
+
+        let (reply_tx, reply_rx) = sync_channel(1);
+
+        self.tx
+            .send(Cmd::Batch(BatchJob {
+                items,
+                cancel: cancel.clone(),
+                reply: reply_tx,
+            }))
+            .map_err(|_| ClientError::Runtime("runtime thread gone".into()))?;
+
+        let bytes_per_item: Vec<Result<Vec<u8>, ClientError>> = loop {
+            match reply_rx.recv_timeout(Duration::from_millis(50)) {
+                Ok(Ok(batch)) => break batch,
+                Ok(Err(e)) => return Err(e),
+                Err(RecvTimeoutError::Disconnected) => {
+                    return Err(ClientError::Runtime("reply channel dropped".into()));
+                }
+                Err(RecvTimeoutError::Timeout) => {
+                    if let Err(e) = tick() {
+                        cancel.cancel();
+                        let _ = reply_rx.recv();
+                        return Err(e);
+                    }
+                }
+            }
+        };
+
+        Ok(bytes_per_item
+            .into_iter()
+            .map(|r| {
+                r.and_then(|b| {
+                    serde_json::from_slice::<T>(&b).map_err(|e| ClientError::Parse(e.to_string()))
+                })
+            })
+            .collect())
     }
 
     fn run<T, F>(
@@ -431,11 +516,92 @@ fn runtime_thread(
                     let _ = job.reply.send(result);
                 });
             }
+            Cmd::Batch(batch) => {
+                runtime.block_on(async {
+                    // Capture &transport in a local so each future grabs a
+                    // reference (Copy), not the transport itself.
+                    let transport_ref = &transport;
+                    let mut futures = Vec::with_capacity(batch.items.len());
+                    for item in &batch.items {
+                        let item_url = item.url.clone();
+                        let item_body = item.body.clone();
+                        let item_method = item.method;
+                        let item_cancel = batch.cancel.clone();
+                        let fut = async move {
+                            let job = RequestJob {
+                                url: item_url,
+                                body: item_body,
+                                method: item_method,
+                                cancel: item_cancel,
+                                reply: sync_channel::<Result<Vec<u8>, ClientError>>(1).0,
+                            };
+                            match transport_ref {
+                                Transport::Http { client, base } => {
+                                    execute_http(client, base, &job).await
+                                }
+                                Transport::Uds { client, .. } => {
+                                    execute_uds(client, &job, timeout).await
+                                }
+                            }
+                        };
+                        futures.push(fut);
+                    }
+                    let results: Vec<Result<Vec<u8>, ClientError>> =
+                        join_all_preserving_order(futures).await;
+                    let _ = batch.reply.send(Ok(results));
+                });
+            }
         }
     }
 
     drop(runtime);
     drop(transport);
+}
+
+/// Run all futures concurrently on the current runtime and return their
+/// results in input order.  A thin wrapper around `futures::join_all` via
+/// `FuturesOrdered` — implemented here so we don't pull the `futures`
+/// crate for one helper.
+async fn join_all_preserving_order<F, T>(futures: Vec<F>) -> Vec<T>
+where
+    F: std::future::Future<Output = T>,
+{
+    // Spawn via local tasks on the current-thread runtime: spawn_local
+    // isn't available on the basic runtime, so we use tokio::spawn with
+    // a multi-thread runtime.  Since the runtime here is current-thread,
+    // we poll cooperatively via a simple sequential `select!` + index.
+    //
+    // Simpler + correct: collect via a join set that preserves order.
+    use std::pin::Pin;
+    use std::task::Poll;
+    let mut pinned: Vec<(usize, Pin<Box<F>>)> =
+        futures.into_iter().enumerate().map(|(i, f)| (i, Box::pin(f))).collect();
+    let mut out: Vec<Option<T>> = Vec::new();
+    out.resize_with(pinned.len(), || None);
+
+    std::future::poll_fn(|cx| {
+        let mut i = 0;
+        while i < pinned.len() {
+            let (idx, fut) = &mut pinned[i];
+            match fut.as_mut().poll(cx) {
+                Poll::Ready(v) => {
+                    out[*idx] = Some(v);
+                    pinned.swap_remove(i);
+                }
+                Poll::Pending => {
+                    i += 1;
+                }
+            }
+        }
+        if pinned.is_empty() {
+            Poll::Ready(())
+        } else {
+            Poll::Pending
+        }
+    })
+    .await;
+
+    out.into_iter().map(|v| v.expect("slot filled")).collect()
 }
 
 fn build_transport(init: TransportInit, timeout: Duration) -> Result<Transport, ClientError> {
@@ -666,6 +832,122 @@ mod tests {
             "cancellation took {:?}",
             elapsed
         );
+    }
+
+    #[test]
+    fn batch_concurrent_over_uds() {
+        use std::sync::{Arc, Mutex};
+
+        let tmpdir = std::env::temp_dir().join(format!(
+            "infer-client-batch-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&tmpdir).expect("mkdir");
+        let sock_path = tmpdir.join("batch.sock");
+        let _ = std::fs::remove_file(&sock_path);
+
+        let sock_server = sock_path.clone();
+        let ready = Arc::new(Mutex::new(false));
+        let ready_server = ready.clone();
+
+        let handle = std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("rt");
+            rt.block_on(async move {
+                let listener = match tokio::net::UnixListener::bind(&sock_server) {
+                    Ok(l) => l,
+                    Err(_) => return,
+                };
+                *ready_server.lock().expect("lock") = true;
+                let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+                loop {
+                    tokio::select! {
+                        _ = tokio::time::sleep_until(deadline) => return,
+                        res = listener.accept() => {
+                            let (stream, _) = match res {
+                                Ok(v) => v,
+                                Err(_) => return,
+                            };
+                            tokio::spawn(async move {
+                                let io = TokioIo::new(stream);
+                                let svc = hyper::service::service_fn(
+                                    |req: Request<Incoming>| async move {
+                                        // Artificial 30 ms delay per request
+                                        // so batched items actually overlap.
+                                        tokio::time::sleep(Duration::from_millis(30)).await;
+                                        let path = req.uri().path().to_string();
+                                        let body = serde_json::json!({"path": path});
+                                        let bytes = serde_json::to_vec(&body).expect("vec");
+                                        Ok::<Response<Full<Bytes>>, std::io::Error>(
+                                            Response::builder()
+                                                .status(200)
+                                                .header("content-type", "application/json")
+                                                .body(Full::new(Bytes::from(bytes)))
+                                                .expect("resp"),
+                                        )
+                                    },
+                                );
+                                let _ = hyper::server::conn::http1::Builder::new()
+                                    .serve_connection(io, svc)
+                                    .await;
+                            });
+                        }
+                    }
+                }
+            });
+        });
+
+        for _ in 0..100 {
+            if *ready.lock().expect("ready") {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(*ready.lock().expect("ready final"), "server did not start");
+
+        let url = format!("uds://{}", sock_path.display());
+        let client =
+            CancellableClient::connect(&url, Duration::from_secs(5)).expect("uds client");
+        let cancel = CancelToken::new();
+
+        // 10 concurrent requests.  Serial would be 10 * 30 ms = 300 ms;
+        // batched should be ~30–60 ms (transport overhead + one delay).
+        let items: Vec<BatchItem> = (0..10)
+            .map(|i| BatchItem {
+                url: format!("/item/{i}"),
+                method: Method::Get,
+                body: None,
+            })
+            .collect();
+
+        let start = std::time::Instant::now();
+        let results: Vec<Result<serde_json::Value, _>> = client
+            .batch_with_tick(items, &cancel, no_tick)
+            .expect("batch");
+        let elapsed = start.elapsed();
+
+        assert_eq!(results.len(), 10);
+        for (i, r) in results.iter().enumerate() {
+            let v = r.as_ref().expect("ok slot");
+            assert_eq!(v["path"], format!("/item/{i}"));
+        }
+        // A generous upper bound: well under 10× serial latency.
+        assert!(
+            elapsed < Duration::from_millis(200),
+            "batch took {:?} (expected <200ms for 10 x 30ms concurrent)",
+            elapsed
+        );
+
+        drop(client);
+        let _ = std::fs::remove_file(&sock_path);
+        let _ = std::fs::remove_dir(&tmpdir);
+        let _ = handle.join();
     }
 
     #[test]

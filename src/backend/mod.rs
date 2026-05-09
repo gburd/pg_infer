@@ -138,6 +138,13 @@ pub trait Backend: Send + Sync {
 
     fn similar_to(&self, a: &str, b: &str) -> Result<f64, PgInferError>;
 
+    /// Compute `similar_to(cand, query)` for each candidate.  Default
+    /// implementation just loops; backends that can overlap network
+    /// round trips (remote) override this to fan out concurrently.
+    fn similar_to_many(&self, candidates: &[String], query: &str) -> Result<Vec<f64>, PgInferError> {
+        candidates.iter().map(|c| self.similar_to(c, query)).collect()
+    }
+
     fn implies(&self, subject: &str, object: &str) -> Result<bool, PgInferError>;
 
     fn infer(&self, prompt: &str, top_k: usize) -> Result<Vec<Prediction>, PgInferError>;

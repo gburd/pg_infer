@@ -155,6 +155,7 @@ mod tests {
             "describe",
             "infer",
             "similar_to",
+            "similar_to_many",
             "implies",
             "infer_create_model",
             "infer_drop_model",

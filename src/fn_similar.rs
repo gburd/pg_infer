@@ -26,11 +26,66 @@ fn similar_to(
 ) -> Result<f64, Box<dyn std::error::Error>> {
     let model_name = registry::resolve_model_name(model)?;
 
-    let score = registry::with_backend(&model_name, |backend| {
-        backend.similar_to(a, b)
-    })?;
+    let score = registry::with_backend(&model_name, |backend| backend.similar_to(a, b))?;
 
     Ok(score)
+}
+
+/// Bulk variant of [`similar_to`]: returns one score per candidate.
+///
+/// On the remote backend, all walks are issued in a single concurrent
+/// batch (one HTTP/2 multiplexed round-trip or one UDS fan-out), so a
+/// 20-candidate ranking is one network wait instead of 20.  The mmap
+/// backend falls back to a trivial loop — there's nothing to overlap
+/// when the data is in-process.
+///
+/// ```sql
+/// SELECT id, score
+///   FROM (
+///     SELECT id, unnest(similar_to_many(
+///       (SELECT array_agg(name) FROM products WHERE category = 'AI'),
+///       'large language model'
+///     )) AS score
+///     FROM products WHERE category = 'AI'
+///   ) t
+///   ORDER BY score DESC LIMIT 5;
+/// ```
+#[pg_extern]
+fn similar_to_many(
+    candidates: Vec<Option<String>>,
+    query: &str,
+    model: default!(Option<&str>, "NULL"),
+) -> Result<Vec<Option<f64>>, Box<dyn std::error::Error>> {
+    let model_name = registry::resolve_model_name(model)?;
+
+    // NULL candidates get NULL scores; keep positional correspondence so
+    // the array can be unnested next to the original table.
+    let mut non_null: Vec<String> = Vec::with_capacity(candidates.len());
+    let mut is_null: Vec<bool> = Vec::with_capacity(candidates.len());
+    for c in &candidates {
+        match c {
+            Some(s) => {
+                is_null.push(false);
+                non_null.push(s.clone());
+            }
+            None => is_null.push(true),
+        }
+    }
+
+    let scores =
+        registry::with_backend(&model_name, |backend| backend.similar_to_many(&non_null, query))?;
+
+    // Re-interleave NULLs.
+    let mut out = Vec::with_capacity(candidates.len());
+    let mut score_iter = scores.into_iter();
+    for nullish in is_null {
+        if nullish {
+            out.push(None);
+        } else {
+            out.push(score_iter.next());
+        }
+    }
+    Ok(out)
 }
 
 /// Compute the similarity score between two texts.
