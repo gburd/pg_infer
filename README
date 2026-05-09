@@ -228,6 +228,33 @@ The OS kernel shares mmap pages across backends that access the
 same model, so memory overhead per-connection is minimal.
 
 
+DEPLOYMENT BACKENDS
+-------------------
+
+pg_infer supports two per-model storage/execution backends:
+
+    local  - mmap the vindex directly in each PostgreSQL backend.
+             Simple but does not share the f16 decode cache across
+             connections.
+
+    remote - talk to a colocated or networked `larql-server` process
+             over HTTP/2 or a Unix domain socket.  One copy of the
+             model per host, shared activation cache across every PG
+             backend, and optional layer-sharding via `larql-router`.
+
+Register a remote model with:
+
+    SELECT infer_create_model_remote('m', 'uds:///run/larql.sock');
+    -- or:
+    SELECT infer_create_model_remote('m', 'http://server:8080');
+
+In-flight remote calls respond to pg_cancel_backend(...) within ~100ms
+via a polling bridge to PostgreSQL's InterruptPending flag.
+
+See docs/REMOTE_BACKEND.md for the full walkthrough, GUCs, pgbench
+scripts, and expected throughput numbers.
+
+
 DEPENDENCIES
 ------------
 
