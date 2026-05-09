@@ -80,6 +80,36 @@ pub static SIMILARITY_MAX_LAYERS: GucSetting<i32> = GucSetting::<i32>::new(0);
 /// Provides 4-8x speedup on multi-core systems but increases CPU usage.
 pub static PARALLEL_SIMILARITY: GucSetting<bool> = GucSetting::<bool>::new(false);
 
+/// Maximum decoded gate layers kept in memory per model per backend.
+///
+/// F16 gate vectors are decoded to f32 on first use; this caps how many
+/// decoded layers remain resident.  0 = unlimited (dangerous for large
+/// models).  For Qwen 2.5 3B each decoded layer is ~112 MB, so 4 layers
+/// = ~450 MB per backend, 12 layers = ~1.3 GB.  Default: 4.
+pub static GATE_CACHE_MAX_LAYERS: GucSetting<i32> = GucSetting::<i32>::new(4);
+
+// ---------------------------------------------------------------------------
+// Remote backend configuration
+// ---------------------------------------------------------------------------
+
+/// Default backend: "local" (mmap) or "remote" (larql-server over HTTP).
+///
+/// A model's `infer.models.backend` column overrides this.  If a row
+/// doesn't specify, this GUC provides the fallback.  Session-scoped so
+/// operators can test the remote path without reconfiguring every row.
+pub static DEFAULT_BACKEND: GucSetting<Option<CString>> =
+    GucSetting::<Option<CString>>::new(Some(c"local"));
+
+/// Default larql-server URL when a model registered with backend='remote'
+/// omits `server_url`.  E.g. `http://localhost:8080` or (once UDS lands)
+/// `uds:///run/larql.sock`.
+pub static DEFAULT_SERVER_URL: GucSetting<Option<CString>> =
+    GucSetting::<Option<CString>>::new(None);
+
+/// Per-request timeout for remote backend calls, in milliseconds.
+/// Bounds the worst-case stall if a server wedges.
+pub static REMOTE_TIMEOUT_MS: GucSetting<i32> = GucSetting::<i32>::new(30_000);
+
 /// Register all GUC parameters.
 ///
 /// # Safety
@@ -213,6 +243,46 @@ pub unsafe fn init() {
         GucContext::Userset,
         GucFlags::default(),
     );
+
+    GucRegistry::define_int_guc(
+        c"infer.gate_cache_max_layers",
+        c"Maximum decoded gate layers kept in memory per model.",
+        c"Caps f16-to-f32 decode cache. Each layer ~112 MB for 3B models. 0 = unlimited. Default: 4.",
+        &GATE_CACHE_MAX_LAYERS,
+        0,
+        100,
+        GucContext::Userset,
+        GucFlags::default(),
+    );
+
+    GucRegistry::define_string_guc(
+        c"infer.default_backend",
+        c"Default backend: 'local' (mmap) or 'remote' (larql-server).",
+        c"Per-model override via infer.models.backend. Default: 'local'.",
+        &DEFAULT_BACKEND,
+        GucContext::Userset,
+        GucFlags::default(),
+    );
+
+    GucRegistry::define_string_guc(
+        c"infer.default_server_url",
+        c"Fallback larql-server URL when a remote model omits server_url.",
+        c"Example: 'http://localhost:8080'. Default: unset.",
+        &DEFAULT_SERVER_URL,
+        GucContext::Suset,
+        GucFlags::default(),
+    );
+
+    GucRegistry::define_int_guc(
+        c"infer.remote_timeout_ms",
+        c"Per-request timeout for remote backend calls (ms).",
+        c"Bounds worst-case stall if a server wedges. Default: 30000.",
+        &REMOTE_TIMEOUT_MS,
+        100,
+        3_600_000,
+        GucContext::Userset,
+        GucFlags::default(),
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -273,4 +343,32 @@ pub fn similarity_max_layers() -> usize {
 /// Return true if parallel processing is enabled for similarity queries.
 pub fn parallel_similarity() -> bool {
     PARALLEL_SIMILARITY.get()
+}
+
+/// Return the gate cache max layers (0 = unlimited).
+pub fn gate_cache_max_layers() -> usize {
+    GATE_CACHE_MAX_LAYERS.get() as usize
+}
+
+// ---------------------------------------------------------------------------
+// Remote backend accessors
+// ---------------------------------------------------------------------------
+
+/// Return the configured default backend ("local" or "remote").
+#[allow(dead_code)] // reserved for per-session default fallback in Phase C3
+pub fn default_backend() -> String {
+    DEFAULT_BACKEND
+        .get()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "local".to_string())
+}
+
+/// Return the configured default server URL, or `None`.
+pub fn default_server_url() -> Option<String> {
+    DEFAULT_SERVER_URL.get().map(|s| s.to_string_lossy().into_owned())
+}
+
+/// Remote request timeout as a `Duration`.
+pub fn remote_timeout() -> std::time::Duration {
+    std::time::Duration::from_millis(REMOTE_TIMEOUT_MS.get().max(100) as u64)
 }
