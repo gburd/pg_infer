@@ -5,17 +5,26 @@ edition.workspace = true
 rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
-description = "HTTP client for larql-server, used by pg_infer's remote backend"
+description = "HTTP/UDS client for larql-server, used by pg_infer's remote backend"
 
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "http2"] }
-tokio = { version = "1", default-features = false, features = ["rt", "sync", "time", "macros"] }
+tokio = { version = "1", default-features = false, features = ["rt", "sync", "time", "macros", "net"] }
+hyper = { version = "1", default-features = false, features = ["client", "http1"] }
+hyper-util = { version = "0.1", default-features = false, features = ["client", "client-legacy", "tokio", "http1"] }
+http-body-util = "0.1"
+tower-service = "0.3"
 bytes = "1"
 url = "2"
 tracing = "0.1"
+
+[dev-dependencies]
+# Tests spin up a Unix-socket hyper server for round-trip coverage.
+hyper = { version = "1", default-features = false, features = ["client", "http1", "server"] }
+tokio = { version = "1", default-features = false, features = ["rt", "sync", "time", "macros", "net", "rt-multi-thread"] }
 
 [lints.clippy]
 unwrap_used = "deny"
