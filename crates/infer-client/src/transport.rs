@@ -613,7 +613,9 @@ fn build_transport(init: TransportInit, timeout: Duration) -> Result<Transport, 
                 .tcp_keepalive(Duration::from_secs(30))
                 .pool_idle_timeout(Duration::from_secs(90))
                 .pool_max_idle_per_host(16)
-                .http2_prior_knowledge()
+                // Let ALPN decide HTTP version.  HTTP/2 prior-knowledge
+                // is a TLS-only optimisation; on cleartext loopback it
+                // breaks plain HTTP/1.1 servers.
                 .http2_adaptive_window(true)
                 .build()?;
             Ok(Transport::Http { client, base })
