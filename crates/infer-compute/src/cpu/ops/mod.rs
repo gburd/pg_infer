@@ -10,6 +10,7 @@ pub mod q4_common;
 pub mod q4k_matvec;
 pub mod q6k_matvec;
 pub mod q8_matvec;
+pub mod ternary_matvec;
 pub mod vector;
 pub mod attention;
 pub mod geglu;

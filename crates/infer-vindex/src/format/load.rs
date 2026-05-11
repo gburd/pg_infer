@@ -67,19 +67,34 @@ impl VectorIndex {
             // entire file into RAM at load time, inflating RSS by ~13 GB on
             // 31B before any inference runs.
             let gate_mmap = unsafe { crate::mmap_util::mmap_demand_paged(&gate_file)? };
-            let bpf = crate::config::dtype::bytes_per_float(config.dtype);
 
             let mut gate_slices: Vec<crate::index::core::GateLayerSlice> = vec![
                 crate::index::core::GateLayerSlice { float_offset: 0, num_features: 0 };
                 num_layers
             ];
             let mut total_gate = 0;
-            for info in &config.layers {
-                gate_slices[info.layer] = crate::index::core::GateLayerSlice {
-                    float_offset: info.offset as usize / bpf,
-                    num_features: info.num_features,
-                };
-                total_gate += info.num_features;
+            match config.dtype {
+                crate::config::dtype::StorageDtype::Ternary => {
+                    // For ternary, store raw byte offset directly in float_offset.
+                    // bytes_per_feature = hidden / 4 (not bytes_per_float).
+                    for info in &config.layers {
+                        gate_slices[info.layer] = crate::index::core::GateLayerSlice {
+                            float_offset: info.offset as usize,
+                            num_features: info.num_features,
+                        };
+                        total_gate += info.num_features;
+                    }
+                }
+                _ => {
+                    let bpf = crate::config::dtype::bytes_per_float(config.dtype);
+                    for info in &config.layers {
+                        gate_slices[info.layer] = crate::index::core::GateLayerSlice {
+                            float_offset: info.offset as usize / bpf,
+                            num_features: info.num_features,
+                        };
+                        total_gate += info.num_features;
+                    }
+                }
             }
             callbacks.on_file_done(
                 "gate_vectors",

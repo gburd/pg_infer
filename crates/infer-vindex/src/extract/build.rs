@@ -130,7 +130,18 @@ impl<'a> BuildContext<'a> {
                     features_per_expert = w_gate.shape()[0];
                     total_features += features_per_expert;
                     let data = w_gate.as_slice().unwrap();
-                    layer_bytes += write_floats(&mut gate_file, data, self.dtype)?;
+                    if self.dtype == StorageDtype::Ternary {
+                        let ternary_i8: Vec<i8> = data.iter().map(|&v| {
+                            let r = v.round() as i8;
+                            r.clamp(-1, 1)
+                        }).collect();
+                        let packed = crate::config::dtype::encode_ternary(&ternary_i8);
+                        use std::io::Write;
+                        gate_file.write_all(&packed)?;
+                        layer_bytes += packed.len() as u64;
+                    } else {
+                        layer_bytes += write_floats(&mut gate_file, data, self.dtype)?;
+                    }
                 }
 
                 // Also include shared expert if present
@@ -139,7 +150,18 @@ impl<'a> BuildContext<'a> {
                         let n = w_gate.shape()[0];
                         total_features += n;
                         let data = w_gate.as_slice().unwrap();
-                        layer_bytes += write_floats(&mut gate_file, data, self.dtype)?;
+                        if self.dtype == StorageDtype::Ternary {
+                            let ternary_i8: Vec<i8> = data.iter().map(|&v| {
+                                let r = v.round() as i8;
+                                r.clamp(-1, 1)
+                            }).collect();
+                            let packed = crate::config::dtype::encode_ternary(&ternary_i8);
+                            use std::io::Write;
+                            gate_file.write_all(&packed)?;
+                            layer_bytes += packed.len() as u64;
+                        } else {
+                            layer_bytes += write_floats(&mut gate_file, data, self.dtype)?;
+                        }
                     }
                 }
 
@@ -163,7 +185,19 @@ impl<'a> BuildContext<'a> {
                 };
                 let num_features = w_gate.shape()[0];
                 let data = w_gate.as_slice().unwrap();
-                let length = write_floats(&mut gate_file, data, self.dtype)?;
+                let length = if self.dtype == StorageDtype::Ternary {
+                    // Gate weights are {-1, 0, +1} — pack to I2_S format
+                    let ternary_i8: Vec<i8> = data.iter().map(|&v| {
+                        let r = v.round() as i8;
+                        r.clamp(-1, 1)
+                    }).collect();
+                    let packed = crate::config::dtype::encode_ternary(&ternary_i8);
+                    use std::io::Write;
+                    gate_file.write_all(&packed)?;
+                    packed.len() as u64
+                } else {
+                    write_floats(&mut gate_file, data, self.dtype)?
+                };
                 self.layer_infos.push(VindexLayerInfo {
                     layer,
                     num_features,

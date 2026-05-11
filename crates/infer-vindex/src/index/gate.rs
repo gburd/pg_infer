@@ -148,14 +148,13 @@ impl VectorIndex {
         if let Some(ref mmap) = self.gate_mmap_bytes {
             if let Some(slice) = self.gate_mmap_slices.get(layer) {
                 if slice.num_features == 0 { return None; }
-                let bpf = crate::config::dtype::bytes_per_float(self.gate_mmap_dtype);
-                let byte_offset = slice.float_offset * bpf;
-                let byte_count = slice.num_features * self.hidden_size * bpf;
-                let byte_end = byte_offset + byte_count;
-                if byte_end > mmap.len() { return None; }
 
                 let data = match self.gate_mmap_dtype {
                     crate::config::dtype::StorageDtype::F32 => {
+                        let bpf = 4;
+                        let byte_offset = slice.float_offset * bpf;
+                        let byte_end = byte_offset + slice.num_features * self.hidden_size * bpf;
+                        if byte_end > mmap.len() { return None; }
                         let float_count = slice.num_features * self.hidden_size;
                         unsafe {
                             let ptr = mmap[byte_offset..byte_end].as_ptr() as *const f32;
@@ -163,6 +162,10 @@ impl VectorIndex {
                         }
                     }
                     crate::config::dtype::StorageDtype::F16 => {
+                        let bpf = 2;
+                        let byte_offset = slice.float_offset * bpf;
+                        let byte_end = byte_offset + slice.num_features * self.hidden_size * bpf;
+                        if byte_end > mmap.len() { return None; }
                         let mut cache = self.f16_decode_cache.lock().unwrap();
                         if cache.len() <= layer { cache.resize(layer + 1, None); }
                         let miss = cache[layer].is_none();
@@ -172,6 +175,20 @@ impl VectorIndex {
                         }
                         self.touch_gate_cache_lru(layer, miss, &mut cache);
                         cache[layer].as_ref().unwrap().clone()
+                    }
+                    crate::config::dtype::StorageDtype::Ternary => {
+                        // Ternary uses raw byte offsets (not float_offset * bpf).
+                        let bytes_per_feature = self.hidden_size / 4;
+                        let byte_offset = slice.float_offset;
+                        let byte_end = byte_offset + slice.num_features * bytes_per_feature;
+                        if byte_end > mmap.len() { return None; }
+                        let packed = &mmap[byte_offset..byte_end];
+                        // Decode ternary to f32 for callers that need a dense matrix
+                        let count = slice.num_features * self.hidden_size;
+                        crate::config::dtype::decode_ternary(packed, count)
+                            .into_iter()
+                            .map(|v| v as f32)
+                            .collect()
                     }
                 };
                 return Some(GateData { data, num_features: slice.num_features });
@@ -199,6 +216,13 @@ impl VectorIndex {
             }
         }
 
+        // Ternary mmap path (BitNet b1.58: no decode, no BLAS — pure add/sub)
+        if self.gate_mmap_dtype == crate::config::dtype::StorageDtype::Ternary {
+            if let Some(results) = self.gate_knn_ternary(layer, residual, top_k) {
+                return results;
+            }
+        }
+
         // Fast path: f32 mmap zero-copy (no allocation, no clone)
         if let Some(scores) = self.gate_knn_mmap_fast(layer, residual) {
             return Self::top_k_from_scores(&scores, top_k);
@@ -212,6 +236,32 @@ impl VectorIndex {
         let view = gate.view(self.hidden_size);
         let scores = gemv(&view, residual);
         Self::top_k_from_scores(&scores, top_k)
+    }
+
+    /// Gate KNN for ternary mmap — pure add/subtract scoring, no FP multiply.
+    /// Returns None if no ternary gate mmap is available for this layer.
+    fn gate_knn_ternary(
+        &self,
+        layer: usize,
+        residual: &Array1<f32>,
+        top_k: usize,
+    ) -> Option<Vec<(usize, f32)>> {
+        let mmap = self.gate_mmap_bytes.as_ref()?;
+        let slice = self.gate_mmap_slices.get(layer)?;
+        if slice.num_features == 0 { return Some(vec![]); }
+
+        let bytes_per_feature = self.hidden_size / 4;
+        // For Ternary dtype, float_offset stores the raw byte offset directly
+        let byte_offset = slice.float_offset;
+        let byte_end = byte_offset + slice.num_features * bytes_per_feature;
+        if byte_end > mmap.len() { return None; }
+        let packed = &mmap[byte_offset..byte_end];
+
+        let x = residual.as_slice()?;
+        let cpu = infer_compute::CpuBackend;
+        let scores_vec = cpu.ternary_matvec(packed, x, slice.num_features, self.hidden_size)?;
+        let scores = Array1::from_vec(scores_vec);
+        Some(Self::top_k_from_scores(&scores, top_k))
     }
 
     /// Zero-copy gate KNN for f32 mmap — no allocation, no clone.
@@ -338,18 +388,15 @@ impl VectorIndex {
             if let Some(slice) = self.gate_mmap_slices.get(layer) {
                 if slice.num_features == 0 || feat_start >= slice.num_features { return vec![]; }
                 let end = feat_end.min(slice.num_features);
-                let bpf = crate::config::dtype::bytes_per_float(self.gate_mmap_dtype);
-
-                // Compute byte range for just this expert's features
-                let layer_byte_start = slice.float_offset * bpf;
-                let expert_byte_start = layer_byte_start + feat_start * self.hidden_size * bpf;
-                let expert_byte_end = layer_byte_start + end * self.hidden_size * bpf;
                 let n_features = end - feat_start;
-
-                if expert_byte_end > mmap.len() { return vec![]; }
 
                 match self.gate_mmap_dtype {
                     crate::config::dtype::StorageDtype::F32 => {
+                        let bpf = 4;
+                        let layer_byte_start = slice.float_offset * bpf;
+                        let expert_byte_start = layer_byte_start + feat_start * self.hidden_size * bpf;
+                        let expert_byte_end = layer_byte_start + end * self.hidden_size * bpf;
+                        if expert_byte_end > mmap.len() { return vec![]; }
                         let data = unsafe {
                             let ptr = mmap[expert_byte_start..expert_byte_end].as_ptr() as *const f32;
                             std::slice::from_raw_parts(ptr, n_features * self.hidden_size)
@@ -359,11 +406,15 @@ impl VectorIndex {
                         ).unwrap();
                         let scores = gemv(&view, residual);
                         let mut hits = Self::top_k_from_scores(&scores, top_k);
-                        // Offset indices to global feature space
                         for hit in &mut hits { hit.0 += feat_start; }
                         return hits;
                     }
                     crate::config::dtype::StorageDtype::F16 => {
+                        let bpf = 2;
+                        let layer_byte_start = slice.float_offset * bpf;
+                        let expert_byte_start = layer_byte_start + feat_start * self.hidden_size * bpf;
+                        let expert_byte_end = layer_byte_start + end * self.hidden_size * bpf;
+                        if expert_byte_end > mmap.len() { return vec![]; }
                         let raw = &mmap[expert_byte_start..expert_byte_end];
                         let floats = infer_models::quant::half::decode_f16(raw);
                         let view = ndarray::ArrayView2::from_shape(
@@ -373,6 +424,25 @@ impl VectorIndex {
                         let mut hits = Self::top_k_from_scores(&scores, top_k);
                         for hit in &mut hits { hit.0 += feat_start; }
                         return hits;
+                    }
+                    crate::config::dtype::StorageDtype::Ternary => {
+                        let bytes_per_feature = self.hidden_size / 4;
+                        let layer_byte_start = slice.float_offset;
+                        let expert_byte_start = layer_byte_start + feat_start * bytes_per_feature;
+                        let expert_byte_end = layer_byte_start + end * bytes_per_feature;
+                        if expert_byte_end > mmap.len() { return vec![]; }
+                        let packed = &mmap[expert_byte_start..expert_byte_end];
+                        let x = match residual.as_slice() {
+                            Some(s) => s,
+                            None => return vec![],
+                        };
+                        let cpu = infer_compute::CpuBackend;
+                        if let Some(scores_vec) = cpu.ternary_matvec(packed, x, n_features, self.hidden_size) {
+                            let scores = Array1::from_vec(scores_vec);
+                            let mut hits = Self::top_k_from_scores(&scores, top_k);
+                            for hit in &mut hits { hit.0 += feat_start; }
+                            return hits;
+                        }
                     }
                 }
             }

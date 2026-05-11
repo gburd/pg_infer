@@ -56,6 +56,12 @@ impl ComputeBackend for CpuBackend {
         Some(ops::q4_vecmat::dispatch(activation, q4_data, intermediate, hidden))
     }
 
+    fn ternary_matvec(
+        &self, packed: &[u8], x: &[f32], num_rows: usize, hidden: usize,
+    ) -> Option<Vec<f32>> {
+        Some(ops::ternary_matvec::dispatch(packed, x, num_rows, hidden))
+    }
+
     fn q4k_matvec(
         &self, q4k_data: &[u8], x: &[f32], num_rows: usize, hidden: usize,
     ) -> Option<Vec<f32>> {

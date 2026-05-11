@@ -204,6 +204,14 @@ pub trait ComputeBackend: Send + Sync {
         (self.decode_token(layers, x, hidden, inter, q_dim, kv_dim, num_q_heads, num_kv_heads, head_dim, rope_base), 0.0, 0.0, 0.0)
     }
 
+    /// Ternary GEMV: packed_ternary[N, hidden/4] × x[hidden] → scores[N].
+    /// Returns None if backend doesn't support ternary operations.
+    /// Used for BitNet b1.58 gate-KNN where weights are {-1, 0, +1}.
+    fn ternary_matvec(
+        &self, _packed: &[u8], _x: &[f32],
+        _num_rows: usize, _hidden: usize,
+    ) -> Option<Vec<f32>> { None }
+
     /// Q4_K matvec: scores[N] = Q4_K[N,K] @ f32_x[K]. Returns None if not supported.
     fn q4k_matvec(
         &self,
