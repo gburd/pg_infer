@@ -2,6 +2,7 @@ extern crate blas_src;
 
 pub mod attention;
 pub mod capture;
+pub mod engines;
 pub mod error;
 pub mod ffn;
 pub mod forward;
@@ -45,6 +46,7 @@ pub use infer_compute::MetalBackend;
 pub use capture::{
     CaptureCallbacks, CaptureConfig, InferenceModel, TopKEntry, VectorFileHeader, VectorRecord,
 };
+pub use engines::{MarkovResidualEngine, RsStore, RsPrefillResult};
 pub use error::InferenceError;
 pub use ffn::{
     FfnBackend, LayerFfnRouter, RemoteFfnConfig, RemoteFfnError, RemoteWalkBackend,
