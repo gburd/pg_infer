@@ -169,4 +169,39 @@ mod tests {
             assert_eq!(h.shape(), &[1, weights.hidden_size], "step {step}");
         }
     }
+
+    /// Correctness contract: MarkovRS prefill produces the same logits as
+    /// the standard forward pass (no KV cache, full dense computation).
+    #[test]
+    fn markov_rs_prefill_matches_standard_forward() {
+        let weights = make_test_weights();
+        let token_ids = &[0u32, 1, 2, 3];
+
+        // Standard forward — .logits is already at the last token position.
+        let standard_raw = crate::forward::predict::forward_raw_logits(&weights, token_ids, None);
+        let standard_logits: Vec<f32> = standard_raw.logits.to_vec();
+
+        // MarkovRS prefill (stores residuals, uses BackendFfn)
+        // Returns hidden state at the last position [1, hidden].
+        let mut engine = MarkovResidualEngine::new(None);
+        let h_markov = engine.prefill(&weights, token_ids).expect("prefill");
+        let markov_logits = hidden_to_raw_logits(&weights, &h_markov);
+
+        // They should be identical (same computation, same weights, f32 deterministic)
+        assert_eq!(
+            standard_logits.len(),
+            markov_logits.len(),
+            "logit vector lengths differ"
+        );
+        let max_diff: f32 = standard_logits
+            .iter()
+            .zip(markov_logits.iter())
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0f32, f32::max);
+        // Allow tiny floating-point differences due to operation ordering
+        assert!(
+            max_diff < 1e-4,
+            "MarkovRS prefill logits differ from standard by {max_diff:.6} (threshold 1e-4)"
+        );
+    }
 }
