@@ -4,12 +4,12 @@
 
 ## P0: Complete Gemma 4 Support
 
-### Wire v_shares_k into inference forward pass
-**Impact**: Correct K=V handling without runtime tensor probing  
-**Effort**: Low  
-**Status**: Trait method done (returns `config.attention_k_eq_v`), inference wiring pending
+### Wire v_shares_k into inference forward pass — DONE
+**Impact**: Correct K=V handling without runtime tensor probing
+**Effort**: Low
+**Status**: ✅ Complete (2026-05)
 
-Currently the inference crate detects K=V by checking for missing v_proj tensors at runtime. Now that `v_shares_k()` exposes the config flag, the forward pass should use it directly.
+Architecture config is now authoritative. `attention/block.rs` uses `arch.v_shares_k(layer)` directly with a `debug_assert` validating tensor presence.
 
 ### Validate PLE (per-layer embeddings) end-to-end
 **Impact**: Correct Gemma 4 E2B inference  
@@ -25,17 +25,17 @@ PLE adds a gated embedding lookup per layer. Keys (`per_layer_embed_key`, `per_l
 
 ## P1: Architecture Coverage
 
-### Phi-3 / Phi-4
-**Effort**: Low  
-**Status**: Not started
+### Phi-3 / Phi-4 — DONE
+**Effort**: Low
+**Status**: ✅ Complete (2026-05)
 
-Similar to Llama with some attention differences (partial RoPE, SuRoPE). Most trait defaults apply.
+`architectures/phi.rs` — partial RoPE, SuRoPE scaling. Registered in detect.rs.
 
-### Command R / Cohere
-**Effort**: Medium  
-**Status**: Not started
+### Command R / Cohere — DONE
+**Effort**: Medium
+**Status**: ✅ Complete (2026-05)
 
-Different attention key pattern, different norm placement.
+`architectures/cohere.rs` — different attention key pattern, LayerNorm. Registered in detect.rs.
 
 ### Mamba / state-space models
 **Effort**: Large  
@@ -45,11 +45,11 @@ Would require extending the trait beyond transformer assumptions (no attention k
 
 ## P2: Loading Improvements
 
-### Streaming safetensors loading
-**Effort**: Medium  
-**Status**: Not started
+### Streaming safetensors loading — DONE
+**Effort**: Medium
+**Status**: ✅ Complete (2026-05)
 
-Current loader reads all shards into memory. For 70B+ models, streaming with per-layer loading would reduce peak memory. Already have mmap infrastructure — extend to lazy loading with `Arc<Mmap>` references.
+Implemented in infer-vindex `extract/streaming.rs` — mmap + on-demand per-tensor deserialize. Peak memory = 1 layer + embeddings.
 
 ### GGUF quantized inference (skip dequant)
 **Effort**: Large  
@@ -77,16 +77,21 @@ Some models (e.g., future MoE variants) may have different FFN types per layer (
 
 Current sliding window is boolean per layer. Future models may have more complex patterns (local + global hybrid, dilated attention, prefix caching hints). Consider a richer `AttentionPattern` enum.
 
-### Config validation
-**Effort**: Low  
-**Status**: Not started
+### Config validation — DONE
+**Effort**: Low
+**Status**: ✅ Complete (2026-05)
 
-Add a `validate()` method to `ModelArchitecture` that checks for inconsistencies (e.g., head_dim doesn't divide hidden_size, num_experts set but not num_experts_per_token). Currently these fail silently at inference time.
+`ModelConfig::validate()` checks num_layers, hidden_size, head_dim, head divisibility, MoE consistency, layer_types length, and partial_rotary_factor bounds. Called from detect.rs after config parsing.
 
 ## Completed
 
 | Item | Date | Impact |
 |------|------|--------|
+| v_shares_k inference wiring | 2026-05 | Config authoritative, no tensor probing |
+| Phi-3/4 architecture | 2026-05 | Partial RoPE, SuRoPE |
+| Cohere/Command R architecture | 2026-05 | LayerNorm, different key pattern |
+| Config validation | 2026-05 | `ModelConfig::validate()` |
+| Streaming safetensors loading | 2026-05 | Per-layer mmap, ~2 GB peak |
 | ModelArchitecture trait | 2026-03 | Foundation — 82 methods with defaults |
 | Gemma 2/3 support | 2026-03 | QK-norm, softcapping, sliding window |
 | Llama/Mistral/Qwen/DeepSeek | 2026-03 | Core architecture coverage |

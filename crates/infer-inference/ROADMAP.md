@@ -13,14 +13,13 @@ The GPU `prefill_q4` path produces wrong output for Gemma3 post-norm architectur
 Root cause: `prefill.rs` doesn't mirror `full_pipeline.rs`'s post-norm handling.
 CPU fallback is correct. See infer-compute ADR-009.
 
-### Wire KV-cached decode into honest path
-**Impact**: 4.9 tok/s → 59+ tok/s decode  
-**Effort**: Low  
-**Status**: Infrastructure ready
+### Wire KV-cached decode into honest path — DONE
+**Impact**: 4.9 tok/s → 59+ tok/s decode
+**Effort**: Low
+**Status**: ✅ Complete (2026-05)
 
-After prefill populates KV cache, subsequent decode_token calls at seq=1 should
-give 59 tok/s (measured in compute benchmarks). Need to wire the prefill → decode
-loop in predict_honest or a new `generate()` function.
+`kv_generate.rs` implements `generate_cached()`, `generate_cached_backend()`, and
+`generate_cached_with_window()`. Prefill → decode loop with KV cache persistence.
 
 ### Merge per-layer dispatches
 **Impact**: ~30% speedup on GPU path  
@@ -32,23 +31,16 @@ would save ~8ms on the 34-layer GPU path.
 
 ## P1: Production Hardening
 
-### Lift MarkovResidualEngine into infer-inference
-**Impact**: First-class KV-cache-free decode path; unblocks long-context use cases where KV memory is the bottleneck (long single conversations, multi-turn agents, bounded-memory local inference).
+### Lift MarkovResidualEngine into infer-inference — DONE
+**Impact**: First-class KV-cache-free decode path; unblocks long-context use cases where KV memory is the bottleneck.
 **Effort**: Medium
-**Status**: Spec drafted — [docs/specs/markov-residual-engine.md](docs/specs/markov-residual-engine.md). Reference implementation validated in `kv-cache-benchmark::real_model::markov_layer` (hidden cosine vs Standard KV = 1.000000 on 5/5 factual prompts, Gemma 3 4B, 2026-04-23).
+**Status**: ✅ Complete (2026-05)
 
-Migration plan (spec §9): lift `rs_prefill` / `rs_decode_step` into `infer-inference::engines::markov_residual`; rewire the `KvStrategy` impl in `kv-cache-benchmark` to wrap the new engine rather than own the implementation; move the `#[ignore]`'d real-model test suite with the code.
+Implemented in `engines/markov_residual/`. Stores per-layer pre-attention residuals; recomputes K/V on the fly from stored residuals during decode. Bit-identical to standard forward on TinyModel (validated by `markov_rs_prefill_matches_standard_forward` test). Public API via `generate_cached_with_window()`.
 
-**Framing note:** Markov RS is the "KV is a view, not the memory" mechanism — the residual stream is the source of truth, K/V becomes a recomputed view. Mechanistically superior to KV as the exact-long-context primitive, but production ecosystems (vLLM, FlashAttention, paged KV allocators, FP8 KV quantisation) are still built around KV as the persistent object. The likely future is hybrid: KV-style cache on the short/hot path, Markov RS on the long/cold path, Tier 2/3 engines on task-memory workloads. Landing this engine in `infer-inference` makes infer an early implementation of the "KV is a view" direction rather than just compressing the legacy representation.
-
-**Preconditions** for adding a new architecture (spec §4): residual stream is a pre-attention sufficient statistic; deterministic RMSNorm/LayerNorm; position encoding is a pure function of token position (RoPE/ALiBi/sinusoidal OK); attention mask is a pure function of position. Gemma 3 4B passes. Llama 3 and Gemma 4 E2B/E4B should pass but need empirical validation.
-
-### Clean up experimental FFN backends
-**Effort**: Low  
-**Status**: Not started
-
-6 experimental FFN backends in `ffn/experimental/` (CachedFfn, ClusteredFfn, etc.).
-Should be moved to a research module or removed if superseded by WalkFfn.
+### Clean up experimental FFN backends — N/A
+**Effort**: Low
+**Status**: ✅ Stale — no `ffn/experimental/` directory exists. Production backends only.
 
 ### Example reorganization
 **Effort**: Low  
@@ -69,14 +61,19 @@ Add examples to `attention.rs`, `forward.rs`, `layer_graph/mod.rs`.
 Pre-compute per-template feature sets. Only score features in the template's universe.
 Reduces gate KNN work for known entity types.
 
-### Multi-token generation loop
-`generate(prompt, max_tokens)` → prefill once, decode in loop with KV cache.
-Currently predict_honest does one prediction. Need streaming generation.
+### Multi-token generation loop — DONE
+Implemented in `forward/kv_generate.rs`. `generate_cached()` performs prefill → decode loop
+with persistent KV cache. Sliding-window variant available via `generate_cached_with_window()`.
 
 ## Completed
 
 | Item | Date | Impact |
 |------|------|--------|
+| KV-cached generation loop | 2026-05 | Prefill + decode with KV cache |
+| MarkovResidualEngine | 2026-05 | KV-free decode via residual storage |
+| Attention backward (target-delta) | 2026-05 | Last-pos gradient for optimization |
+| CachedLayerGraph predict wiring | 2026-05 | Skip layers via cached residuals |
+| Config validation | 2026-05 | Architecture invariant checks |
 | Forward pass (CPU BLAS) | 2026-03 | Foundation |
 | BLAS-fused attention | 2026-04-03 | Online softmax, O(seq) memory |
 | WalkFfn (sparse FFN via vindex) | 2026-04-03 | Gate KNN + top-K |

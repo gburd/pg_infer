@@ -35,17 +35,17 @@ Add option to store attention weights in GGUF-canonical 144-byte Q4_K format (pa
 
 ## P1: Production Hardening
 
-### HuggingFace resolution in Vindexfile
-**Effort**: Medium  
-**Status**: TODO in `vindexfile/mod.rs:162`
+### HuggingFace resolution in Vindexfile — DONE
+**Effort**: Medium
+**Status**: ✅ Complete (2026-05)
 
-FROM directive in Vindexfile should resolve `hf://user/repo` paths.
+FROM directive in Vindexfile resolves `hf://user/repo` paths via `resolve_hf_vindex()`.
 
-### Streaming extraction checkpoints
-**Effort**: Medium  
-**Status**: Not started
+### Streaming extraction checkpoints — DONE
+**Effort**: Medium
+**Status**: ✅ Complete (2026-05)
 
-Save extraction progress between layers so interrupted builds can resume.
+`write_checkpoint()` / `has_checkpoint()` + `build_vindex_resume()` entry point for interrupted builds.
 
 ### Q4_K FFN in vindex
 **Effort**: Low  
@@ -65,6 +65,9 @@ Add new layers/features to an existing vindex without full rebuild.
 
 | Item | Date | Impact |
 |------|------|--------|
+| HuggingFace vindexfile resolution | 2026-05 | `hf://` paths in FROM directives |
+| Streaming extraction checkpoints | 2026-05 | Resume interrupted builds |
+| Relation cluster loading | 2026-05 | Feature→relation label mapping |
 | Core VectorIndex with mmap | 2026-03 | Foundation |
 | Gate KNN (brute-force + BLAS) | 2026-03 | Walk engine |
 | Walk FFN (per-feature down/up vectors) | 2026-03 | Sparse inference |
