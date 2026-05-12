@@ -142,6 +142,169 @@ fn q4_vecmat_matches_dequant_reference() {
     assert!(cos > 0.9999, "cosine {cos} too low");
 }
 
+// ---------------------------------------------------------------------------
+// AVX2 Q4_K correctness tests
+// ---------------------------------------------------------------------------
+
+#[cfg(target_arch = "x86_64")]
+mod q4k_avx2_tests {
+    use infer_compute::cpu::ops::q4k_matvec;
+    use infer_compute::cpu::ops::q4_common::quantize_q4_k;
+
+    fn synth(n: usize, seed: u64) -> Vec<f32> {
+        let mut s = seed;
+        (0..n).map(|_| {
+            s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            ((s >> 33) as f32) / (u32::MAX as f32) * 2.0 - 1.0
+        }).collect()
+    }
+
+    #[test]
+    fn q4k_avx2_matches_scalar_single_superblock() {
+        if !is_x86_feature_detected!("avx2") || !is_x86_feature_detected!("fma") {
+            eprintln!("Skipping: AVX2+FMA not available");
+            return;
+        }
+        let hidden = 256;
+        let rows = 4;
+        let matrix = synth(rows * hidden, 0xABCD1234);
+        let x = synth(hidden, 0xDEAD5678);
+
+        let q4k = quantize_q4_k(&matrix);
+
+        let scalar = q4k_matvec::dispatch_scalar(&q4k, &x, rows, hidden);
+        let dispatched = q4k_matvec::dispatch(&q4k, &x, rows, hidden);
+
+        for i in 0..rows {
+            let diff = (scalar[i] - dispatched[i]).abs();
+            // FMA produces slightly different rounding than separate mul+add
+            assert!(
+                diff < 1e-3,
+                "row {i}: scalar={}, avx2={}, diff={diff}",
+                scalar[i], dispatched[i]
+            );
+        }
+    }
+
+    #[test]
+    fn q4k_avx2_matches_scalar_multi_superblock() {
+        if !is_x86_feature_detected!("avx2") || !is_x86_feature_detected!("fma") {
+            eprintln!("Skipping: AVX2+FMA not available");
+            return;
+        }
+        let hidden = 1536; // 6 superblocks
+        let rows = 8;
+        let matrix = synth(rows * hidden, 0xCAFEBABE);
+        let x = synth(hidden, 0xF00DBEEF);
+
+        let q4k = quantize_q4_k(&matrix);
+
+        let scalar = q4k_matvec::dispatch_scalar(&q4k, &x, rows, hidden);
+        let dispatched = q4k_matvec::dispatch(&q4k, &x, rows, hidden);
+
+        for i in 0..rows {
+            let diff = (scalar[i] - dispatched[i]).abs();
+            let rel = diff / scalar[i].abs().max(1e-6);
+            assert!(
+                rel < 1e-4,
+                "row {i}: scalar={}, avx2={}, diff={diff}, rel={rel}",
+                scalar[i], dispatched[i]
+            );
+        }
+    }
+
+    #[test]
+    fn q4k_avx2_zero_input() {
+        if !is_x86_feature_detected!("avx2") || !is_x86_feature_detected!("fma") {
+            eprintln!("Skipping: AVX2+FMA not available");
+            return;
+        }
+        let hidden = 256;
+        let rows = 2;
+        let matrix = synth(rows * hidden, 0x1111);
+        let x = vec![0.0f32; hidden]; // zero input
+
+        let q4k = quantize_q4_k(&matrix);
+        let out = q4k_matvec::dispatch(&q4k, &x, rows, hidden);
+
+        // With zero input, output should be near zero (only the dmin subtraction
+        // contributes, which multiplied by zero x still gives zero).
+        for (i, &v) in out.iter().enumerate() {
+            assert!(
+                v.abs() < 1e-3,
+                "row {i}: expected ~0 for zero input, got {v}"
+            );
+        }
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+mod q6k_avx2_tests {
+    use infer_compute::cpu::ops::q6k_matvec;
+    use infer_compute::cpu::ops::q4_common::quantize_q6_k;
+
+    fn synth(n: usize, seed: u64) -> Vec<f32> {
+        let mut s = seed;
+        (0..n).map(|_| {
+            s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            ((s >> 33) as f32) / (u32::MAX as f32) * 2.0 - 1.0
+        }).collect()
+    }
+
+    #[test]
+    fn q6k_avx2_matches_scalar() {
+        if !is_x86_feature_detected!("avx2") || !is_x86_feature_detected!("fma") {
+            eprintln!("Skipping: AVX2+FMA not available");
+            return;
+        }
+        let hidden = 256;
+        let rows = 4;
+        let matrix = synth(rows * hidden, 0xBEEFCAFE);
+        let x = synth(hidden, 0x12345678);
+
+        let q6k = quantize_q6_k(&matrix);
+
+        let scalar = q6k_matvec::dispatch_scalar(&q6k, &x, rows, hidden);
+        let dispatched = q6k_matvec::dispatch(&q6k, &x, rows, hidden);
+
+        for i in 0..rows {
+            let diff = (scalar[i] - dispatched[i]).abs();
+            assert!(
+                diff < 1e-4,
+                "row {i}: scalar={}, avx2={}, diff={diff}",
+                scalar[i], dispatched[i]
+            );
+        }
+    }
+
+    #[test]
+    fn q6k_avx2_matches_scalar_multi_superblock() {
+        if !is_x86_feature_detected!("avx2") || !is_x86_feature_detected!("fma") {
+            eprintln!("Skipping: AVX2+FMA not available");
+            return;
+        }
+        let hidden = 1024; // 4 superblocks
+        let rows = 4;
+        let matrix = synth(rows * hidden, 0xAAAABBBB);
+        let x = synth(hidden, 0xCCCCDDDD);
+
+        let q6k = quantize_q6_k(&matrix);
+
+        let scalar = q6k_matvec::dispatch_scalar(&q6k, &x, rows, hidden);
+        let dispatched = q6k_matvec::dispatch(&q6k, &x, rows, hidden);
+
+        for i in 0..rows {
+            let diff = (scalar[i] - dispatched[i]).abs();
+            let rel = diff / scalar[i].abs().max(1e-6);
+            assert!(
+                rel < 1e-4,
+                "row {i}: scalar={}, avx2={}, diff={diff}, rel={rel}",
+                scalar[i], dispatched[i]
+            );
+        }
+    }
+}
+
 #[test]
 fn q4_matvec_vs_raw_f32_matvec_quant_noise() {
     // Looser bound: compare kernel output against the *original* f32 matvec

@@ -1,0 +1,57 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build Extension
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        pg_version: [18]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: https://codeberg.org/TheAwitworker/rust-toolchain@stable
+
+      - name: Install system deps
+        run: sudo apt-get install -y libopenblas-dev
+
+      - name: Install cargo-pgrx
+        run: cargo install cargo-pgrx --version 0.17.0 --locked
+
+      - name: Initialize pgrx
+        run: cargo pgrx init --pg${{ matrix.pg_version }} download
+
+      - name: Build extension (release)
+        run: cargo pgrx package --pg-config $(which pg_config)
+
+      - name: Package artifact
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          ARTIFACT="pg_infer-${VERSION}-pg${{ matrix.pg_version }}-x86_64-linux"
+          mkdir -p "${ARTIFACT}"
+          cp -r target/release/pg_infer-pg${{ matrix.pg_version }}/* "${ARTIFACT}/" 2>/dev/null || true
+          tar czf "${ARTIFACT}.tar.gz" "${ARTIFACT}"
+
+      - name: Create Release
+        uses: https://code.forgejo.org/forgejo/release-action@v2
+        with:
+          direction: upload
+          token: ${{ secrets.RELEASE_TOKEN }}
+          tag: ${{ github.ref_name }}
+          title: ${{ github.ref_name }}
+          url: https://codeberg.org
+          repo: ${{ github.repository }}
+          sha: ${{ github.sha }}
+          release-dir: .
+          release-notes: |
+            pg_infer ${{ github.ref_name }}
+
+            Built for PostgreSQL ${{ matrix.pg_version }} on x86_64 Linux.

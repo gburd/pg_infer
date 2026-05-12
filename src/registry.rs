@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use ndarray::Array2;
@@ -12,6 +13,14 @@ use infer_vindex::{FeatureMeta, SilentLoadCallbacks, VectorIndex, VindexConfig};
 use crate::backend::{grid::GridBackend, mmap::MmapBackend, remote::RemoteBackend, Backend};
 use crate::error::PgInferError;
 use crate::gucs;
+
+// ---------------------------------------------------------------------------
+// Observability counters
+// ---------------------------------------------------------------------------
+
+static CACHE_HITS: AtomicU64 = AtomicU64::new(0);
+static CACHE_MISSES: AtomicU64 = AtomicU64::new(0);
+static TOTAL_QUERIES: AtomicU64 = AtomicU64::new(0);
 
 // ---------------------------------------------------------------------------
 // Per-backend (process-local) model handle
@@ -197,15 +206,22 @@ pub fn with_backend<F, R>(model_name: &str, f: F) -> Result<R, PgInferError>
 where
     F: FnOnce(&dyn Backend) -> Result<R, PgInferError>,
 {
+    let _span = tracing::info_span!("with_backend", model = %model_name).entered();
+
+    TOTAL_QUERIES.fetch_add(1, Ordering::Relaxed);
+
     let handle = {
         let mut cache = BACKEND_CACHE
             .lock()
             .map_err(|e| PgInferError::Internal(format!("cache lock poisoned: {}", e)))?;
 
         if !cache.contains_key(model_name) {
+            CACHE_MISSES.fetch_add(1, Ordering::Relaxed);
+            tracing::debug!("cache miss, loading backend");
             let backend = load_backend(model_name)?;
             cache.insert(model_name.to_string(), backend);
         } else {
+            CACHE_HITS.fetch_add(1, Ordering::Relaxed);
             cache.touch(model_name);
         }
 
@@ -217,6 +233,18 @@ where
     }; // lock released
 
     f(&*handle)
+}
+
+/// Return cache statistics: (hits, misses, total_queries, loaded_models, total_bytes).
+pub fn cache_stats() -> (u64, u64, u64, usize, usize) {
+    let hits = CACHE_HITS.load(Ordering::Relaxed);
+    let misses = CACHE_MISSES.load(Ordering::Relaxed);
+    let total = TOTAL_QUERIES.load(Ordering::Relaxed);
+    let (models, bytes) = BACKEND_CACHE
+        .lock()
+        .map(|c| (c.entries.len(), c.total_bytes))
+        .unwrap_or((0, 0));
+    (hits, misses, total, models, bytes)
 }
 
 /// Evict a model from the process-local cache.

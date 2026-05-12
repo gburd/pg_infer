@@ -4,10 +4,10 @@
 //! Not optimised — scalar code intended as a correctness reference.
 
 /// Q6_K super-block size: 210 bytes per 256 values.
-const Q6K_BLOCK_SIZE: usize = 210;
+pub const Q6K_BLOCK_SIZE: usize = 210;
 
 /// Decode f16 bits to f32.
-fn f16_to_f32(bits: u16) -> f32 {
+pub fn f16_to_f32(bits: u16) -> f32 {
     let sign = ((bits >> 15) & 1) as u32;
     let exp = ((bits >> 10) & 0x1F) as i32;
     let mant = (bits & 0x3FF) as u32;
@@ -27,8 +27,22 @@ fn f16_to_f32(bits: u16) -> f32 {
 
 /// CPU Q6_K matvec: out[N] = Q6_K[N, K] @ x[K].
 ///
-/// Mirrors the Metal `q6k_matvec` shader: per-row dot product over super-blocks.
+/// Dispatches to AVX2+FMA on x86_64 when available, otherwise falls back
+/// to the scalar implementation.
 pub fn dispatch(q6k_data: &[u8], x: &[f32], num_rows: usize, hidden: usize) -> Vec<f32> {
+    #[cfg(target_arch = "x86_64")]
+    {
+        if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
+            return super::q6k_matvec_avx2::dispatch_avx2(q6k_data, x, num_rows, hidden);
+        }
+    }
+    dispatch_scalar(q6k_data, x, num_rows, hidden)
+}
+
+/// Scalar reference implementation.
+///
+/// Mirrors the Metal `q6k_matvec` shader: per-row dot product over super-blocks.
+pub fn dispatch_scalar(q6k_data: &[u8], x: &[f32], num_rows: usize, hidden: usize) -> Vec<f32> {
     let superblocks = hidden / 256;
     let bytes_per_row = superblocks * Q6K_BLOCK_SIZE;
     let mut out = vec![0.0f32; num_rows];

@@ -6,11 +6,11 @@
 //! reference.
 
 /// Q4_K super-block size: 144 bytes per 256 values (GGUF layout).
-const Q4K_BLOCK_SIZE: usize = 144;
+pub const Q4K_BLOCK_SIZE: usize = 144;
 
 /// Decode f16 bits to f32, preserving subnormals (matches Metal's
 /// `decode_f16_metal`, which uses the hardware `half` → `float` cast).
-fn f16_to_f32(bits: u16) -> f32 {
+pub fn f16_to_f32(bits: u16) -> f32 {
     let sign = ((bits >> 15) & 1) as u32;
     let exp = ((bits >> 10) & 0x1F) as i32;
     let mant = (bits & 0x3FF) as u32;
@@ -30,7 +30,7 @@ fn f16_to_f32(bits: u16) -> f32 {
 
 /// Unpack the 12 packed bytes at `sb_bytes` into 8 scales + 8 mins.
 /// Matches llama.cpp's `get_scale_min_k4` and `dequantize_q4_k`.
-fn unpack_scales_mins(sb_bytes: &[u8]) -> ([u8; 8], [u8; 8]) {
+pub fn unpack_scales_mins(sb_bytes: &[u8]) -> ([u8; 8], [u8; 8]) {
     let mut scales = [0u8; 8];
     let mut mins = [0u8; 8];
     for j in 0..4 {
@@ -46,9 +46,23 @@ fn unpack_scales_mins(sb_bytes: &[u8]) -> ([u8; 8], [u8; 8]) {
 
 /// CPU Q4_K matvec: out[N] = Q4_K[N, K] @ x[K].
 ///
+/// Dispatches to AVX2+FMA on x86_64 when available, otherwise falls back
+/// to the scalar implementation.
+pub fn dispatch(q4k_data: &[u8], x: &[f32], num_rows: usize, hidden: usize) -> Vec<f32> {
+    #[cfg(target_arch = "x86_64")]
+    {
+        if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
+            return super::q4k_matvec_avx2::dispatch_avx2(q4k_data, x, num_rows, hidden);
+        }
+    }
+    dispatch_scalar(q4k_data, x, num_rows, hidden)
+}
+
+/// Scalar reference implementation.
+///
 /// Mirrors the Metal `q4k_matvec` shader: per-row dot product over
 /// super-blocks of the GGUF 144-byte layout.
-pub fn dispatch(q4k_data: &[u8], x: &[f32], num_rows: usize, hidden: usize) -> Vec<f32> {
+pub fn dispatch_scalar(q4k_data: &[u8], x: &[f32], num_rows: usize, hidden: usize) -> Vec<f32> {
     let superblocks = hidden / 256;
     let bytes_per_row = superblocks * Q4K_BLOCK_SIZE;
     let mut out = vec![0.0f32; num_rows];

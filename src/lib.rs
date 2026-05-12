@@ -25,6 +25,7 @@ mod helpers;
 mod interrupt;
 mod model_mgmt;
 mod registry;
+mod tracing_layer;
 
 // Bootstrap the infer schema and model registry table during CREATE EXTENSION.
 extension_sql!(
@@ -59,6 +60,23 @@ pub extern "C-unwind" fn _PG_init() {
     unsafe {
         gucs::init();
     }
+
+    // Initialize tracing subscriber that routes to PostgreSQL elog().
+    // The filter respects RUST_LOG env var with a default of "pg_infer=info".
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
+
+    let filter = tracing_subscriber::filter::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| {
+            let level = gucs::log_level();
+            tracing_subscriber::filter::EnvFilter::new(format!("pg_infer={}", level))
+        });
+
+    // Ignore errors from re-initialization (happens during pgrx test harness).
+    let _ = tracing_subscriber::registry()
+        .with(tracing_layer::PgLogLayer)
+        .with(filter)
+        .try_init();
 
     // Log auto-detected UDS socket (informational).
     if let Some(sock) = backend::remote::detect_local_socket() {
@@ -188,6 +206,7 @@ mod tests {
             "infer_detect_server",
             "infer_warmup",
             "infer_server_stats",
+            "infer_stats",
         ] {
             let exists = Spi::get_one::<bool>(&format!(
                 "SELECT EXISTS(SELECT 1 FROM pg_proc WHERE proname = '{}')",

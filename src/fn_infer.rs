@@ -18,6 +18,7 @@ use crate::registry;
 /// SELECT * FROM infer('Product category:', top => 3, model => 'gemma4b');
 /// ```
 #[pg_extern]
+#[tracing::instrument(skip_all, fields(prompt_len = prompt.len(), top_k = top, model = model.unwrap_or("default")))]
 fn infer(
     prompt: &str,
     top: default!(Option<i32>, "NULL"),

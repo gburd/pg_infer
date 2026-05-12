@@ -40,6 +40,11 @@ pub static DESCRIBE_TOP_K: GucSetting<i32> = GucSetting::<i32>::new(20);
 pub static WALK_EMBED_MODE: GucSetting<Option<CString>> =
     GucSetting::<Option<CString>>::new(Some(c"last"));
 
+/// Tracing log level: controls which events are emitted to PostgreSQL logs.
+/// Valid values: "error", "warn", "info", "debug", "trace".
+pub static LOG_LEVEL: GucSetting<Option<CString>> =
+    GucSetting::<Option<CString>>::new(Some(c"info"));
+
 /// Whether to enable HNSW approximate search for gate_knn queries.
 ///
 /// WARNING: HNSW can cause crashes on large models due to memory pressure.
@@ -199,6 +204,17 @@ pub unsafe fn init() {
         GucFlags::default(),
     );
 
+    GucRegistry::define_string_guc(
+        c"infer.log_level",
+        c"Tracing log level for pg_infer events.",
+        c"Controls which events are emitted to PostgreSQL logs. \
+         Valid: 'error', 'warn', 'info', 'debug', 'trace'. Default: 'info'. \
+         Note: takes effect at extension load time only.",
+        &LOG_LEVEL,
+        GucContext::Suset,
+        GucFlags::default(),
+    );
+
     GucRegistry::define_bool_guc(
         c"infer.use_hnsw",
         c"Enable HNSW approximate search for gate queries.",
@@ -321,6 +337,14 @@ pub unsafe fn init() {
 // ---------------------------------------------------------------------------
 // Convenience accessors
 // ---------------------------------------------------------------------------
+
+/// Return the configured log level string (default "info").
+pub fn log_level() -> String {
+    LOG_LEVEL
+        .get()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "info".to_string())
+}
 
 /// Return the resolved default model name, or `None` if unset.
 pub fn default_model() -> Option<String> {

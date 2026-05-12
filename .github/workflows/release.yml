@@ -1,0 +1,67 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build Extension
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        pg_version: [18]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install system deps
+        run: sudo apt-get install -y libopenblas-dev
+
+      - name: Install cargo-pgrx
+        run: cargo install cargo-pgrx --version 0.17.0 --locked
+
+      - name: Initialize pgrx
+        run: cargo pgrx init --pg${{ matrix.pg_version }} download
+
+      - name: Build extension (release)
+        run: cargo pgrx package --pg-config $(which pg_config)
+
+      - name: Package artifact
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          ARTIFACT="pg_infer-${VERSION}-pg${{ matrix.pg_version }}-x86_64-linux"
+          mkdir -p "${ARTIFACT}"
+          cp -r target/release/pg_infer-pg${{ matrix.pg_version }}/* "${ARTIFACT}/" 2>/dev/null || true
+          tar czf "${ARTIFACT}.tar.gz" "${ARTIFACT}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pg_infer-pg${{ matrix.pg_version }}-x86_64-linux
+          path: pg_infer-*.tar.gz
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            *.tar.gz

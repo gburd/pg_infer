@@ -26,6 +26,7 @@ use crate::registry;
 /// SELECT * FROM describe('France', threshold => 0.01);
 /// ```
 #[pg_extern]
+#[tracing::instrument(skip_all, fields(entity = entity, model = model.unwrap_or("default")))]
 fn describe(
     entity: &str,
     model: default!(Option<&str>, "NULL"),

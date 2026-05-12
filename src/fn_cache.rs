@@ -1,11 +1,42 @@
-//! SQL functions for server-side activation cache management.
+//! SQL functions for cache management and backend statistics.
 //!
 //! These expose the larql-server's activation cache to DBAs so they can
-//! pre-warm hot entities and monitor cache efficiency.
+//! pre-warm hot entities and monitor cache efficiency, and provide local
+//! backend cache statistics for observability.
 
 use pgrx::prelude::*;
 
 use crate::registry;
+
+/// Return per-backend cache statistics: hit/miss counters, total queries,
+/// loaded model count, and approximate memory usage.
+///
+/// ```sql
+/// SELECT * FROM infer_stats();
+/// ```
+#[pg_extern]
+fn infer_stats() -> Result<
+    TableIterator<
+        'static,
+        (
+            name!(cache_hits, i64),
+            name!(cache_misses, i64),
+            name!(total_queries, i64),
+            name!(loaded_models, i32),
+            name!(memory_mb, f64),
+        ),
+    >,
+    Box<dyn std::error::Error>,
+> {
+    let (hits, misses, total, models, bytes) = registry::cache_stats();
+    Ok(TableIterator::new(vec![(
+        hits as i64,
+        misses as i64,
+        total as i64,
+        models as i32,
+        bytes as f64 / (1024.0 * 1024.0),
+    )]))
+}
 
 /// Pre-warm the server's activation cache for a list of entities.
 ///

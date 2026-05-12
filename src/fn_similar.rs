@@ -19,6 +19,7 @@ use crate::registry;
 ///     WHERE similar_to(category, 'AI') > 15.0;
 /// ```
 #[pg_extern]
+#[tracing::instrument(skip_all, fields(a = a, b = b, model = model.unwrap_or("default")))]
 fn similar_to(
     a: &str,
     b: &str,
@@ -51,6 +52,7 @@ fn similar_to(
 ///   ORDER BY score DESC LIMIT 5;
 /// ```
 #[pg_extern]
+#[tracing::instrument(skip_all, fields(num_candidates = candidates.len(), query = query, model = model.unwrap_or("default")))]
 fn similar_to_many(
     candidates: Vec<Option<String>>,
     query: &str,

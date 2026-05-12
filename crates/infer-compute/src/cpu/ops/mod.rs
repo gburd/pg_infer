@@ -8,7 +8,11 @@ pub mod q4_matvec;
 pub mod q4_vecmat;
 pub mod q4_common;
 pub mod q4k_matvec;
+#[cfg(target_arch = "x86_64")]
+pub mod q4k_matvec_avx2;
 pub mod q6k_matvec;
+#[cfg(target_arch = "x86_64")]
+pub mod q6k_matvec_avx2;
 pub mod q8_matvec;
 pub mod ternary_matvec;
 pub mod vector;

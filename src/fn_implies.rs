@@ -13,6 +13,7 @@ use crate::registry;
 /// SELECT implies('France', 'banana');        -- false
 /// ```
 #[pg_extern]
+#[tracing::instrument(skip_all, fields(subject = subject, object = object, model = model.unwrap_or("default")))]
 fn implies(
     subject: &str,
     object: &str,
