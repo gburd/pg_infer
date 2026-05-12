@@ -5,6 +5,7 @@ use std::path::Path;
 use crate::architectures::bitnet::BitNetArch;
 use crate::architectures::cohere::CohereArch;
 use crate::architectures::deepseek::DeepSeekArch;
+use crate::architectures::deepseek_v4::DeepSeekV4Arch;
 use crate::architectures::gemma2::Gemma2Arch;
 use crate::architectures::gemma3::Gemma3Arch;
 use crate::architectures::gemma4::Gemma4Arch;
@@ -37,22 +38,34 @@ pub enum ModelError {
     NotADirectory(std::path::PathBuf),
     #[error("no safetensors files in {0}")]
     NoSafetensors(std::path::PathBuf),
+    #[error("config.json missing in {0}")]
+    ConfigMissing(std::path::PathBuf),
+    #[error("config validation failed for model_type '{model_type}': {reason}")]
+    ConfigValidation { model_type: String, reason: String },
 }
 
 /// Read config.json from a model directory and return the architecture.
+///
+/// Returns `ConfigMissing` if no config.json exists — callers should not
+/// silently degrade to a generic architecture when the config is absent,
+/// as this hides real path errors from users.
 pub fn detect_architecture(model_dir: &Path) -> Result<Box<dyn ModelArchitecture>, ModelError> {
     let config_path = model_dir.join("config.json");
-    let config_json = if config_path.exists() {
-        let text = std::fs::read_to_string(&config_path)?;
-        serde_json::from_str::<serde_json::Value>(&text)?
-    } else {
-        serde_json::json!({})
-    };
+    if !config_path.exists() {
+        return Err(ModelError::ConfigMissing(model_dir.to_path_buf()));
+    }
+    let text = std::fs::read_to_string(&config_path)?;
+    let config_json = serde_json::from_str::<serde_json::Value>(&text)?;
 
     Ok(detect_from_json(&config_json))
 }
 
 /// Detect architecture from an already-parsed config.json value.
+///
+/// Validation failures are logged as warnings but do not prevent detection —
+/// some partial configs (e.g., nested `text_config` wrappers with defaults)
+/// may trigger spurious validation issues while still being functional.
+/// Use [`detect_from_json_strict`] when you want hard failures.
 pub fn detect_from_json(config: &serde_json::Value) -> Box<dyn ModelArchitecture> {
     let model_config = parse_model_config(config);
     if let Err(e) = model_config.validate() {
@@ -79,7 +92,9 @@ pub fn detect_from_json(config: &serde_json::Value) -> Box<dyn ModelArchitecture
         "gpt_oss" => Box::new(GptOssArch::from_config(model_config)),
         // Qwen family (dense and MoE share same keys)
         t if t.starts_with("qwen") => Box::new(QwenArch::from_config(model_config)),
-        // DeepSeek family (MoE + MLA)
+        // DeepSeek V4 (distinct tensor naming: no model. prefix, ffn/attn/w1/w2/w3)
+        "deepseek_v4" => Box::new(DeepSeekV4Arch::from_config(model_config)),
+        // DeepSeek family V2/V3 (MoE + MLA)
         t if t.starts_with("deepseek") => Box::new(DeepSeekArch::from_config(model_config)),
         // Phi family
         "phi" | "phi3" | "phi-3" | "phi4" => Box::new(PhiArch::from_config(model_config)),
@@ -96,6 +111,21 @@ pub fn detect_from_json(config: &serde_json::Value) -> Box<dyn ModelArchitecture
         // Unknown — generic fallback
         _ => Box::new(GenericArch::from_config(model_config)),
     }
+}
+
+/// Strict variant of [`detect_from_json`] that returns an error on validation failure.
+///
+/// Use this in code paths where a malformed config should abort (e.g., vindex build)
+/// rather than degrade silently.
+pub fn detect_from_json_strict(config: &serde_json::Value) -> Result<Box<dyn ModelArchitecture>, ModelError> {
+    let model_config = parse_model_config(config);
+    if let Err(reason) = model_config.validate() {
+        return Err(ModelError::ConfigValidation {
+            model_type: model_config.model_type.clone(),
+            reason,
+        });
+    }
+    Ok(detect_from_json(config))
 }
 
 /// Parse ModelConfig from a config.json value.

@@ -393,6 +393,7 @@ fn normalize_key(key: &str, prefixes: &[&str]) -> String {
 
 fn tensor_to_f32(view: &safetensors::tensor::TensorView<'_>) -> Result<Vec<f32>, ModelError> {
     use crate::quant::half;
+    use crate::quant::fp8;
     match view.dtype() {
         safetensors::Dtype::F32 => {
             let bytes = view.data();
@@ -403,6 +404,8 @@ fn tensor_to_f32(view: &safetensors::tensor::TensorView<'_>) -> Result<Vec<f32>,
         }
         safetensors::Dtype::F16 => Ok(half::decode_f16(view.data())),
         safetensors::Dtype::BF16 => Ok(half::decode_bf16(view.data())),
+        safetensors::Dtype::F8_E4M3 => Ok(fp8::decode_f8_e4m3(view.data())),
+        safetensors::Dtype::I8 => Ok(fp8::decode_i8(view.data())),
         other => Err(ModelError::UnsupportedDtype(format!("{other:?}"))),
     }
 }

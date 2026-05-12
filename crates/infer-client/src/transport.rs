@@ -18,25 +18,38 @@
 //! Both transports speak the same JSON API; callers don't need to know
 //! which they got.
 
+#[cfg(unix)]
 use std::path::PathBuf;
+#[cfg(unix)]
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{sync_channel, RecvTimeoutError, SyncSender};
 use std::sync::Arc;
+#[cfg(unix)]
 use std::task::{Context, Poll};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
 use bytes::Bytes;
-use http_body_util::{BodyExt, Full};
+#[cfg(unix)]
+use http_body_util::BodyExt;
+use http_body_util::Full;
+#[cfg(unix)]
 use hyper::body::Incoming;
-use hyper::{Request, Response, Uri};
+#[cfg(unix)]
+use hyper::{Request, Response};
+#[cfg(unix)]
+use hyper::Uri;
+#[cfg(unix)]
 use hyper_util::client::legacy::Client as HyperClient;
+#[cfg(unix)]
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use reqwest::Client as ReqwestClient;
 use serde::de::DeserializeOwned;
+#[cfg(unix)]
 use tokio::net::UnixStream;
 use tokio::runtime::Builder;
+#[cfg(unix)]
 use tower_service::Service;
 
 /// Maximum request body size the client will build.  64 MiB matches
@@ -114,11 +127,13 @@ impl From<reqwest::Error> for ClientError {
 
 /// `tower_service::Service<Uri>` that ignores the authority portion of the
 /// URI and dials a fixed Unix socket path.
+#[cfg(unix)]
 #[derive(Clone, Debug)]
 struct UdsConnector {
     path: PathBuf,
 }
 
+#[cfg(unix)]
 impl Service<Uri> for UdsConnector {
     type Response = TokioIo<UnixStream>;
     type Error = std::io::Error;
@@ -150,6 +165,7 @@ enum Transport {
     },
     /// Unix domain socket transport via raw hyper_util.  The connector
     /// ignores URI authority and always dials the socket path.
+    #[cfg(unix)]
     Uds {
         client: HyperClient<UdsConnector, Full<Bytes>>,
         /// Socket path, kept for logging.
@@ -214,6 +230,7 @@ pub struct CancellableClient {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Scheme {
     Http,
+    #[cfg(unix)]
     Uds,
 }
 
@@ -432,36 +449,49 @@ impl Drop for CancellableClient {
 /// re-parsing the URL inside the runtime.
 enum TransportInit {
     Http { base: String },
+    #[cfg(unix)]
     Uds { path: PathBuf },
 }
 
 fn classify(raw: &str) -> Result<(Scheme, String, TransportInit), ClientError> {
-    if let Some(rest) = raw
-        .strip_prefix("uds://")
-        .or_else(|| raw.strip_prefix("unix://"))
+    #[cfg(unix)]
     {
-        // Accept `uds:///path`, `uds://localhost/path`, or `uds:/path`.
-        let path = if let Some(stripped) = rest.strip_prefix('/') {
-            PathBuf::from(format!("/{stripped}"))
-        } else if rest.is_empty() {
-            return Err(ClientError::InvalidUrl(format!(
-                "empty uds path in '{raw}'"
-            )));
-        } else {
-            // Form like `uds://localhost/path` — take the path component.
-            match rest.find('/') {
-                Some(idx) => PathBuf::from(&rest[idx..]),
-                None => return Err(ClientError::InvalidUrl(format!("no socket path in '{raw}'"))),
-            }
-        };
-        // UDS "base_url" stays empty; per-request paths are used directly.
-        return Ok((Scheme::Uds, String::new(), TransportInit::Uds { path }));
+        if let Some(rest) = raw
+            .strip_prefix("uds://")
+            .or_else(|| raw.strip_prefix("unix://"))
+        {
+            // Accept `uds:///path`, `uds://localhost/path`, or `uds:/path`.
+            let path = if let Some(stripped) = rest.strip_prefix('/') {
+                PathBuf::from(format!("/{stripped}"))
+            } else if rest.is_empty() {
+                return Err(ClientError::InvalidUrl(format!(
+                    "empty uds path in '{raw}'"
+                )));
+            } else {
+                // Form like `uds://localhost/path` — take the path component.
+                match rest.find('/') {
+                    Some(idx) => PathBuf::from(&rest[idx..]),
+                    None => return Err(ClientError::InvalidUrl(format!("no socket path in '{raw}'"))),
+                }
+            };
+            // UDS "base_url" stays empty; per-request paths are used directly.
+            return Ok((Scheme::Uds, String::new(), TransportInit::Uds { path }));
+        }
+
+        if raw.starts_with("uds:/") && !raw.starts_with("uds:///") {
+            // Accept single-slash abbreviation: `uds:/path/to/sock`.
+            let path = PathBuf::from(raw.trim_start_matches("uds:"));
+            return Ok((Scheme::Uds, String::new(), TransportInit::Uds { path }));
+        }
     }
 
-    if raw.starts_with("uds:/") && !raw.starts_with("uds:///") {
-        // Accept single-slash abbreviation: `uds:/path/to/sock`.
-        let path = PathBuf::from(raw.trim_start_matches("uds:"));
-        return Ok((Scheme::Uds, String::new(), TransportInit::Uds { path }));
+    #[cfg(not(unix))]
+    {
+        if raw.starts_with("uds://") || raw.starts_with("unix://") || raw.starts_with("uds:/") {
+            return Err(ClientError::InvalidUrl(format!(
+                "UDS transport not supported on this platform: '{raw}'"
+            )));
+        }
     }
 
     // Anything else must be a valid http/https URL.
@@ -514,6 +544,7 @@ fn runtime_thread(
                         Transport::Http { client, base } => {
                             execute_http(client, base, &job).await
                         }
+                        #[cfg(unix)]
                         Transport::Uds { client, .. } => execute_uds(client, &job, timeout).await,
                     };
                     let _ = job.reply.send(result);
@@ -542,6 +573,7 @@ fn runtime_thread(
                                 Transport::Http { client, base } => {
                                     execute_http(client, base, &job).await
                                 }
+                                #[cfg(unix)]
                                 Transport::Uds { client, .. } => {
                                     execute_uds(client, &job, timeout).await
                                 }
@@ -623,6 +655,7 @@ fn build_transport(init: TransportInit, timeout: Duration) -> Result<Transport, 
                 .build()?;
             Ok(Transport::Http { client, base })
         }
+        #[cfg(unix)]
         TransportInit::Uds { path } => {
             let connector = UdsConnector { path: path.clone() };
             let client = HyperClient::builder(TokioExecutor::new())
@@ -679,6 +712,7 @@ async fn execute_http(
     }
 }
 
+#[cfg(unix)]
 async fn execute_uds(
     client: &HyperClient<UdsConnector, Full<Bytes>>,
     job: &RequestJob,
@@ -782,6 +816,7 @@ mod tests {
         assert!(matches!(err, Err(ClientError::InvalidUrl(_))));
     }
 
+    #[cfg(unix)]
     #[test]
     fn uds_url_parses() {
         let (scheme, base, init) =

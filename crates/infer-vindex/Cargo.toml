@@ -24,6 +24,9 @@ rayon = "1.10"
 # Tokenizer (for embeddings loading + token resolution)
 tokenizers = "0.21"
 
+# Per-expert SVD summarization for MoE models
+rand = "0.8"
+
 # Checksums
 sha2 = "0.10"
 

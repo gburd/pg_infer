@@ -9,5 +9,6 @@
 //! Compute operations (matvec, vecmat, GPU shaders) are in `infer-compute`.
 
 pub mod half;
+pub mod fp8;
 pub mod ggml;
 pub mod mxfp4;

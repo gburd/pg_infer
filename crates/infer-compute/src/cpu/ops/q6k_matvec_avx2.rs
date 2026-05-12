@@ -64,7 +64,7 @@ unsafe fn q6k_row_dot_avx2(row_data: &[u8], x: &[f32], superblocks: usize) -> f3
                 let i_start = chunk * 8;
                 let mut vals = [0.0f32; 8];
 
-                for i in 0..8 {
+                for (i, val) in vals.iter_mut().enumerate() {
                     let qi = sub_base + i_start + i;
                     let byte_idx = qi / 2;
                     let lo_byte = ql[byte_idx];
@@ -84,7 +84,7 @@ unsafe fn q6k_row_dot_avx2(row_data: &[u8], x: &[f32], superblocks: usize) -> f3
                     let hi2 = ((hi_byte >> bit_offset) & 0x03) as f32;
 
                     // Full 6-bit value: lo4 + hi2*16 - 32
-                    vals[i] = lo4 + hi2 * 16.0;
+                    *val = lo4 + hi2 * 16.0;
                 }
 
                 let raw_v = _mm256_loadu_ps(vals.as_ptr());

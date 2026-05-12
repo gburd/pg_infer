@@ -670,7 +670,9 @@ fn get_tensor_f32(
         }
         safetensors::Dtype::F16 => crate::format::quant::half::decode_f16(view.data()),
         safetensors::Dtype::BF16 => crate::format::quant::half::decode_bf16(view.data()),
-        _ => return Ok(None), // skip non-float
+        safetensors::Dtype::F8_E4M3 => infer_models::quant::fp8::decode_f8_e4m3(view.data()),
+        safetensors::Dtype::I8 => infer_models::quant::fp8::decode_i8(view.data()),
+        _ => return Ok(None), // skip unsupported dtypes
     };
 
     let arr = Array2::from_shape_vec((shape[0], shape[1]), data)
