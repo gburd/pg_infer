@@ -339,3 +339,75 @@ fn masked_argmax(logits: &[f32], tokenizer: &tokenizers::Tokenizer) -> Option<(u
     let decoded = tokenizer.decode(&[id], true).ok()?;
     Some((id, decoded))
 }
+
+/// Stream autoregressive generation using the MarkovResidualEngine.
+///
+/// Instead of a KV cache, this uses the residual-stream Markov state
+/// (stored pre-layer residuals, K/V recomputed on-the-fly). Memory is
+/// bounded by the window size — overflow goes to a cold tier.
+///
+/// `window_size`: max hot-window tokens. `None` = unlimited (store all).
+/// `backend`: compute backend for matmuls (CPU, Metal, etc.).
+///
+/// Returns generated token IDs. Stops on EOS or `max_new_tokens`.
+pub fn generate_with_markov_rs<F>(
+    weights: &ModelWeights,
+    tokenizer: &tokenizers::Tokenizer,
+    prompt_ids: &[u32],
+    max_new_tokens: usize,
+    window_size: Option<usize>,
+    backend: Box<dyn infer_compute::ComputeBackend>,
+    mut on_token: F,
+) -> Vec<u32>
+where
+    F: FnMut(u32, &str),
+{
+    use crate::engines::MarkovResidualEngine;
+
+    if max_new_tokens == 0 || prompt_ids.is_empty() {
+        return Vec::new();
+    }
+
+    let mut engine = MarkovResidualEngine::with_backend(window_size, backend);
+
+    // Prefill
+    let h = match engine.prefill(weights, prompt_ids) {
+        Some(h) => h,
+        None => return Vec::new(),
+    };
+
+    // First token from prefill output
+    let logits = hidden_to_raw_logits(weights, &h);
+    let mut generated: Vec<u32> = Vec::with_capacity(max_new_tokens);
+    let (first_id, first_str) = match masked_argmax(&logits, tokenizer) {
+        Some(t) => t,
+        None => return Vec::new(),
+    };
+    on_token(first_id, &first_str);
+    generated.push(first_id);
+    if is_stop_token_str(&first_str) || max_new_tokens == 1 {
+        return generated;
+    }
+
+    // Decode loop
+    let mut current_id = first_id;
+    for _step in 1..max_new_tokens {
+        let h_new = match engine.decode_step(weights, current_id) {
+            Some(h) => h,
+            None => break,
+        };
+        let logits = hidden_to_raw_logits(weights, &h_new);
+        let (next_id, next_str) = match masked_argmax(&logits, tokenizer) {
+            Some(t) => t,
+            None => break,
+        };
+        on_token(next_id, &next_str);
+        generated.push(next_id);
+        if is_stop_token_str(&next_str) {
+            break;
+        }
+        current_id = next_id;
+    }
+
+    generated
+}

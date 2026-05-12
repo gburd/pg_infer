@@ -117,7 +117,7 @@ pub use embed::embed_tokens_pub;
 pub use layer::{run_ffn, run_attention_public, run_layer_with_ffn};
 pub use kv_generate::{
     generate_cached, generate_cached_backend, generate_cached_with_window,
-    generate_cached_constrained,
+    generate_cached_constrained, generate_with_markov_rs,
 };
 pub use predict::{
     predict, predict_with_temperature, predict_with_ffn, predict_with_ffn_attention, predict_with_ffn_trace,

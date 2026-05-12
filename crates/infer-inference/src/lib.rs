@@ -68,7 +68,7 @@ pub use forward::{
     apply_knn_override, infer_patched, infer_patched_q4k, walk_trace_from_residuals, InferPatchedResult,
     KnnOverride, KNN_COSINE_THRESHOLD,
     forward_raw_logits, RawForward, hidden_to_raw_logits,
-    generate_cached_constrained,
+    generate_cached_constrained, generate_with_markov_rs,
 };
 pub use graph_ffn::{GateIndex, IndexBuildCallbacks, SilentIndexCallbacks};
 pub use trace::{
