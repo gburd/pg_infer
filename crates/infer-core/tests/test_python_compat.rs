@@ -1,8 +1,24 @@
 use infer_core::*;
 
+/// Skip the test if the fixture file is absent (it's generated externally).
+macro_rules! require_fixture {
+    ($path:expr) => {
+        let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join($path);
+        if !p.exists() {
+            eprintln!(
+                "SKIPPED: fixture not found at {:?} — \
+                 generate with: python tests/gen_compat_data.py",
+                p
+            );
+            return;
+        }
+    };
+}
+
 /// Load the example graph (matches Python format) and verify every field.
 #[test]
 fn test_load_python_produced_graph() {
+    require_fixture!("../../examples/gemma_4b_knowledge.json");
     let g = load("../../examples/gemma_4b_knowledge.json").unwrap();
 
     assert_eq!(g.edge_count(), 10);
@@ -19,6 +35,7 @@ fn test_load_python_produced_graph() {
 
 #[test]
 fn test_python_graph_confidence() {
+    require_fixture!("../../examples/gemma_4b_knowledge.json");
     let g = load("../../examples/gemma_4b_knowledge.json").unwrap();
 
     let france_cap = g.select("France", Some("capital-of"));
@@ -32,6 +49,7 @@ fn test_python_graph_confidence() {
 
 #[test]
 fn test_python_graph_source() {
+    require_fixture!("../../examples/gemma_4b_knowledge.json");
     let g = load("../../examples/gemma_4b_knowledge.json").unwrap();
 
     for edge in g.edges() {
@@ -41,6 +59,7 @@ fn test_python_graph_source() {
 
 #[test]
 fn test_python_graph_schema() {
+    require_fixture!("../../examples/gemma_4b_knowledge.json");
     let g = load("../../examples/gemma_4b_knowledge.json").unwrap();
 
     assert!(g.schema.has("capital-of"));
@@ -57,6 +76,7 @@ fn test_python_graph_schema() {
 
 #[test]
 fn test_python_graph_type_rules() {
+    require_fixture!("../../examples/gemma_4b_knowledge.json");
     let g = load("../../examples/gemma_4b_knowledge.json").unwrap();
 
     assert_eq!(g.schema.type_rules().len(), 3);
@@ -72,6 +92,7 @@ fn test_python_graph_type_rules() {
 
 #[test]
 fn test_python_graph_stats() {
+    require_fixture!("../../examples/gemma_4b_knowledge.json");
     let g = load("../../examples/gemma_4b_knowledge.json").unwrap();
     let stats = g.stats();
 
@@ -84,6 +105,7 @@ fn test_python_graph_stats() {
 /// Save the Python graph as JSON, reload, verify identical.
 #[test]
 fn test_python_graph_json_roundtrip() {
+    require_fixture!("../../examples/gemma_4b_knowledge.json");
     let original = load("../../examples/gemma_4b_knowledge.json").unwrap();
     let path = std::env::temp_dir().join("test_python_compat.infer.json");
 
@@ -107,6 +129,7 @@ fn test_python_graph_json_roundtrip() {
 /// Save the Python graph as MessagePack, reload, verify identical.
 #[test]
 fn test_python_graph_msgpack_roundtrip() {
+    require_fixture!("../../examples/gemma_4b_knowledge.json");
     let original = load("../../examples/gemma_4b_knowledge.json").unwrap();
     let path = std::env::temp_dir().join("test_python_compat.infer.bin");
 

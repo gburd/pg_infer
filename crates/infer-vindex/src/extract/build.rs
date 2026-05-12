@@ -392,6 +392,7 @@ impl<'a> BuildContext<'a> {
                                 top_token_id,
                                 c_score,
                                 top_k: top_k_entries,
+                                relation: None,
                             });
                         }
                     }
@@ -539,6 +540,26 @@ impl<'a> BuildContext<'a> {
 // ═══════════════════════════════════════════════════════════════════════
 // Entry points
 // ═══════════════════════════════════════════════════════════════════════
+
+/// Resolve the gate vector storage dtype from an optional user override
+/// and the architecture's preference. When the user hasn't explicitly
+/// specified a dtype, the architecture's `preferred_gate_dtype()` is used.
+///
+/// This auto-selects `StorageDtype::Ternary` for BitNet models without
+/// requiring the user to pass `--dtype ternary` explicitly.
+pub fn resolve_gate_dtype(
+    user_specified: Option<StorageDtype>,
+    arch: &dyn infer_models::ModelArchitecture,
+) -> StorageDtype {
+    match user_specified {
+        Some(d) => d,
+        None => match arch.preferred_gate_dtype() {
+            "ternary" => StorageDtype::Ternary,
+            "f32" => StorageDtype::F32,
+            _ => StorageDtype::F16,
+        },
+    }
+}
 
 /// Build a .vindex from model weights and write it to disk.
 ///

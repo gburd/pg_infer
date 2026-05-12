@@ -433,6 +433,7 @@ fn meta(token: &str, id: u32, score: f32) -> FeatureMeta {
     FeatureMeta {
         top_token: token.into(), top_token_id: id, c_score: score,
         top_k: vec![TopKEntry { token: token.into(), token_id: id, logit: score }],
+        relation: None,
     }
 }
 

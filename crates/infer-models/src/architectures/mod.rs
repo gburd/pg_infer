@@ -4,6 +4,8 @@
 //! Every architecture implements [`ModelArchitecture`](crate::config::ModelArchitecture)
 //! and returns its own `model_type` from `family()`.
 
+pub mod bitnet;
+pub mod cohere;
 pub mod deepseek;
 pub mod gemma2;
 pub mod gemma3;
@@ -14,6 +16,7 @@ pub mod granite;
 pub mod llama;
 pub mod mistral;
 pub mod mixtral;
+pub mod phi;
 pub mod qwen;
 pub mod starcoder2;
 pub mod tinymodel;

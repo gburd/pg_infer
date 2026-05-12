@@ -303,6 +303,62 @@ impl VectorIndex {
             .sum()
     }
 
+    /// Approximate resident bytes: mmap regions + decoded gate cache.
+    ///
+    /// Used by pg_infer's backend LRU cache for eviction decisions.
+    pub fn approx_resident_bytes(&self) -> usize {
+        let mut total = 0usize;
+
+        // Mmap'd gate vectors
+        if let Some(ref m) = self.gate_mmap_bytes {
+            total += m.len();
+        }
+
+        // Heap-mode gate vectors
+        total += self.gate_heap_bytes();
+
+        // f16 decode cache (decoded layers kept in memory)
+        if let Ok(cache) = self.f16_decode_cache.lock() {
+            for entry in cache.iter().flatten() {
+                total += entry.len() * std::mem::size_of::<f32>();
+            }
+        }
+
+        // Down-meta mmap
+        if let Some(ref m) = self.down_meta_mmap {
+            total += m.mmap.len();
+        }
+
+        // Interleaved FFN mmaps
+        if let Some(ref m) = self.interleaved_mmap {
+            total += m.len();
+        }
+        if let Some(ref m) = self.interleaved_q4_mmap {
+            total += m.len();
+        }
+        if let Some(ref m) = self.interleaved_q4k_mmap {
+            total += m.len();
+        }
+
+        // lm_head mmaps
+        if let Some(ref m) = self.lm_head_mmap {
+            total += m.len();
+        }
+        if let Some(ref m) = self.lm_head_f16_mmap {
+            total += m.len();
+        }
+
+        // Down/up features mmaps
+        if let Some(ref m) = self.down_features_mmap {
+            total += m.len();
+        }
+        if let Some(ref m) = self.up_features_mmap {
+            total += m.len();
+        }
+
+        total
+    }
+
     /// Returns true if `layer` is owned by this shard (always true when no
     /// range is set). Use this to guard accessor calls and reject requests
     /// for layers outside the server's owned range before touching mmap pages.

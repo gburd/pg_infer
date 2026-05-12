@@ -32,6 +32,7 @@ pub mod types;
 
 pub use transport::{BatchItem, CancelToken, CancellableClient, ClientError, Method};
 pub use types::{
-    DescribeEdge, DescribeResponse, InferPrediction, InferResponse, RelationSummary,
-    RelationsResponse, StatsResponse, WalkHit, WalkResponse,
+    CacheStatsResponse, DescribeEdge, DescribeResponse, InferPrediction, InferResponse,
+    RankResponse, RankResult, RelationSummary, RelationsResponse, StatsResponse, WalkHit,
+    WalkResponse, WarmupResponse,
 };

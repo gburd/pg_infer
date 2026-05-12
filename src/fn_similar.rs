@@ -275,25 +275,21 @@ fn infer_distance(a: &str, b: &str) -> Result<f64, Box<dyn std::error::Error>> {
     Ok(score_to_distance(score))
 }
 
-// Register the <~> operator for semantic distance.
-//
-// Without a supporting index access method, `ORDER BY col <~> 'query'`
-// evaluates `infer_distance` once per row.  That is expected: the point
-// of Phase B/C is to move that call out-of-process so a table scan is
-// feasible under load.  A future `USING infer_remote` opclass can wire
-// in server-side top-K pruning once the remote backend lands.
-extension_sql!(
-    r#"
-CREATE OPERATOR <~> (
-    LEFTARG  = text,
-    RIGHTARG = text,
-    FUNCTION = infer_distance,
-    COMMUTATOR = <~>
-);
-"#,
-    name = "infer_distance_operator",
-    requires = [infer_distance],
-);
+/// Raw similarity score for the `<~` operator (higher = more similar).
+///
+/// Complement to `<~>` (distance).  Useful for `WHERE col <~ 'query' > threshold`
+/// patterns where you want to filter by similarity rather than sort by distance.
+#[pg_extern]
+fn infer_similarity(a: &str, b: &str) -> Result<f64, Box<dyn std::error::Error>> {
+    let model_name = registry::resolve_model_name(None)?;
+    let score = registry::with_backend(&model_name, |backend| backend.similar_to(a, b))?;
+    Ok(score)
+}
+
+// Operators (<~>, <~) and COST annotations are registered in am.rs
+// as part of the unified infer_access_method SQL block.  This ensures
+// correct ordering: operators are created before the operator class
+// that references them.
 
 // ---------------------------------------------------------------------------
 // Helpers

@@ -157,6 +157,7 @@ pub fn read_binary(
                     top_token_id,
                     c_score,
                     top_k,
+                    relation: None,
                 }));
                 total += 1;
             }

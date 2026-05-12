@@ -117,7 +117,7 @@ fn predict_hybrid_metal(
         // GPU: attention only
         let h_post_attn_vec = {
             let mut cache_guard = metal.kv_cache_mut(
-                weights.num_layers, weights.num_kv_heads, weights.head_dim,
+                weights.num_layers, 4096, weights.num_kv_heads, weights.head_dim,
             );
             let kv_cache = cache_guard.as_mut().unwrap();
             metal.decode_attention_layer(

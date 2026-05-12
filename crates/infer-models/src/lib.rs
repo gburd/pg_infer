@@ -9,6 +9,7 @@ pub mod weights;
 pub use config::{Activation, ExpertFormat, FfnType, ModelArchitecture, ModelConfig, NormType, RopeScaling};
 pub use detect::{detect_architecture, detect_from_json, ModelError};
 
+pub use architectures::bitnet::BitNetArch;
 pub use architectures::deepseek::DeepSeekArch;
 pub use architectures::gemma2::Gemma2Arch;
 pub use architectures::gemma3::Gemma3Arch;

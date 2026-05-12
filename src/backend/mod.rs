@@ -25,6 +25,7 @@
 
 #![allow(dead_code)] // Some trait methods are only used on the non-active backend at build time.
 
+pub mod grid;
 pub mod mmap;
 pub mod remote;
 
@@ -177,6 +178,13 @@ pub trait Backend: Send + Sync {
     // keeps working.  Remote backends panic if called; the caller is
     // expected to gate on `is_local()`.
 
+    /// Approximate RSS contribution of this backend (bytes).
+    /// Used by the LRU cache for eviction decisions.
+    /// Default: 0 (remote backends use negligible local memory).
+    fn approx_resident_bytes(&self) -> usize {
+        0
+    }
+
     fn is_local(&self) -> bool {
         false
     }
@@ -188,6 +196,64 @@ pub trait Backend: Send + Sync {
             operation: "embed".into(),
         })
     }
+
+    /// Pre-warm entities in the server-side activation cache.
+    /// Only remote/grid backends implement this; local returns (0, 0).
+    fn warmup(&self, _entities: &[String]) -> Result<(usize, usize), PgInferError> {
+        Ok((0, 0))
+    }
+
+    /// Fetch server-side cache stats.  Local backends return `None`.
+    fn cache_stats(&self) -> Result<Option<CacheStats>, PgInferError> {
+        Ok(None)
+    }
+
+    /// Rank candidates by similarity to query, returning top-K sorted
+    /// descending by score.  Remote backends can override to use a
+    /// server-side `/v1/rank` endpoint with activation cache.
+    ///
+    /// Default implementation: score all via `similar_to_many`, sort, truncate.
+    fn rank(
+        &self,
+        candidates: &[String],
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<RankedCandidate>, PgInferError> {
+        let scores = self.similar_to_many(candidates, query)?;
+        let mut ranked: Vec<RankedCandidate> = scores
+            .into_iter()
+            .enumerate()
+            .map(|(i, score)| RankedCandidate { index: i, score })
+            .collect();
+        ranked.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        if limit > 0 && ranked.len() > limit {
+            ranked.truncate(limit);
+        }
+        Ok(ranked)
+    }
+}
+
+/// Ranked candidate with position and similarity score.
+#[derive(Debug, Clone)]
+pub struct RankedCandidate {
+    /// Position in the input candidates array.
+    pub index: usize,
+    /// Similarity score (higher = more similar).
+    pub score: f64,
+}
+
+/// Server-side activation cache statistics.
+#[derive(Debug, Clone)]
+pub struct CacheStats {
+    pub entries: usize,
+    pub hit_count: u64,
+    pub miss_count: u64,
+    pub eviction_count: u64,
+    pub memory_bytes: usize,
 }
 
 /// Minimal snapshot used by `infer_diff()`.

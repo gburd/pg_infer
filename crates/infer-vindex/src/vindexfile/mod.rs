@@ -105,6 +105,7 @@ pub fn build_from_vindexfile(
                     top_token_id: 0,
                     c_score: 0.9,
                     top_k: vec![],
+                    relation: Some(relation.clone()),
                 };
                 patched.insert_feature(layer, feature, vec![], meta);
                 layers.push(BuildLayer {
@@ -159,10 +160,8 @@ pub fn build_from_vindexfile(
 /// Handles: local paths, hf:// URLs (future), https:// URLs (future).
 fn resolve_vindexfile_path(path: &str, working_dir: &Path) -> Result<std::path::PathBuf, VindexError> {
     if path.starts_with("hf://") {
-        // TODO: HuggingFace resolution
-        Err(VindexError::Parse(format!(
-            "HuggingFace paths not yet implemented: {path}. Download manually and use a local path."
-        )))
+        let resolved = crate::format::huggingface::resolve_hf_vindex(path)?;
+        Ok(resolved)
     } else if path.starts_with("https://") || path.starts_with("http://") {
         Err(VindexError::Parse(format!(
             "Remote URLs not yet implemented: {path}. Download manually and use a local path."

@@ -1022,3 +1022,124 @@ mod gate_cache_lru_tests {
         assert_eq!(resident_layers(&idx), 2);
     }
 }
+
+// ══════════════════════════════════════════════════════════════
+// Ternary gate KNN integration tests
+//
+// End-to-end: build synthetic ternary mmap-backed VectorIndex,
+// query via gate_knn, verify correct results. Follows the
+// f16_mmap_index pattern from gate_cache_lru_tests.
+// ══════════════════════════════════════════════════════════════
+
+#[cfg(test)]
+mod ternary_gate_tests {
+    use super::super::core::VectorIndex;
+    use super::super::types::GateLayerSlice;
+    use crate::config::dtype::{self, StorageDtype};
+    use ndarray::Array1;
+
+    /// Build a minimal ternary mmap-backed VectorIndex.
+    /// Each layer has `num_features` features over `hidden` dims.
+    /// Row i has weight +1 at dim (i % hidden), all others 0.
+    fn ternary_mmap_index(num_layers: usize, num_features: usize, hidden: usize) -> VectorIndex {
+        let bytes_per_feature = hidden / 4;
+        let per_layer_bytes = num_features * bytes_per_feature;
+        let total_bytes = per_layer_bytes * num_layers;
+
+        let mut anon = memmap2::MmapMut::map_anon(total_bytes).unwrap();
+
+        let mut slices = Vec::with_capacity(num_layers);
+        for l in 0..num_layers {
+            let mut ternary_vals = vec![0i8; num_features * hidden];
+            for i in 0..num_features {
+                ternary_vals[i * hidden + (i % hidden)] = 1; // +1 at diagonal
+            }
+            let packed = dtype::encode_ternary(&ternary_vals);
+            let off = l * per_layer_bytes;
+            anon[off..off + per_layer_bytes].copy_from_slice(&packed);
+            slices.push(GateLayerSlice {
+                float_offset: off, // raw byte offset for Ternary
+                num_features,
+            });
+        }
+
+        let mmap = anon.make_read_only().unwrap();
+        VectorIndex::new_mmap(mmap, slices, StorageDtype::Ternary, None, num_layers, hidden)
+    }
+
+    #[test]
+    fn ternary_gate_knn_basic() {
+        let idx = ternary_mmap_index(4, 8, 16);
+        // Query: 1.0 at dim 0, zeros elsewhere → feature 0 should score highest
+        let mut q = Array1::zeros(16);
+        q[0] = 1.0;
+        let results = idx.gate_knn(0, &q, 3);
+        assert!(!results.is_empty());
+        assert_eq!(results[0].0, 0); // feature 0 = +1 at dim 0
+        assert!((results[0].1 - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn ternary_gate_knn_multiple_layers() {
+        let idx = ternary_mmap_index(4, 8, 16);
+        for layer in 0..4 {
+            let mut q = Array1::zeros(16);
+            q[3] = 2.5;
+            let results = idx.gate_knn(layer, &q, 2);
+            assert!(!results.is_empty());
+            // Feature 3 has +1 at dim 3 → score = 2.5
+            assert_eq!(results[0].0, 3);
+            assert!((results[0].1 - 2.5).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn ternary_gate_knn_negative_weights() {
+        // Build index with negative ternary values
+        let hidden = 8;
+        let num_features = 4;
+        let bytes_per_feature = hidden / 4;
+        let per_layer_bytes = num_features * bytes_per_feature;
+
+        let mut anon = memmap2::MmapMut::map_anon(per_layer_bytes).unwrap();
+        // Feature 0: +1 at dim 0
+        // Feature 1: -1 at dim 0
+        // Feature 2: +1 at dim 0, -1 at dim 1
+        // Feature 3: all zeros
+        let mut vals = vec![0i8; num_features * hidden];
+        vals[0 * hidden + 0] = 1;
+        vals[1 * hidden + 0] = -1;
+        vals[2 * hidden + 0] = 1;
+        vals[2 * hidden + 1] = -1;
+        let packed = dtype::encode_ternary(&vals);
+        anon[..per_layer_bytes].copy_from_slice(&packed);
+
+        let slices = vec![GateLayerSlice { float_offset: 0, num_features }];
+        let mmap = anon.make_read_only().unwrap();
+        let idx = VectorIndex::new_mmap(mmap, slices, StorageDtype::Ternary, None, 1, hidden);
+
+        let mut q = Array1::zeros(hidden);
+        q[0] = 3.0;
+        q[1] = 1.0;
+        let results = idx.gate_knn(0, &q, 4);
+
+        // Feature 0: +3.0, Feature 1: -3.0, Feature 2: 3.0 - 1.0 = 2.0, Feature 3: 0
+        // Sorted by abs magnitude: Feature 0 (3.0), Feature 1 (3.0), Feature 2 (2.0), Feature 3 (0)
+        assert_eq!(results.len(), 4);
+        // Top two both have |score| = 3.0
+        let top_features: Vec<usize> = results.iter().take(2).map(|(f, _)| *f).collect();
+        assert!(top_features.contains(&0));
+        assert!(top_features.contains(&1));
+        // Feature 2 should be third with score 2.0
+        assert_eq!(results[2].0, 2);
+        assert!((results[2].1 - 2.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn ternary_encode_decode_roundtrip() {
+        let vals: Vec<i8> = vec![0, 1, -1, 0, 1, 1, -1, -1, 0, 0, 1, -1, 1, 0, -1, 1];
+        let packed = dtype::encode_ternary(&vals);
+        let decoded = dtype::decode_ternary(&packed, vals.len());
+        assert_eq!(vals, decoded);
+    }
+}

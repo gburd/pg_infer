@@ -140,6 +140,7 @@ impl Service<Uri> for UdsConnector {
 
 // ── Transport ────────────────────────────────────────────────────────────────
 
+#[allow(clippy::large_enum_variant)]
 enum Transport {
     /// TCP/TLS transport via reqwest.  Handles `http://` and `https://`.
     Http {
@@ -177,10 +178,12 @@ struct RequestJob {
     reply: SyncSender<Result<Vec<u8>, ClientError>>,
 }
 
+type BatchReply = Result<Vec<Result<Vec<u8>, ClientError>>, ClientError>;
+
 struct BatchJob {
     items: Vec<BatchItem>,
     cancel: CancelToken,
-    reply: SyncSender<Result<Vec<Result<Vec<u8>, ClientError>>, ClientError>>,
+    reply: SyncSender<BatchReply>,
 }
 
 #[derive(Debug, Clone)]

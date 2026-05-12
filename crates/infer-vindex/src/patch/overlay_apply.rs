@@ -49,6 +49,7 @@ impl PatchedVindex {
                                 token_id: dm.top_token_id,
                                 logit: dm.c_score,
                             }],
+                            relation: None,
                         }
                     } else {
                         FeatureMeta {
@@ -56,6 +57,7 @@ impl PatchedVindex {
                             top_token_id: 0,
                             c_score: confidence.unwrap_or(0.9),
                             top_k: vec![],
+                            relation: None,
                         }
                     };
                     self.overrides_meta.insert(key, Some(meta));
@@ -77,6 +79,7 @@ impl PatchedVindex {
                                 token_id: dm.top_token_id,
                                 logit: dm.c_score,
                             }],
+                            relation: None,
                         };
                         self.overrides_meta.insert(key, Some(meta));
                     }

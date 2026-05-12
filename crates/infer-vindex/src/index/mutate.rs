@@ -190,9 +190,6 @@ impl VectorIndex {
     ) -> Vec<(usize, usize)> {
         let mut results = Vec::new();
         let layers = self.loaded_layers();
-        // Relation matching is not yet implemented at this layer — reject
-        // anything that asks for it.
-        let relation_match = relation_label.is_none();
 
         for layer in layers {
             if let Some(l) = layer_filter {
@@ -213,6 +210,12 @@ impl VectorIndex {
                             })
                     })
                     .unwrap_or(true);
+                let relation_match = match relation_label {
+                    None => true,
+                    Some(rel) => meta.relation.as_ref().is_some_and(|r| {
+                        r.to_lowercase().contains(&rel.to_lowercase())
+                    }),
+                };
                 if entity_match && relation_match {
                     results.push((layer, feat));
                 }

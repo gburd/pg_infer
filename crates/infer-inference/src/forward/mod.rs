@@ -122,6 +122,7 @@ pub use kv_generate::{
 pub use predict::{
     predict, predict_with_temperature, predict_with_ffn, predict_with_ffn_attention, predict_with_ffn_trace,
     predict_with_router, predict_with_strategy, predict_from_hidden, predict_from_hidden_with_ffn,
+    predict_with_template,
     logits_to_predictions_pub, logit_lens_top1,
     forward_raw_logits, forward_raw_logits_with_prefix, RawForward,
     hidden_to_raw_logits,

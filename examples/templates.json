@@ -1,0 +1,14 @@
+[
+  {"relation": "capital-of", "template": "The capital of {subject} is", "reverse_template": "The country with capital {object} is", "multi_token": true, "stop_tokens": [".", "\n"]},
+  {"relation": "currency", "template": "The currency of {subject} is", "multi_token": true, "stop_tokens": [".", "\n"]},
+  {"relation": "birthplace", "template": "{subject} was born in", "multi_token": true, "stop_tokens": [".", "\n"]},
+  {"relation": "located-in", "template": "{subject} is located in", "multi_token": true, "stop_tokens": [".", "\n"]},
+  {"relation": "language-of", "template": "The official language of {subject} is", "multi_token": true, "stop_tokens": [".", "\n"]},
+  {"relation": "continent", "template": "{subject} is on the continent of", "multi_token": true, "stop_tokens": [".", "\n"]},
+  {"relation": "founder-of", "template": "The founder of {subject} is", "multi_token": true, "stop_tokens": [".", "\n"]},
+  {"relation": "ceo-of", "template": "The CEO of {subject} is", "multi_token": true, "stop_tokens": [".", "\n"]},
+  {"relation": "author-of", "template": "The author of {subject} is", "multi_token": true, "stop_tokens": [".", "\n"]},
+  {"relation": "genre", "template": "The genre of {subject} is", "multi_token": true, "stop_tokens": [".", "\n"]},
+  {"relation": "part-of", "template": "{subject} is part of", "multi_token": true, "stop_tokens": [".", "\n"]},
+  {"relation": "instance-of", "template": "{subject} is a type of", "multi_token": true, "stop_tokens": [".", "\n"]}
+]

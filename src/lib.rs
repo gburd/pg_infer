@@ -1,9 +1,17 @@
+#![allow(clippy::type_complexity)]
+
 use pgrx::prelude::*;
 
 pgrx::pg_module_magic!();
 
+mod am;
+mod am_build;
+mod am_cost;
+mod am_options;
+mod am_scan;
 mod backend;
 mod error;
+mod fn_cache;
 mod fn_describe;
 mod fn_diff;
 mod fn_implies;
@@ -51,6 +59,11 @@ pub extern "C-unwind" fn _PG_init() {
     unsafe {
         gucs::init();
     }
+
+    // Log auto-detected UDS socket (informational).
+    if let Some(sock) = backend::remote::detect_local_socket() {
+        pgrx::log!("pg_infer: auto-detected local larql-server at {}", sock);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -90,6 +103,8 @@ mod tests {
         Spi::run("SHOW infer.max_memory").expect("SHOW max_memory failed");
         Spi::run("SHOW infer.auto_download").expect("SHOW auto_download failed");
         Spi::run("SHOW infer.gate_threshold").expect("SHOW gate_threshold failed");
+        Spi::run("SHOW infer.grid_url").expect("SHOW grid_url failed");
+        Spi::run("SHOW infer.grid_poll_interval").expect("SHOW grid_poll_interval failed");
     }
 
     #[pg_test]
@@ -158,6 +173,9 @@ mod tests {
             "similar_to_many",
             "implies",
             "infer_create_model",
+            "infer_create_model_remote",
+            "infer_create_model_grid",
+            "infer_create_models_remote",
             "infer_drop_model",
             "infer_models",
             "infer_distance",
@@ -167,6 +185,9 @@ mod tests {
             "infer_show_relations",
             "infer_explain_walk",
             "infer_diff",
+            "infer_detect_server",
+            "infer_warmup",
+            "infer_server_stats",
         ] {
             let exists = Spi::get_one::<bool>(&format!(
                 "SELECT EXISTS(SELECT 1 FROM pg_proc WHERE proname = '{}')",
@@ -217,5 +238,68 @@ mod tests {
         Spi::run("SET infer.describe_top_k = 50").expect("SET");
         let val = Spi::get_one::<String>("SHOW infer.describe_top_k").expect("SHOW");
         assert_eq!(val, Some("50".to_string()));
+    }
+
+    #[pg_test]
+    fn test_access_method_exists() {
+        Spi::run("CREATE EXTENSION IF NOT EXISTS pg_infer").expect("CREATE EXTENSION failed");
+        let exists = Spi::get_one::<bool>(
+            "SELECT EXISTS(SELECT 1 FROM pg_am WHERE amname = 'infer')",
+        )
+        .expect("query failed");
+        assert_eq!(exists, Some(true));
+    }
+
+    #[pg_test]
+    fn test_operator_class_exists() {
+        Spi::run("CREATE EXTENSION IF NOT EXISTS pg_infer").expect("CREATE EXTENSION failed");
+        let exists = Spi::get_one::<bool>(
+            "SELECT EXISTS(SELECT 1 FROM pg_opclass WHERE opcname = 'infer_text_ops')",
+        )
+        .expect("query failed");
+        assert_eq!(exists, Some(true));
+    }
+
+    #[pg_test]
+    fn test_similarity_operator_exists() {
+        Spi::run("CREATE EXTENSION IF NOT EXISTS pg_infer").expect("CREATE EXTENSION failed");
+        let exists = Spi::get_one::<bool>(
+            "SELECT EXISTS(SELECT 1 FROM pg_operator WHERE oprname = '<~')",
+        )
+        .expect("query failed");
+        assert_eq!(exists, Some(true));
+    }
+
+    #[pg_test]
+    fn test_implies_operator_exists() {
+        Spi::run("CREATE EXTENSION IF NOT EXISTS pg_infer").expect("CREATE EXTENSION failed");
+        let exists = Spi::get_one::<bool>(
+            "SELECT EXISTS(SELECT 1 FROM pg_operator WHERE oprname = '@>')",
+        )
+        .expect("query failed");
+        assert_eq!(exists, Some(true));
+    }
+
+    #[pg_test]
+    fn test_create_index_using_infer_syntax() {
+        Spi::run("CREATE EXTENSION IF NOT EXISTS pg_infer").expect("CREATE EXTENSION failed");
+        Spi::run("CREATE TABLE test_docs (id int, title text)").expect("CREATE TABLE");
+        // Verify the parser accepts "USING infer" syntax by confirming:
+        // 1. The AM exists (parser can resolve the name)
+        let am_ok = Spi::get_one::<bool>(
+            "SELECT EXISTS(SELECT 1 FROM pg_am WHERE amname = 'infer')",
+        )
+        .expect("query failed");
+        assert_eq!(am_ok, Some(true));
+        // 2. The default opclass is registered for the AM
+        let opc_ok = Spi::get_one::<bool>(
+            "SELECT EXISTS(SELECT 1 FROM pg_opclass WHERE opcname = 'infer_text_ops')",
+        )
+        .expect("query failed");
+        assert_eq!(opc_ok, Some(true));
+        // Note: Actually creating the index would require a model registered
+        // in infer.models.  The ambuild callback errors with ModelNotFound,
+        // but pgrx's error mechanism (longjmp) cannot be caught by
+        // std::panic::catch_unwind, so we don't attempt it here.
     }
 }

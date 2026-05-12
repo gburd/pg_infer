@@ -88,6 +88,7 @@ impl VectorIndex {
                 top_token_id,
                 c_score,
                 top_k,
+                relation: None,
             };
 
             if layer > max_layer {
@@ -237,6 +238,7 @@ impl VectorIndex {
                 top_token_id,
                 c_score,
                 top_k,
+                relation: None,
             };
 
             if layer < self.num_layers {

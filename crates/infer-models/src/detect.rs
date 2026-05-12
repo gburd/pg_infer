@@ -2,6 +2,8 @@
 
 use std::path::Path;
 
+use crate::architectures::bitnet::BitNetArch;
+use crate::architectures::cohere::CohereArch;
 use crate::architectures::deepseek::DeepSeekArch;
 use crate::architectures::gemma2::Gemma2Arch;
 use crate::architectures::gemma3::Gemma3Arch;
@@ -12,6 +14,7 @@ use crate::architectures::granite::GraniteArch;
 use crate::architectures::llama::LlamaArch;
 use crate::architectures::mistral::MistralArch;
 use crate::architectures::mixtral::MixtralArch;
+use crate::architectures::phi::PhiArch;
 use crate::architectures::qwen::QwenArch;
 use crate::architectures::starcoder2::StarCoder2Arch;
 use crate::architectures::tinymodel::TinyModelArch;
@@ -52,6 +55,9 @@ pub fn detect_architecture(model_dir: &Path) -> Result<Box<dyn ModelArchitecture
 /// Detect architecture from an already-parsed config.json value.
 pub fn detect_from_json(config: &serde_json::Value) -> Box<dyn ModelArchitecture> {
     let model_config = parse_model_config(config);
+    if let Err(e) = model_config.validate() {
+        eprintln!("infer-models: config validation warning for '{}': {e}", model_config.model_type);
+    }
     let model_type = model_config.model_type.as_str();
 
     match model_type {
@@ -61,6 +67,8 @@ pub fn detect_from_json(config: &serde_json::Value) -> Box<dyn ModelArchitecture
         t if t.starts_with("gemma2") || t == "gemma" => {
             Box::new(Gemma2Arch::from_config(model_config))
         }
+        // BitNet b1.58 (ternary weights)
+        "bitnet" => Box::new(BitNetArch::from_config(model_config)),
         // Llama family
         t if t.starts_with("llama") => Box::new(LlamaArch::from_config(model_config)),
         // Mistral (dense)
@@ -73,6 +81,12 @@ pub fn detect_from_json(config: &serde_json::Value) -> Box<dyn ModelArchitecture
         t if t.starts_with("qwen") => Box::new(QwenArch::from_config(model_config)),
         // DeepSeek family (MoE + MLA)
         t if t.starts_with("deepseek") => Box::new(DeepSeekArch::from_config(model_config)),
+        // Phi family
+        "phi" | "phi3" | "phi-3" | "phi4" => Box::new(PhiArch::from_config(model_config)),
+        // Cohere / Command R
+        "cohere" | "command-r" | "command_r" | "cohere2" => {
+            Box::new(CohereArch::from_config(model_config))
+        }
         // StarCoder 2
         "starcoder2" => Box::new(StarCoder2Arch::from_config(model_config)),
         // Granite family (dense and MoE share same base keys)
@@ -114,7 +128,7 @@ fn parse_model_config(config: &serde_json::Value) -> ModelConfig {
         .unwrap_or(if default_head_dim > 0 {
             default_head_dim
         } else {
-            hidden_size / num_q_heads
+            hidden_size.checked_div(num_q_heads).unwrap_or(hidden_size)
         });
     let num_kv_heads = text_config["num_key_value_heads"].as_u64().unwrap_or(4) as usize;
     // RoPE base: check rope_parameters.full_attention.rope_theta (Gemma 4),
@@ -1379,6 +1393,41 @@ mod tests {
         assert!(arch.has_v_norm());
         assert!(arch.has_post_norms());
         assert_eq!(arch.bos_token_id(), Some(2));
+    }
+
+    #[test]
+    fn test_detect_bitnet_2b() {
+        // Matches microsoft/BitNet-b1.58-2B-4T config.json
+        let config = serde_json::json!({
+            "model_type": "bitnet",
+            "hidden_size": 2560,
+            "intermediate_size": 6912,
+            "num_hidden_layers": 30,
+            "num_attention_heads": 20,
+            "num_key_value_heads": 5,
+            "vocab_size": 32000,
+            "rope_theta": 500000.0
+        });
+        let arch = detect_from_json(&config);
+        assert_eq!(arch.family(), "bitnet");
+        assert_eq!(arch.config().hidden_size, 2560);
+        assert_eq!(arch.config().num_layers, 30);
+        assert_eq!(arch.activation(), crate::config::Activation::SquaredRelu);
+        assert!(arch.has_ffn_sub_norm());
+        assert_eq!(arch.preferred_gate_dtype(), "ternary");
+        // Standard Llama-style keys
+        assert_eq!(arch.ffn_gate_key(5), "layers.5.mlp.gate_proj.weight");
+        assert_eq!(arch.ffn_up_key(5), "layers.5.mlp.up_proj.weight");
+        assert_eq!(arch.ffn_down_key(5), "layers.5.mlp.down_proj.weight");
+        assert_eq!(arch.attn_q_key(3), "layers.3.self_attn.q_proj.weight");
+        // FFN sub-norm key
+        assert_eq!(
+            arch.ffn_sub_norm_key(7),
+            Some("layers.7.mlp.ffn_norm.weight".to_string())
+        );
+        // Not MoE, not MLA
+        assert!(!arch.is_moe());
+        assert!(!arch.uses_mla());
     }
 
     #[test]

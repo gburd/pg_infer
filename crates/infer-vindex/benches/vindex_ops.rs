@@ -57,6 +57,7 @@ fn build_synthetic_index(
                             logit: 1.0 - k as f32 * 0.1,
                         })
                         .collect(),
+                    relation: None,
                 })
             })
             .collect();
@@ -143,6 +144,7 @@ fn bench_mutate(c: &mut Criterion) {
             token_id: 42,
             logit: 0.99,
         }],
+        relation: None,
     };
 
     group.bench_function("set_meta_plus_gate", |b| {

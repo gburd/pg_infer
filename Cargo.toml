@@ -11,7 +11,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
 rust-version = "1.80"
 authors = ["Greg Burd <greg@burd.me>"]
@@ -30,6 +30,10 @@ rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 description = "Query transformer model weights as PostgreSQL relations"
+repository = "https://codeberg.org/gregburd/pg_infer"
+homepage = "https://codeberg.org/gregburd/pg_infer"
+keywords = ["postgresql", "transformer", "interpretability", "knowledge-graph", "pgrx"]
+categories = ["database", "science"]
 
 [lib]
 crate-type = ["cdylib", "lib"]

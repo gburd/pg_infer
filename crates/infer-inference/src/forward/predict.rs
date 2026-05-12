@@ -328,6 +328,23 @@ pub struct RawForward {
     pub logits: ndarray::Array1<f32>,
 }
 
+/// Predict with template-aware caching — delegates to the LayerGraph-based
+/// predict that uses CachedLayerGraph for template-matched layers.
+///
+/// This is the integration of Phase 2.5 (CachedLayerGraph) into the
+/// standard forward predict path.
+pub fn predict_with_template(
+    weights: &ModelWeights,
+    tokenizer: &tokenizers::Tokenizer,
+    token_ids: &[u32],
+    top_k: usize,
+    config: &crate::layer_graph::predict::TemplateConfig,
+) -> PredictResult {
+    crate::layer_graph::predict::predict_with_template_cache(
+        weights, tokenizer, token_ids, top_k, config,
+    )
+}
+
 /// Run a full forward pass with a custom FFN backend for all layers.
 pub fn predict_with_ffn(
     weights: &ModelWeights,

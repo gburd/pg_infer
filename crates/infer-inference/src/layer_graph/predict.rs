@@ -8,8 +8,10 @@
 use ndarray::Array2;
 
 use infer_compute::ComputeBackend;
+use crate::ffn::FfnBackend;
 use crate::model::ModelWeights;
 use super::{LayerGraph, DenseLayerGraph, CachedLayerGraph};
+use super::{build_adaptive_graph, detect_template, TemplatePattern};
 
 // Re-export moved functions for backward compatibility.
 pub use super::prefill::prefill_with_kv;
@@ -558,4 +560,62 @@ pub fn trace_with_graph(
         activations,
         attention: attention_captures,
     }
+}
+
+/// Configuration for template-based prediction with cached layers.
+pub struct TemplateConfig<'a> {
+    /// Known template patterns for detection.
+    pub templates: &'a [TemplatePattern],
+    /// Per-template cached layer graphs (indexed by template index from detect_template).
+    pub caches: &'a [CachedLayerGraph],
+    /// FFN backend for non-cached layers.
+    pub ffn: &'a dyn FfnBackend,
+}
+
+/// Predict with template-aware caching: cached layers for known templates,
+/// dense computation for the rest.
+///
+/// This is the integration point for CachedLayerGraph into the standard
+/// predict path. When a template is detected, layers in the template's
+/// `cached_layers` range use precomputed residuals (zero compute), while
+/// remaining layers use the dense FFN backend.
+///
+/// Expected ~4x decode speedup for template-matched queries (compute 8-14
+/// layers instead of 34).
+pub fn predict_with_template_cache(
+    weights: &ModelWeights,
+    tokenizer: &tokenizers::Tokenizer,
+    token_ids: &[u32],
+    top_k: usize,
+    config: &TemplateConfig,
+) -> crate::forward::PredictResult {
+    // Try template detection
+    if let Some(tmpl_idx) = detect_template(token_ids, config.templates) {
+        if tmpl_idx < config.caches.len() {
+            let cache = &config.caches[tmpl_idx];
+            let template = &config.templates[tmpl_idx];
+            let dense = DenseLayerGraph {
+                ffn: config.ffn,
+                backend: None,
+                capture_activation: false,
+                capture_attention: false,
+            };
+            let graph = build_adaptive_graph(
+                cache,
+                &dense,
+                weights.num_layers,
+                &template.cached_layers,
+            );
+            return predict_with_graph(weights, tokenizer, token_ids, top_k, &graph);
+        }
+    }
+
+    // No template match — dense fallback
+    let dense = DenseLayerGraph {
+        ffn: config.ffn,
+        backend: None,
+        capture_activation: false,
+        capture_attention: false,
+    };
+    predict_with_graph(weights, tokenizer, token_ids, top_k, &dense)
 }

@@ -281,6 +281,7 @@ fn build_synthetic_index(
                             logit: 0.5,
                         })
                         .collect(),
+                    relation: None,
                 })
             })
             .collect();

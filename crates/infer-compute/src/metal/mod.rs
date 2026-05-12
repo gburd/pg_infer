@@ -292,10 +292,10 @@ impl MetalBackend {
 
     /// Access the KV cache for hybrid decode (GPU attention + CPU FFN).
     /// Creates the cache on first access.
-    pub fn kv_cache_mut(&self, num_layers: usize, num_kv_heads: usize, head_dim: usize) -> std::sync::MutexGuard<'_, Option<ops::kv_cache::KVCache>> {
+    pub fn kv_cache_mut(&self, num_layers: usize, max_seq_len: usize, num_kv_heads: usize, head_dim: usize) -> std::sync::MutexGuard<'_, Option<ops::kv_cache::KVCache>> {
         let mut guard = self.kv_cache.lock().unwrap();
         if guard.is_none() {
-            *guard = Some(self.create_kv_cache(num_layers, 4096, num_kv_heads, head_dim));
+            *guard = Some(self.create_kv_cache(num_layers, max_seq_len, num_kv_heads, head_dim));
         }
         guard
     }

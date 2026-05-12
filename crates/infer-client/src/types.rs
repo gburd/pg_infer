@@ -103,6 +103,22 @@ pub struct RelationSummary {
     pub examples: Vec<String>,
 }
 
+// ── /v1/rank ──────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct RankResponse {
+    #[serde(default)]
+    pub results: Vec<RankResult>,
+    #[serde(default)]
+    pub latency_ms: f64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct RankResult {
+    pub index: usize,
+    pub score: f64,
+}
+
 // ── /v1/infer ─────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Deserialize)]
@@ -117,4 +133,32 @@ pub struct InferResponse {
 pub struct InferPrediction {
     pub token: String,
     pub probability: f64,
+}
+
+// ── /v1/warmup ───────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct WarmupResponse {
+    #[serde(default)]
+    pub warmed: usize,
+    #[serde(default)]
+    pub already_cached: usize,
+    #[serde(default)]
+    pub latency_ms: f64,
+}
+
+// ── /v1/cache/stats ──────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CacheStatsResponse {
+    #[serde(default)]
+    pub entries: usize,
+    #[serde(default)]
+    pub hit_count: u64,
+    #[serde(default)]
+    pub miss_count: u64,
+    #[serde(default)]
+    pub eviction_count: u64,
+    #[serde(default)]
+    pub memory_bytes: usize,
 }

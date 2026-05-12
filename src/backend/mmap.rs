@@ -31,6 +31,10 @@ impl MmapBackend {
 }
 
 impl Backend for MmapBackend {
+    fn approx_resident_bytes(&self) -> usize {
+        self.handle.approx_resident_bytes()
+    }
+
     fn is_local(&self) -> bool {
         true
     }

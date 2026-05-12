@@ -1,6 +1,8 @@
 //! Ternary GEMV: packed_ternary[N, hidden/4 bytes] × x[hidden] → scores[N].
 //!
-//! Scalar reference implementation for BitNet b1.58 gate-KNN scoring.
+//! Dispatches to a C kernel (auto-vectorized with AVX2/NEON) for production
+//! use, with a Rust scalar reference implementation for testing.
+//!
 //! Each byte encodes 4 ternary values using I2_S packing (2 bits each):
 //!   `0b00` → 0 (skip), `0b01` → +1 (add), `0b10` → -1 (subtract)
 //!
@@ -13,7 +15,17 @@
 //! - 8× smaller than f32 storage (2 bits vs 32 bits per weight)
 //! - ~10× faster than f32 BLAS for large feature counts (memory-bound)
 
-/// Ternary GEMV dispatch: scores[N] = packed[N, hidden/4] × x[hidden].
+extern "C" {
+    fn ternary_matvec_c(
+        packed: *const u8,
+        x: *const f32,
+        scores: *mut f32,
+        num_rows: usize,
+        hidden: usize,
+    );
+}
+
+/// Ternary GEMV dispatch via C kernel (auto-vectorized AVX2/NEON).
 ///
 /// # Arguments
 /// - `packed`: contiguous ternary-packed bytes, `num_rows * (hidden / 4)` long
@@ -24,7 +36,30 @@
 /// # Returns
 /// Score vector of length `num_rows`.
 pub fn dispatch(packed: &[u8], x: &[f32], num_rows: usize, hidden: usize) -> Vec<f32> {
-    debug_assert!(hidden % 4 == 0, "hidden must be multiple of 4");
+    debug_assert!(hidden.is_multiple_of(4), "hidden must be multiple of 4");
+    let bytes_per_row = hidden / 4;
+    debug_assert_eq!(packed.len(), num_rows * bytes_per_row,
+        "packed length mismatch: expected {}, got {}",
+        num_rows * bytes_per_row, packed.len());
+    debug_assert!(x.len() >= hidden, "x length must be >= hidden");
+
+    let mut scores = vec![0.0f32; num_rows];
+    unsafe {
+        ternary_matvec_c(
+            packed.as_ptr(),
+            x.as_ptr(),
+            scores.as_mut_ptr(),
+            num_rows,
+            hidden,
+        );
+    }
+    scores
+}
+
+/// Scalar reference implementation (pure Rust, no FFI).
+/// Used for testing to verify the C kernel produces identical results.
+pub fn dispatch_scalar(packed: &[u8], x: &[f32], num_rows: usize, hidden: usize) -> Vec<f32> {
+    debug_assert!(hidden.is_multiple_of(4), "hidden must be multiple of 4");
     let bytes_per_row = hidden / 4;
     debug_assert_eq!(packed.len(), num_rows * bytes_per_row,
         "packed length mismatch: expected {}, got {}",
@@ -166,5 +201,39 @@ mod tests {
         // Expected: 0 + 0 + 3.0 + 0 + 0 - 6.0 + 0 + 0 = -3.0
         let scores = dispatch(&packed, &x, 1, 8);
         assert!((scores[0] - (-3.0)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn scalar_vs_c_kernel() {
+        // Verify both implementations produce identical results
+        let hidden = 64;
+        let num_rows = 16;
+        // Build a pattern with mixed values
+        let mut weights = vec![0i8; num_rows * hidden];
+        for r in 0..num_rows {
+            for d in 0..hidden {
+                weights[r * hidden + d] = match (r + d) % 5 {
+                    0 => 1,
+                    1 => -1,
+                    2 => 0,
+                    3 => 1,
+                    _ => -1,
+                };
+            }
+        }
+        let packed = pack_ternary(&weights);
+        let x: Vec<f32> = (0..hidden).map(|i| (i as f32) * 0.1 - 3.0).collect();
+
+        let c_scores = dispatch(&packed, &x, num_rows, hidden);
+        let scalar_scores = dispatch_scalar(&packed, &x, num_rows, hidden);
+
+        assert_eq!(c_scores.len(), scalar_scores.len());
+        for (i, (c, s)) in c_scores.iter().zip(scalar_scores.iter()).enumerate() {
+            assert!(
+                (c - s).abs() < 1e-5,
+                "row {i}: C kernel={c}, scalar={s}, diff={}",
+                (c - s).abs()
+            );
+        }
     }
 }

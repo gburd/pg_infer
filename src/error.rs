@@ -38,6 +38,9 @@ pub enum PgInferError {
     #[allow(dead_code)] // Constructed by RemoteBackend in Phase C2.
     Remote(String),
 
+    #[error("configuration error: {0}")]
+    Config(String),
+
     #[error("{0}")]
     Internal(String),
 

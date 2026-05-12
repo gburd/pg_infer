@@ -26,3 +26,29 @@ fn implies(
 
     Ok(result)
 }
+
+/// Operator function for `@>` (semantic implication).
+///
+/// `'France' @> 'Paris'` returns true if the model's knowledge supports
+/// a directional relationship from left to right.  Uses the default model.
+#[pg_extern]
+fn infer_implies_op(left: &str, right: &str) -> Result<bool, Box<dyn std::error::Error>> {
+    let model_name = registry::resolve_model_name(None)?;
+    let result = registry::with_backend(&model_name, |backend| {
+        backend.implies(left, right)
+    })?;
+    Ok(result)
+}
+
+// Register the @> operator for semantic implication.
+extension_sql!(
+    r#"
+CREATE OPERATOR @> (
+    LEFTARG  = text,
+    RIGHTARG = text,
+    FUNCTION = infer_implies_op
+);
+"#,
+    name = "infer_implies_operator",
+    requires = [infer_implies_op],
+);

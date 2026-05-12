@@ -5,6 +5,7 @@ fn main() {
     println!("cargo:rerun-if-changed=csrc");
     println!("cargo:rerun-if-changed=build.rs");
 
+    // Q4 dot product kernel
     let mut build = cc::Build::new();
     build.file("csrc/q4_dot.c");
     build.opt_level(3);
@@ -16,4 +17,17 @@ fn main() {
     build.flag("-mavx2");
 
     build.compile("q4_dot");
+
+    // Ternary dot product kernel (BitNet b1.58)
+    let mut build2 = cc::Build::new();
+    build2.file("csrc/ternary_dot.c");
+    build2.opt_level(3);
+
+    #[cfg(target_arch = "aarch64")]
+    build2.flag("-march=armv8.2-a");
+
+    #[cfg(target_arch = "x86_64")]
+    build2.flag("-mavx2");
+
+    build2.compile("ternary_dot");
 }

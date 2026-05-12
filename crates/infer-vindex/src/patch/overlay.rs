@@ -453,6 +453,7 @@ mod gate_override_tests {
             top_token_id: 0,
             c_score: 0.9,
             top_k: vec![TopKEntry { token: token.into(), token_id: 0, logit: 0.9 }],
+            relation: None,
         }
     }
 

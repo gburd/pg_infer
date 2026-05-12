@@ -10,6 +10,9 @@ pub struct FeatureMeta {
     pub top_token_id: u32,
     pub c_score: f32,
     pub top_k: Vec<TopKEntry>,
+    /// Relation cluster label (e.g., "location", "part_of", "causes").
+    /// Populated from `feature_clusters.jsonl` when available.
+    pub relation: Option<String>,
 }
 
 /// A single step in the walk trace — one feature that fired at one layer.
@@ -231,7 +234,7 @@ impl DownMetaMmap {
         let top_token = self.tokenizer.decode(&[top_token_id], true)
             .unwrap_or_else(|_| format!("T{top_token_id}")).trim().to_string();
 
-        Some(FeatureMeta { top_token, top_token_id, c_score, top_k })
+        Some(FeatureMeta { top_token, top_token_id, c_score, top_k, relation: None })
     }
 
     pub fn num_features(&self, layer: usize) -> usize {

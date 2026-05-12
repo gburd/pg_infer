@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use pgrx::datum::{DatumWithOid, TimestampWithTimeZone};
 use pgrx::prelude::*;
 
+use crate::backend::Backend;
 use crate::error::PgInferError;
 use crate::gucs;
 use crate::registry;
@@ -218,6 +219,117 @@ fn infer_models() -> Result<
     Ok(TableIterator::new(rows))
 }
 
+/// Register a model that routes through the grid (dynamic server pool).
+///
+/// The grid is contacted at registration time to verify the model is
+/// available.  Subsequent queries are dispatched to discovered servers
+/// with zero resolution latency via a background-refreshed route table.
+///
+/// ```sql
+/// SET infer.grid_url = 'http://router:8080';
+/// SELECT infer_create_model_grid('gemma4b');
+/// SELECT infer_create_model_grid('custom_name', 'actual_model_id');
+/// ```
+#[pg_extern]
+fn infer_create_model_grid(
+    model_name: &str,
+    model_id: default!(Option<&str>, "NULL"),
+) -> Result<String, Box<dyn std::error::Error>> {
+    use crate::backend::grid::GridBackend;
+
+    let grid_url = gucs::grid_url().ok_or_else(|| {
+        PgInferError::Internal(
+            "infer.grid_url must be set before calling infer_create_model_grid()".into(),
+        )
+    })?;
+
+    let effective_model_id = model_id.unwrap_or(model_name);
+
+    // Probe the grid to verify the model is available.
+    let backend = GridBackend::connect(
+        effective_model_id,
+        &grid_url,
+        gucs::grid_poll_interval(),
+        gucs::remote_timeout(),
+    )?;
+
+    let num_layers = backend.num_layers() as i32;
+    let hidden_size = backend.hidden_size() as i32;
+
+    upsert_registry(
+        model_name,
+        "",
+        &grid_url,
+        "grid",
+        num_layers,
+        hidden_size,
+        0,
+        "grid",
+        Some(effective_model_id),
+    )?;
+
+    registry::evict(model_name);
+
+    Ok(format!(
+        "model '{}' registered (grid={}, model_id='{}', {} layers, hidden={})",
+        model_name, grid_url, effective_model_id, num_layers, hidden_size
+    ))
+}
+
+/// Register multiple models from a single remote server in one call.
+///
+/// Returns the count of successfully registered models.
+///
+/// ```sql
+/// SELECT infer_create_models_remote(
+///     ARRAY['model_a', 'model_b'],
+///     'http://localhost:8080'
+/// );
+/// ```
+#[pg_extern]
+fn infer_create_models_remote(
+    model_names: Vec<String>,
+    server_url: &str,
+) -> Result<i32, Box<dyn std::error::Error>> {
+    use crate::backend::remote::RemoteBackend;
+
+    // Probe once to get server stats.
+    let backend = RemoteBackend::connect(server_url, gucs::remote_timeout())?;
+    let num_layers = backend.num_layers as i32;
+    let hidden_size = backend.hidden_size as i32;
+
+    let mut count = 0i32;
+    for model_name in &model_names {
+        upsert_registry(
+            model_name,
+            "",
+            server_url,
+            "remote",
+            num_layers,
+            hidden_size,
+            0,
+            "remote",
+            Some(server_url),
+        )?;
+        registry::evict(model_name);
+        count += 1;
+    }
+
+    Ok(count)
+}
+
+/// Detect a colocated larql-server by probing well-known Unix socket paths.
+///
+/// Returns the detected socket URL (e.g. `uds:///tmp/larql.sock`) or NULL.
+///
+/// ```sql
+/// SELECT infer_detect_server();
+/// ```
+#[pg_extern]
+fn infer_detect_server() -> Option<String> {
+    crate::backend::remote::detect_local_socket()
+}
+
 // ---------------------------------------------------------------------------
 // Source resolution
 // ---------------------------------------------------------------------------
@@ -243,18 +355,25 @@ fn resolve_data_directory() -> PathBuf {
 /// Local paths are restricted to be under `infer.data_directory` to prevent
 /// arbitrary filesystem reads.
 fn resolve_source(source: &str) -> Result<String, PgInferError> {
-    // hf:// URI — pre-built vindex download, not yet wired.
+    // hf:// URI — pre-built vindex download.
     if source.starts_with("hf://") {
-        return Err(PgInferError::Internal(
-            "HuggingFace vindex download not yet implemented".into(),
-        ));
+        if !crate::gucs::AUTO_DOWNLOAD.get() {
+            return Err(PgInferError::Config(
+                "infer.auto_download is disabled; cannot download from HuggingFace".into(),
+            ));
+        }
+        let local_path = infer_vindex::format::huggingface::resolve_hf_vindex(source)
+            .map_err(|e| PgInferError::Internal(format!("HuggingFace download failed: {e}")))?;
+        return Ok(local_path.to_string_lossy().to_string());
     }
 
     // HuggingFace model ID (contains '/' but is not a local path).
     if source.contains('/') && !Path::new(source).exists() {
-        return Err(PgInferError::Internal(
-            "HuggingFace model download + extraction not yet implemented".into(),
-        ));
+        return Err(PgInferError::Config(format!(
+            "Model ID '{}' requires extraction to vindex format. \
+             Use 'larql extract {}' CLI or provide a pre-built vindex via 'hf://<repo>'.",
+            source, source
+        )));
     }
 
     let data_dir = resolve_data_directory();

@@ -135,8 +135,11 @@ fn run_attention_block_core(
         // omitted from safetensors — both signals align. Prefer the arch
         // assertion so we honour intent even if a redundant v_proj slipped
         // into a vindex rebuild.
-        let v_from_k = arch.v_shares_k(layer)
-            || !weights.tensors.contains_key(&arch.attn_v_key(layer));
+        let v_from_k = arch.v_shares_k(layer);
+        debug_assert!(
+            v_from_k || weights.tensors.contains_key(&arch.attn_v_key(layer)),
+            "layer {layer}: arch says v != k but v_proj tensor is missing"
+        );
 
         let mut k_full = dot_proj(&h_norm, w_k);
         if let Some(bias) = arch.attn_k_bias_key(layer).and_then(|k| weights.vectors.get(&k)) {

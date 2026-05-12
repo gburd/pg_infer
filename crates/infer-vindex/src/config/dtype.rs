@@ -117,7 +117,7 @@ pub fn bytes_per_float(dtype: StorageDtype) -> usize {
 /// Input length must be a multiple of 4. Values outside {-1, 0, +1} are
 /// clamped (positive → +1, negative → -1).
 pub fn encode_ternary(data: &[i8]) -> Vec<u8> {
-    debug_assert!(data.len() % 4 == 0, "ternary encode requires len % 4 == 0");
+    debug_assert!(data.len().is_multiple_of(4), "ternary encode requires len % 4 == 0");
     let num_bytes = data.len() / 4;
     let mut packed = vec![0u8; num_bytes];
 
@@ -155,7 +155,7 @@ pub fn decode_ternary(data: &[u8], count: usize) -> Vec<i8> {
 /// Number of packed bytes needed for one feature row of `hidden_size` ternary values.
 pub fn ternary_bytes_per_row(hidden_size: usize) -> usize {
     // 4 values per byte, hidden_size must be multiple of 4
-    debug_assert!(hidden_size % 4 == 0, "hidden_size must be multiple of 4 for ternary packing");
+    debug_assert!(hidden_size.is_multiple_of(4), "hidden_size must be multiple of 4 for ternary packing");
     hidden_size / 4
 }
 

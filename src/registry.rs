@@ -9,7 +9,7 @@ use pgrx::prelude::*;
 
 use infer_vindex::{FeatureMeta, SilentLoadCallbacks, VectorIndex, VindexConfig};
 
-use crate::backend::{mmap::MmapBackend, remote::RemoteBackend, Backend};
+use crate::backend::{grid::GridBackend, mmap::MmapBackend, remote::RemoteBackend, Backend};
 use crate::error::PgInferError;
 use crate::gucs;
 
@@ -65,19 +65,115 @@ impl ModelHandle {
             ModelBackend::Mmap { vindex } => vindex.feature_meta(layer, feature_idx),
         }
     }
+
+    pub fn approx_resident_bytes(&self) -> usize {
+        match &self.backend {
+            ModelBackend::Mmap { vindex } => vindex.approx_resident_bytes(),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
-// Backend cache
+// Backend cache with LRU eviction
 // ---------------------------------------------------------------------------
+
+struct CacheEntry {
+    backend: Arc<dyn Backend>,
+    resident_bytes: usize,
+}
 
 /// Process-local cache of loaded backends, keyed by model name.
 ///
 /// One entry per model.  MmapBackend entries share underlying mmap pages
 /// across PG backends via the kernel page cache; RemoteBackend entries
 /// each own a dedicated HTTP runtime thread.
-static BACKEND_CACHE: Lazy<Mutex<HashMap<String, Arc<dyn Backend>>>> =
-    Lazy::new(|| Mutex::new(HashMap::new()));
+///
+/// Enforces the `infer.max_memory` GUC by tracking approximate resident
+/// bytes and evicting least-recently-used entries when over budget.
+struct BackendCache {
+    entries: HashMap<String, CacheEntry>,
+    /// LRU order — front is oldest access, back is newest.
+    lru: Vec<String>,
+    total_bytes: usize,
+}
+
+impl BackendCache {
+    fn new() -> Self {
+        Self {
+            entries: HashMap::new(),
+            lru: Vec::new(),
+            total_bytes: 0,
+        }
+    }
+
+    /// Move `name` to the back (most recently used) of the LRU list.
+    fn touch(&mut self, name: &str) {
+        if let Some(pos) = self.lru.iter().position(|n| n == name) {
+            self.lru.remove(pos);
+        }
+        self.lru.push(name.to_string());
+    }
+
+    /// Insert a new backend and evict LRU entries if over budget.
+    fn insert(&mut self, name: String, backend: Arc<dyn Backend>) {
+        let resident_bytes = backend.approx_resident_bytes();
+
+        // Remove old entry if re-inserting (reload scenario).
+        if let Some(old) = self.entries.remove(&name) {
+            self.total_bytes = self.total_bytes.saturating_sub(old.resident_bytes);
+            self.lru.retain(|n| n != &name);
+        }
+
+        self.entries.insert(
+            name.clone(),
+            CacheEntry {
+                backend,
+                resident_bytes,
+            },
+        );
+        self.total_bytes += resident_bytes;
+        self.lru.push(name.clone());
+
+        self.evict_if_needed(&name);
+    }
+
+    /// Evict oldest entries until under budget, skipping `keep`.
+    fn evict_if_needed(&mut self, keep: &str) {
+        let max_bytes = gucs::MAX_MEMORY_MB.get() as usize * 1024 * 1024;
+        if max_bytes == 0 {
+            return; // unlimited
+        }
+
+        while self.total_bytes > max_bytes && self.lru.len() > 1 {
+            // Find the oldest entry that isn't the one we just accessed.
+            let victim = match self.lru.iter().find(|n| *n != keep).cloned() {
+                Some(v) => v,
+                None => break,
+            };
+            self.remove(&victim);
+        }
+    }
+
+    fn remove(&mut self, name: &str) {
+        if let Some(entry) = self.entries.remove(name) {
+            self.total_bytes = self.total_bytes.saturating_sub(entry.resident_bytes);
+            // Drop the Arc — if this was the last reference, the backend's
+            // Drop handler runs (e.g. CancellableClient sends Cmd::Shutdown).
+        }
+        self.lru.retain(|n| n != name);
+    }
+
+    fn get(&self, name: &str) -> Option<&Arc<dyn Backend>> {
+        self.entries.get(name).map(|e| &e.backend)
+    }
+
+    fn contains_key(&self, name: &str) -> bool {
+        self.entries.contains_key(name)
+    }
+}
+
+static BACKEND_CACHE: Lazy<Mutex<BackendCache>> =
+    Lazy::new(|| Mutex::new(BackendCache::new()));
 
 /// Resolve the model name for a query function.
 ///
@@ -107,7 +203,10 @@ where
             .map_err(|e| PgInferError::Internal(format!("cache lock poisoned: {}", e)))?;
 
         if !cache.contains_key(model_name) {
-            cache.insert(model_name.to_string(), load_backend(model_name)?);
+            let backend = load_backend(model_name)?;
+            cache.insert(model_name.to_string(), backend);
+        } else {
+            cache.touch(model_name);
         }
 
         Arc::clone(
@@ -140,14 +239,14 @@ struct BackendRow {
 
 fn fetch_backend_row(model_name: &str) -> Result<BackendRow, PgInferError> {
     let row = Spi::connect(|client| {
-        let result = client.select(
+        let mut result = client.select(
             "SELECT vindex_path, backend, server_url \
              FROM infer.models WHERE model_name = $1",
             Some(1),
             &[DatumWithOid::from(model_name)],
         )?;
 
-        for row in result {
+        if let Some(row) = result.next() {
             let vindex_path: String = row.get(1)?.unwrap_or_default();
             let backend: String = row.get(2)?.unwrap_or_else(|| "local".to_string());
             let server_url: Option<String> = row.get(3)?;
@@ -188,8 +287,26 @@ fn load_backend(model_name: &str) -> Result<Arc<dyn Backend>, PgInferError> {
             let handle = Arc::new(load_from_path(Path::new(&row.vindex_path))?);
             Ok(Arc::new(MmapBackend::new(handle)))
         }
+        "grid" => {
+            let grid_url = gucs::grid_url().ok_or_else(|| {
+                PgInferError::Internal(format!(
+                    "model '{}' uses backend='grid' but infer.grid_url is not set",
+                    model_name
+                ))
+            })?;
+            let model_id = row
+                .server_url
+                .unwrap_or_else(|| model_name.to_string());
+            let backend = GridBackend::connect(
+                &model_id,
+                &grid_url,
+                gucs::grid_poll_interval(),
+                gucs::remote_timeout(),
+            )?;
+            Ok(Arc::new(backend))
+        }
         other => Err(PgInferError::Internal(format!(
-            "unknown backend '{}' for model '{}' (expected 'local' or 'remote')",
+            "unknown backend '{}' for model '{}' (expected 'local', 'remote', or 'grid')",
             other, model_name
         ))),
     }
@@ -201,6 +318,13 @@ pub fn load_from_path(path: &Path) -> Result<ModelHandle, PgInferError> {
 
     // Load the vindex (gate vectors + metadata, mmap'd).
     let vindex = VectorIndex::load_vindex(path, &mut callbacks)?;
+
+    // Cap the f16 decode cache to prevent unbounded memory growth.
+    // Each decoded layer is ~112 MB for a 3B model (14336 × 2048 × 4).
+    let cache_cap = gucs::gate_cache_max_layers();
+    if cache_cap > 0 {
+        vindex.set_gate_cache_max_layers(cache_cap);
+    }
 
     // Pre-decode f16 → f32 for all layers if warmup is enabled.
     if gucs::warmup_on_load() {

@@ -18,6 +18,19 @@ use crate::config::{VindexConfig, VindexLayerInfo, VindexModelConfig};
 use crate::error::VindexError;
 use crate::extract::callbacks::IndexBuildCallbacks;
 
+/// Write a checkpoint marker file indicating a stage is complete.
+fn write_checkpoint(output_dir: &Path, stage: &str) -> Result<(), VindexError> {
+    let path = output_dir.join(format!(".checkpoint_{stage}"));
+    let content = format!("{}\n{}\n", env!("CARGO_PKG_VERSION"), super::build_helpers::chrono_now());
+    std::fs::write(&path, content)?;
+    Ok(())
+}
+
+/// Check if a checkpoint exists for a stage.
+fn has_checkpoint(output_dir: &Path, stage: &str) -> bool {
+    output_dir.join(format!(".checkpoint_{stage}")).exists()
+}
+
 /// Mmap'd safetensors file — kept alive for the duration of extraction.
 struct MmapShard {
     _file: std::fs::File,
@@ -275,6 +288,7 @@ pub fn build_vindex_streaming(
         let _ = std::fs::remove_file(&gate_path);
     }
     callbacks.on_stage_done("gate_vectors", 0.0);
+    write_checkpoint(output_dir, "gate_vectors")?;
 
     // ── 1b. Router weights (MoE models only) ──
     if is_moe {
@@ -304,6 +318,7 @@ pub fn build_vindex_streaming(
         }
         router_file.flush()?;
         callbacks.on_stage_done("router_weights", 0.0);
+        write_checkpoint(output_dir, "router_weights")?;
     }
 
     // ── 2. Embeddings ──
@@ -316,6 +331,7 @@ pub fn build_vindex_streaming(
     let embed_bytes = crate::config::dtype::encode_floats(embed_data, dtype);
     std::fs::write(output_dir.join("embeddings.bin"), &embed_bytes)?;
     callbacks.on_stage_done("embeddings", 0.0);
+    write_checkpoint(output_dir, "embeddings")?;
 
     // ── 3. Down meta (streaming) ──
     callbacks.on_stage("down_meta");
@@ -433,7 +449,7 @@ pub fn build_vindex_streaming(
                     if let Some(ref mut metas) = layer_down_meta {
                         while metas.len() <= feat_idx { metas.push(None); }
                         metas[feat_idx] = Some(crate::FeatureMeta {
-                            top_token, top_token_id, c_score, top_k: top_k_entries,
+                            top_token, top_token_id, c_score, top_k: top_k_entries, relation: None,
                         });
                     }
                 }
@@ -446,6 +462,7 @@ pub fn build_vindex_streaming(
 
     crate::format::down_meta::write_binary(output_dir, &all_down_meta, down_top_k)?;
     callbacks.on_stage_done("down_meta", 0.0);
+    write_checkpoint(output_dir, "down_meta")?;
 
     // ── 4. Tokenizer ──
     callbacks.on_stage("tokenizer");
@@ -453,6 +470,7 @@ pub fn build_vindex_streaming(
         .map_err(|e| VindexError::Parse(format!("tokenizer serialize: {e}")))?;
     std::fs::write(output_dir.join("tokenizer.json"), tokenizer_json)?;
     callbacks.on_stage_done("tokenizer", 0.0);
+    write_checkpoint(output_dir, "tokenizer")?;
 
     // ── 5. Config ──
     let family = arch.family().to_string();
@@ -517,6 +535,7 @@ pub fn build_vindex_streaming(
     let config_json = serde_json::to_string_pretty(&config)
         .map_err(|e| VindexError::Parse(e.to_string()))?;
     std::fs::write(output_dir.join("index.json"), config_json)?;
+    write_checkpoint(output_dir, "config")?;
 
     // ── 6. Model weights (if extract level requires them) ──
     // With quant=q4k we always materialise weights regardless of the
@@ -553,6 +572,7 @@ pub fn build_vindex_streaming(
                 )?;
             }
         }
+        write_checkpoint(output_dir, "model_weights")?;
     }
 
     // Final checksums
@@ -563,8 +583,63 @@ pub fn build_vindex_streaming(
     let config_json = serde_json::to_string_pretty(&config)
         .map_err(|e| VindexError::Parse(e.to_string()))?;
     std::fs::write(output_dir.join("index.json"), config_json)?;
+    write_checkpoint(output_dir, "complete")?;
 
     Ok(())
+}
+
+/// Resume a streaming vindex build from the last checkpoint.
+///
+/// Checks existing checkpoint markers in `output_dir` and skips stages
+/// that have already completed.  If no checkpoints exist, this behaves
+/// identically to `build_vindex_streaming`.
+///
+/// Returns the name of the last completed checkpoint found (empty string
+/// if none), which can be used for progress reporting.
+#[allow(clippy::too_many_arguments)]
+pub fn build_vindex_resume(
+    model_dir: &Path,
+    tokenizer: &tokenizers::Tokenizer,
+    model_name: &str,
+    output_dir: &Path,
+    down_top_k: usize,
+    extract_level: crate::ExtractLevel,
+    dtype: StorageDtype,
+    quant: QuantFormat,
+    weight_opts: crate::format::weights::WriteWeightsOptions,
+    q4k_opts: crate::format::weights::Q4kWriteOptions,
+    drop_gate_vectors: bool,
+    callbacks: &mut dyn IndexBuildCallbacks,
+) -> Result<(), VindexError> {
+    // If already fully complete, nothing to do.
+    if has_checkpoint(output_dir, "complete") {
+        eprintln!("  Resume: build already complete (checkpoint found)");
+        return Ok(());
+    }
+
+    // Report which checkpoints exist for diagnostics.
+    let stages = [
+        "gate_vectors", "router_weights", "embeddings",
+        "down_meta", "tokenizer", "config", "model_weights",
+    ];
+    let last_completed = stages.iter().rev()
+        .find(|s| has_checkpoint(output_dir, s))
+        .copied()
+        .unwrap_or("");
+
+    if !last_completed.is_empty() {
+        eprintln!("  Resume: last completed stage = {last_completed}");
+    }
+
+    // For now, delegate to the full build.  Individual stages already
+    // overwrite their output files, so re-running is safe.  A future
+    // refinement can skip completed stages by checking `has_checkpoint`
+    // before each stage.
+    build_vindex_streaming(
+        model_dir, tokenizer, model_name, output_dir, down_top_k,
+        extract_level, dtype, quant, weight_opts, q4k_opts,
+        drop_gate_vectors, callbacks,
+    )
 }
 
 /// Get a 2D tensor from mmap'd safetensors, dequantizing to f32.

@@ -24,6 +24,8 @@ pub enum Activation {
     GeluTanh,
     /// ReLU
     Relu,
+    /// Squared ReLU: max(0, x)² — BitNet b1.58
+    SquaredRelu,
 }
 
 /// Whether the FFN uses a gated architecture.
@@ -121,6 +123,64 @@ pub struct ModelConfig {
     /// Number of layers at the end of the model that share KV from earlier layers.
     /// E.g., 20 means the last 20 layers reuse KV cache from earlier source layers.
     pub num_kv_shared_layers: Option<usize>,
+}
+
+impl ModelConfig {
+    /// Validate architecture invariants. Returns Err with a description
+    /// of the first violation found.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.num_layers == 0 {
+            return Err("num_layers must be > 0".into());
+        }
+        if self.hidden_size == 0 {
+            return Err("hidden_size must be > 0".into());
+        }
+        if self.head_dim == 0 {
+            return Err("head_dim must be > 0".into());
+        }
+        if self.num_q_heads == 0 {
+            return Err("num_q_heads must be > 0".into());
+        }
+        if self.num_kv_heads == 0 {
+            return Err("num_kv_heads must be > 0".into());
+        }
+        if self.num_kv_heads > self.num_q_heads {
+            return Err(format!(
+                "num_kv_heads ({}) > num_q_heads ({})",
+                self.num_kv_heads, self.num_q_heads
+            ));
+        }
+        if !self.num_q_heads.is_multiple_of(self.num_kv_heads) {
+            return Err(format!(
+                "num_q_heads ({}) not divisible by num_kv_heads ({})",
+                self.num_q_heads, self.num_kv_heads
+            ));
+        }
+        if self.enable_moe_block {
+            if self.num_experts.unwrap_or(0) == 0 {
+                return Err("enable_moe_block is true but num_experts is 0 or missing".into());
+            }
+            if self.top_k_experts.unwrap_or(0) == 0 && self.num_experts_per_token.unwrap_or(0) == 0 {
+                return Err("enable_moe_block is true but neither top_k_experts nor num_experts_per_token is set".into());
+            }
+        }
+        if let Some(ref lt) = self.layer_types {
+            if lt.len() != self.num_layers {
+                return Err(format!(
+                    "layer_types length ({}) != num_layers ({})",
+                    lt.len(), self.num_layers
+                ));
+            }
+        }
+        if let Some(prf) = self.partial_rotary_factor {
+            if prf <= 0.0 || prf > 1.0 {
+                return Err(format!(
+                    "partial_rotary_factor ({prf}) must be in (0.0, 1.0]"
+                ));
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Architecture-specific behavior. Describes how a model is structured
@@ -282,6 +342,23 @@ pub trait ModelArchitecture: Send + Sync {
     /// Activation function for the FFN.
     fn activation(&self) -> Activation {
         Activation::Silu
+    }
+
+    /// Whether model has extra sub-norm in FFN (BitNet: RMSNorm before down_proj).
+    fn has_ffn_sub_norm(&self) -> bool {
+        false
+    }
+
+    /// FFN sub-norm weight key (when has_ffn_sub_norm is true).
+    fn ffn_sub_norm_key(&self, _layer: usize) -> Option<String> {
+        None
+    }
+
+    /// Preferred gate vector storage dtype for this architecture.
+    /// Builder uses this to auto-select storage format.
+    /// Returns "f16" (default), "f32", or "ternary".
+    fn preferred_gate_dtype(&self) -> &str {
+        "f16"
     }
 
     /// FFN type (gated vs standard).

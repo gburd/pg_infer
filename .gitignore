@@ -19,3 +19,9 @@ vindexes/
 
 # Memelord persistent memory (local)
 .memelord/
+
+# Editor/OS artifacts
+*.swp
+.DS_Store
+.idea/
+.vscode/

@@ -80,6 +80,14 @@ pub static SIMILARITY_MAX_LAYERS: GucSetting<i32> = GucSetting::<i32>::new(0);
 /// Provides 4-8x speedup on multi-core systems but increases CPU usage.
 pub static PARALLEL_SIMILARITY: GucSetting<bool> = GucSetting::<bool>::new(false);
 
+/// Maximum decoded gate layers kept in memory per model per backend.
+///
+/// F16 gate vectors are decoded to f32 on first use; this caps how many
+/// decoded layers remain resident.  0 = unlimited (dangerous for large
+/// models).  For Qwen 2.5 3B each decoded layer is ~112 MB, so 4 layers
+/// = ~450 MB per backend, 12 layers = ~1.3 GB.  Default: 4.
+pub static GATE_CACHE_MAX_LAYERS: GucSetting<i32> = GucSetting::<i32>::new(4);
+
 // ---------------------------------------------------------------------------
 // Remote backend configuration
 // ---------------------------------------------------------------------------
@@ -101,6 +109,19 @@ pub static DEFAULT_SERVER_URL: GucSetting<Option<CString>> =
 /// Per-request timeout for remote backend calls, in milliseconds.
 /// Bounds the worst-case stall if a server wedges.
 pub static REMOTE_TIMEOUT_MS: GucSetting<i32> = GucSetting::<i32>::new(30_000);
+
+// ---------------------------------------------------------------------------
+// Grid backend configuration
+// ---------------------------------------------------------------------------
+
+/// Grid discovery URL. Points to a larql-router or a seed server
+/// that exposes `/v1/models` listing available models and their servers.
+pub static GRID_URL: GucSetting<Option<CString>> =
+    GucSetting::<Option<CString>>::new(None);
+
+/// How often (seconds) to poll the grid for topology changes.
+/// Default: 30 seconds.
+pub static GRID_POLL_INTERVAL_SECS: GucSetting<i32> = GucSetting::<i32>::new(30);
 
 /// Register all GUC parameters.
 ///
@@ -236,6 +257,17 @@ pub unsafe fn init() {
         GucFlags::default(),
     );
 
+    GucRegistry::define_int_guc(
+        c"infer.gate_cache_max_layers",
+        c"Maximum decoded gate layers kept in memory per model.",
+        c"Caps f16-to-f32 decode cache. Each layer ~112 MB for 3B models. 0 = unlimited. Default: 4.",
+        &GATE_CACHE_MAX_LAYERS,
+        0,
+        100,
+        GucContext::Userset,
+        GucFlags::default(),
+    );
+
     GucRegistry::define_string_guc(
         c"infer.default_backend",
         c"Default backend: 'local' (mmap) or 'remote' (larql-server).",
@@ -262,6 +294,26 @@ pub unsafe fn init() {
         100,
         3_600_000,
         GucContext::Userset,
+        GucFlags::default(),
+    );
+
+    GucRegistry::define_string_guc(
+        c"infer.grid_url",
+        c"Grid discovery URL for dynamic model routing.",
+        c"Points to a larql-router or seed server exposing /v1/models. Default: unset.",
+        &GRID_URL,
+        GucContext::Suset,
+        GucFlags::default(),
+    );
+
+    GucRegistry::define_int_guc(
+        c"infer.grid_poll_interval",
+        c"Grid topology poll interval (seconds).",
+        c"How often to refresh the grid's route table. Default: 30.",
+        &GRID_POLL_INTERVAL_SECS,
+        5,
+        3600,
+        GucContext::Suset,
         GucFlags::default(),
     );
 }
@@ -326,6 +378,11 @@ pub fn parallel_similarity() -> bool {
     PARALLEL_SIMILARITY.get()
 }
 
+/// Return the gate cache max layers (0 = unlimited).
+pub fn gate_cache_max_layers() -> usize {
+    GATE_CACHE_MAX_LAYERS.get() as usize
+}
+
 // ---------------------------------------------------------------------------
 // Remote backend accessors
 // ---------------------------------------------------------------------------
@@ -339,12 +396,30 @@ pub fn default_backend() -> String {
         .unwrap_or_else(|| "local".to_string())
 }
 
-/// Return the configured default server URL, or `None`.
+/// Return the configured default server URL, or auto-detect a colocated
+/// larql-server via well-known Unix socket paths.
 pub fn default_server_url() -> Option<String> {
-    DEFAULT_SERVER_URL.get().map(|s| s.to_string_lossy().into_owned())
+    DEFAULT_SERVER_URL
+        .get()
+        .map(|s| s.to_string_lossy().into_owned())
+        .or_else(crate::backend::remote::detect_local_socket)
 }
 
 /// Remote request timeout as a `Duration`.
 pub fn remote_timeout() -> std::time::Duration {
     std::time::Duration::from_millis(REMOTE_TIMEOUT_MS.get().max(100) as u64)
+}
+
+// ---------------------------------------------------------------------------
+// Grid backend accessors
+// ---------------------------------------------------------------------------
+
+/// Return the configured grid URL, or `None` if unset.
+pub fn grid_url() -> Option<String> {
+    GRID_URL.get().map(|s| s.to_string_lossy().into_owned())
+}
+
+/// Return the grid poll interval as a `Duration`.
+pub fn grid_poll_interval() -> std::time::Duration {
+    std::time::Duration::from_secs(GRID_POLL_INTERVAL_SECS.get().max(5) as u64)
 }

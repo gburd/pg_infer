@@ -29,9 +29,29 @@ use ndarray::Array1;
 use crate::error::PgInferError;
 
 use super::{
-    Backend, Edge, ExplainedHit, FeatureMetaLite, FeatureRow, FeatureSnapshot, Hit, LayerInfo,
-    Prediction, RelationRow,
+    Backend, CacheStats, Edge, ExplainedHit, FeatureMetaLite, FeatureRow, FeatureSnapshot, Hit,
+    LayerInfo, Prediction, RankedCandidate, RelationRow,
 };
+
+/// Probe for a colocated larql-server on well-known UDS paths.
+/// Returns the first path that exists as a Unix socket.
+pub fn detect_local_socket() -> Option<String> {
+    let candidates: &[&str] = &["/run/larql.sock", "/tmp/larql.sock"];
+
+    let pgdata_sock = std::env::var("PGDATA")
+        .ok()
+        .map(|d| format!("{}/larql.sock", d));
+
+    for path in candidates.iter().copied().chain(pgdata_sock.as_deref()) {
+        if let Ok(m) = std::fs::metadata(path) {
+            use std::os::unix::fs::FileTypeExt;
+            if m.file_type().is_socket() {
+                return Some(format!("uds://{}", path));
+            }
+        }
+    }
+    None
+}
 
 /// A remote model backed by a `larql-server` endpoint.
 pub struct RemoteBackend {
@@ -128,6 +148,44 @@ impl RemoteBackend {
         self.client
             .post_json_with_tick(path, body, &cancel, crate::interrupt::pg_interrupt_tick)
             .map_err(map_err)
+    }
+
+    /// Pre-warm the server's activation cache for the given entities.
+    ///
+    /// Returns (warmed, already_cached).  If the server doesn't support
+    /// `/v1/warmup` (404), returns (0, 0) gracefully.
+    pub fn warmup(&self, entities: &[String]) -> Result<(usize, usize), PgInferError> {
+        let body = serde_json::json!({ "entities": entities });
+        match self.post_json::<infer_client::WarmupResponse>("/v1/warmup", body) {
+            Ok(resp) => Ok((resp.warmed, resp.already_cached)),
+            Err(PgInferError::Remote(ref msg))
+                if msg.contains("404") || msg.contains("Not Found") =>
+            {
+                Ok((0, 0))
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Fetch server-side cache statistics.
+    ///
+    /// Returns `None` if the server doesn't support `/v1/cache/stats` (404).
+    pub fn cache_stats(&self) -> Result<Option<CacheStats>, PgInferError> {
+        match self.get_json::<infer_client::CacheStatsResponse>("/v1/cache/stats") {
+            Ok(resp) => Ok(Some(CacheStats {
+                entries: resp.entries,
+                hit_count: resp.hit_count,
+                miss_count: resp.miss_count,
+                eviction_count: resp.eviction_count,
+                memory_bytes: resp.memory_bytes,
+            })),
+            Err(PgInferError::Remote(ref msg))
+                if msg.contains("404") || msg.contains("Not Found") =>
+            {
+                Ok(None)
+            }
+            Err(e) => Err(e),
+        }
     }
 }
 
@@ -446,11 +504,63 @@ impl Backend for RemoteBackend {
         None
     }
 
+    fn rank(
+        &self,
+        candidates: &[String],
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<RankedCandidate>, PgInferError> {
+        let body = serde_json::json!({
+            "query": query,
+            "candidates": candidates,
+            "top_k": limit,
+        });
+        match self.post_json::<infer_client::RankResponse>("/v1/rank", body) {
+            Ok(resp) => Ok(resp
+                .results
+                .into_iter()
+                .map(|r| RankedCandidate {
+                    index: r.index,
+                    score: r.score,
+                })
+                .collect()),
+            Err(PgInferError::Remote(ref msg))
+                if msg.contains("404") || msg.contains("Not Found") =>
+            {
+                // Server doesn't support /v1/rank yet — fall back to batch walks.
+                let scores = self.similar_to_many(candidates, query)?;
+                let mut ranked: Vec<RankedCandidate> = scores
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, s)| RankedCandidate { index: i, score: s })
+                    .collect();
+                ranked.sort_by(|a, b| {
+                    b.score
+                        .partial_cmp(&a.score)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                });
+                if limit > 0 && ranked.len() > limit {
+                    ranked.truncate(limit);
+                }
+                Ok(ranked)
+            }
+            Err(e) => Err(e),
+        }
+    }
+
     fn embed(&self, _text: &str) -> Result<Array1<f32>, PgInferError> {
         // Could be lit up via `/v1/embed`, but nothing in pg_infer's hot
         // path currently calls it (precompute_query_gates is dead).
         // Revisit when we need client-side vector arithmetic.
         unsupported("embed (not wired yet)")
+    }
+
+    fn warmup(&self, entities: &[String]) -> Result<(usize, usize), PgInferError> {
+        RemoteBackend::warmup(self, entities)
+    }
+
+    fn cache_stats(&self) -> Result<Option<super::CacheStats>, PgInferError> {
+        RemoteBackend::cache_stats(self)
     }
 }
 
