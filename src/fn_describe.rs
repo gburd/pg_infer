@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
-use ndarray::Array1;
 use pgrx::prelude::*;
 
 use crate::error::PgInferError;
+use crate::fn_similar;
 use crate::gucs;
 use crate::helpers;
 use crate::registry;
@@ -65,35 +65,9 @@ pub(crate) fn mmap_describe(
 ) -> Result<Vec<crate::backend::Edge>, PgInferError> {
     let entity_lower = entity.to_lowercase();
 
-    // 1. Tokenize and build query vector.
-    let encoding = handle
-        .tokenizer
-        .encode(entity, false)
-        .map_err(|e| PgInferError::Tokenize(e.to_string()))?;
-    let token_ids: Vec<u32> = encoding.get_ids().to_vec();
-
-    if token_ids.is_empty() {
-        return Err(PgInferError::EmptyPrompt);
-    }
-
-    let hidden = handle.config.hidden_size;
-    let query: Array1<f32> = if token_ids.len() == 1 {
-        handle
-            .embeddings
-            .row(token_ids[0] as usize)
-            .mapv(|v| v * handle.embed_scale)
-    } else {
-        // Average token embeddings for multi-token entities.
-        let mut avg = Array1::<f32>::zeros(hidden);
-        for &tok in &token_ids {
-            avg += &handle
-                .embeddings
-                .row(tok as usize)
-                .mapv(|v| v * handle.embed_scale);
-        }
-        avg /= token_ids.len() as f32;
-        avg
-    };
+    // 1. Build query vector using the shared embedding strategy (mean-pool
+    //    for multi-token, direct lookup for single-token, no special tokens).
+    let query = fn_similar::embed_text(handle, entity)?;
 
     // 2. Walk all layers, collect raw hits first (we need them to compute
     //    the adaptive threshold before filtering).
@@ -182,6 +156,126 @@ pub(crate) fn mmap_describe(
             layer: layer as i32,
         })
         .collect();
+
+    Ok(results)
+}
+
+/// Return all layer activations for an entity without deduplication.
+///
+/// Unlike `describe()` which deduplicates by target token and reports only
+/// the best-scoring layer, this function preserves the per-layer breakdown.
+/// Useful for debugging which layers contribute to a given relationship.
+///
+/// ```sql
+/// SELECT * FROM describe_layers('France');
+/// SELECT * FROM describe_layers('Einstein', model => 'llama3_8b', threshold => 0.01);
+/// ```
+#[pg_extern]
+#[tracing::instrument(skip_all, fields(entity = entity, model = model.unwrap_or("default")))]
+fn describe_layers(
+    entity: &str,
+    model: default!(Option<&str>, "NULL"),
+    threshold: default!(Option<f64>, "NULL"),
+) -> Result<
+    TableIterator<
+        'static,
+        (
+            name!(layer, i32),
+            name!(feature, i32),
+            name!(target, String),
+            name!(gate_score, f64),
+            name!(also, String),
+        ),
+    >,
+    Box<dyn std::error::Error>,
+> {
+    let model_name = registry::resolve_model_name(model)?;
+
+    let rows = registry::with_backend(&model_name, |backend| {
+        let hits = backend.describe_layers(entity, threshold)?;
+        Ok(hits
+            .into_iter()
+            .map(|h| (h.layer, h.feature, h.target, h.gate_score, h.also))
+            .collect::<Vec<_>>())
+    })?;
+
+    Ok(TableIterator::new(rows))
+}
+
+/// Mmap-backed describe_layers: returns all per-layer activations without dedup.
+pub(crate) fn mmap_describe_layers(
+    handle: &registry::ModelHandle,
+    entity: &str,
+    explicit_threshold: Option<f64>,
+) -> Result<Vec<crate::backend::LayerHit>, PgInferError> {
+    let entity_lower = entity.to_lowercase();
+
+    // Build query vector using the shared embedding strategy.
+    let query = fn_similar::embed_text(handle, entity)?;
+
+    // Walk all layers, collect raw hits.
+    let top_k_per_layer = crate::gucs::describe_top_k();
+    let num_layers = handle.config.num_layers;
+
+    let mut all_hits: Vec<(usize, usize, f32)> = Vec::new();
+    for layer in 0..num_layers {
+        let hits = handle.gate_knn(layer, &query, top_k_per_layer);
+        for (feature_idx, gate_score) in hits {
+            all_hits.push((layer, feature_idx, gate_score));
+        }
+    }
+
+    // Determine effective threshold.
+    let gate_threshold = resolve_threshold(explicit_threshold, &all_hits);
+
+    // Filter and format results — no deduplication.
+    let mut results = Vec::new();
+
+    for &(layer, feature_idx, gate_score) in &all_hits {
+        if gate_score < gate_threshold {
+            continue;
+        }
+        let meta = match handle.feature_meta(layer, feature_idx) {
+            Some(m) => m,
+            None => continue,
+        };
+
+        let tok = &meta.top_token;
+
+        // Skip non-content tokens and self-references.
+        if !helpers::is_content_token(tok) {
+            continue;
+        }
+        if tok.to_lowercase() == entity_lower {
+            continue;
+        }
+
+        // Build secondary tokens string.
+        let also: String = meta
+            .top_k
+            .iter()
+            .filter(|e| {
+                e.logit > 0.0
+                    && e.token.to_lowercase() != tok.to_lowercase()
+                    && e.token.to_lowercase() != entity_lower
+                    && helpers::is_readable_token(&e.token)
+            })
+            .take(3)
+            .map(|e| e.token.clone())
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        results.push(crate::backend::LayerHit {
+            layer: layer as i32,
+            feature: feature_idx as i32,
+            target: tok.clone(),
+            gate_score: gate_score as f64,
+            also,
+        });
+    }
+
+    // Sort by gate score descending.
+    results.sort_by(|a, b| b.gate_score.partial_cmp(&a.gate_score).unwrap_or(std::cmp::Ordering::Equal));
 
     Ok(results)
 }

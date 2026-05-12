@@ -161,6 +161,16 @@ impl BackendCache {
             };
             self.remove(&victim);
         }
+
+        // Warn if still over budget (single model exceeds limit).
+        if self.total_bytes > max_bytes {
+            tracing::warn!(
+                model = %keep,
+                budget_mb = max_bytes / (1024 * 1024),
+                actual_mb = self.total_bytes / (1024 * 1024),
+                "model exceeds infer.max_memory budget; consider increasing the limit"
+            );
+        }
     }
 
     fn remove(&mut self, name: &str) {

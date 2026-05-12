@@ -33,7 +33,14 @@ pub unsafe extern "C-unwind" fn infer_amcostestimate(
     index_pages: *mut f64,
 ) {
     let index_info = (*path).indexinfo;
-    let tuples = (*index_info).tuples;
+    // If reltuples is 0 or negative (never ANALYZE'd), fall back to a
+    // pessimistic estimate to avoid accidentally choosing an expensive
+    // AM scan for large unanalyzed tables.
+    let tuples = if (*index_info).tuples > 0.0 {
+        (*index_info).tuples
+    } else {
+        10_000.0
+    };
 
     // Read model name from the index metapage to determine cost params.
     let cost_params = match read_cost_params(index_info) {

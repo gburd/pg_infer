@@ -98,7 +98,13 @@ impl ModelArchitecture for DeepSeekV4Arch {
     }
 
     fn num_experts(&self) -> usize {
-        self.config.num_experts.unwrap_or(256)
+        match self.config.num_experts {
+            Some(n) => n,
+            None => {
+                tracing::warn!("DeepSeek-V4: num_experts not in config.json, defaulting to 256");
+                256
+            }
+        }
     }
 
     fn num_experts_per_token(&self) -> usize {

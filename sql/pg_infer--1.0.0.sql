@@ -60,6 +60,9 @@ CREATE TABLE IF NOT EXISTS infer.models (
 --
 --   implies(subject text, object text, model text DEFAULT NULL) RETURNS bool
 --
+--   describe_layers(entity text, model text DEFAULT NULL, threshold float8 DEFAULT NULL)
+--       RETURNS TABLE(layer int, feature int, target text, gate_score float8, also text)
+--
 --   nearest_to(entity text, layer int, top int DEFAULT 10, model text DEFAULT NULL)
 --       RETURNS TABLE(layer int, feature int, gate_score float8, concept text, also text)
 --
@@ -169,6 +172,25 @@ CREATE OPERATOR FAMILY infer_ops USING infer;
 CREATE OPERATOR CLASS infer_text_ops DEFAULT FOR TYPE text
     USING infer FAMILY infer_ops AS
         OPERATOR 1 <~> (text, text) FOR ORDER BY float_ops;
+
+-- ==========================================================================
+-- Embedding Semantics
+-- ==========================================================================
+--
+-- walk() uses last-token embedding by default (configurable via
+-- infer.walk_embed_mode GUC: 'last' or 'average'). This simulates the
+-- next-token prediction context — the model's internal representation
+-- of what comes next after the prompt.
+--
+-- describe() and similar_to() use mean-pooling over all token embeddings
+-- (without special tokens). This produces a stable entity identity vector
+-- that matches regardless of how the entity is phrased or contextualized.
+--
+-- For single-token entities (e.g., "Paris"), all functions use the same
+-- direct embedding lookup, so results are consistent across walk/describe.
+--
+-- describe_layers() follows the same embedding strategy as describe() but
+-- returns all per-layer activations without deduplication.
 
 -- ==========================================================================
 -- GUC Parameters (registered in _PG_init, documented here for reference)

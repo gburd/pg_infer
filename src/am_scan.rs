@@ -6,9 +6,21 @@
 //! 3. Cache sorted `(TID, distance)` pairs in scan state.
 //! 4. Subsequent `amgettuple` calls pop from the cache.
 //! 5. The executor stops calling once LIMIT is satisfied (amcanorderbyop).
+//!
+//! ## Scalability Note
+//!
+//! The current implementation performs a full heap scan on every query.
+//! This is acceptable for tables with <100K rows. For larger tables,
+//! a two-phase approach is needed:
+//! 1. Pre-compute and store embeddings in the index pages (Phase 2 AM work)
+//! 2. Use approximate nearest neighbor (HNSW/IVF) for candidate selection
+//! 3. Re-rank only top-N candidates with the full model
+//!
+//! This matches the pattern used by pgvecto.rs and pgvector.
 
 use pgrx::pg_sys;
 use pgrx::prelude::*;
+use pgrx::IntoDatum;
 
 use crate::am_options;
 use crate::backend::RankedCandidate;
@@ -88,6 +100,7 @@ pub unsafe extern "C-unwind" fn infer_amrescan(
     // The key is the RHS of `col <~> 'query text'`.
     if norderbys > 0 && !orderbys.is_null() {
         let key = &*orderbys;
+        debug_assert!(!key.sk_argument.is_null(), "scan key argument should not be null");
         if !key.sk_argument.is_null() {
             // The argument is a text datum — use text_to_cstring for safe extraction.
             let text_ptr = key.sk_argument.cast_mut_ptr::<pg_sys::varlena>();
@@ -156,10 +169,10 @@ pub unsafe extern "C-unwind" fn infer_amgettuple(
         (*scan).xs_heaptid = tid;
         (*scan).xs_recheck = false;
 
-        // Set the ORDER BY distance value.
+        // Set the ORDER BY distance value as a proper float8 Datum.
         if !(*scan).xs_orderbyvals.is_null() {
             let datum_ptr = (*scan).xs_orderbyvals;
-            *datum_ptr = pg_sys::Datum::from(distance.to_bits());
+            *datum_ptr = f64::into_datum(distance).unwrap_or(pg_sys::Datum::from(0u64));
             let null_ptr = (*scan).xs_orderbynulls;
             *null_ptr = false;
         }
@@ -240,6 +253,10 @@ unsafe fn compute_ranked_results(
 
         // Extract the text value from the indexed column.
         let col_idx = (attr_num - 1) as usize;
+        let natts = (*(*slot).tts_tupleDescriptor).natts as usize;
+        if col_idx >= natts {
+            continue; // Column index out of range for this tuple.
+        }
         let isnull = *(*slot).tts_isnull.add(col_idx);
         if isnull {
             continue; // Skip NULL values.

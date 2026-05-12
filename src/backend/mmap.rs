@@ -15,8 +15,8 @@ use crate::error::PgInferError;
 use crate::registry::ModelHandle;
 
 use super::{
-    Backend, Edge, ExplainedHit, FeatureMetaLite, FeatureRow, FeatureSnapshot, Hit, LayerInfo,
-    Prediction, RelationRow,
+    Backend, Edge, ExplainedHit, FeatureMetaLite, FeatureRow, FeatureSnapshot, Hit, LayerHit,
+    LayerInfo, Prediction, RelationRow,
 };
 
 /// Mmap-backed backend wrapping a process-local `ModelHandle`.
@@ -84,6 +84,14 @@ impl Backend for MmapBackend {
         let object_lower = object.to_lowercase();
         let edges = self.describe(subject, None)?;
         Ok(edges.iter().any(|e| e.target.to_lowercase() == object_lower))
+    }
+
+    fn describe_layers(
+        &self,
+        entity: &str,
+        explicit_threshold: Option<f64>,
+    ) -> Result<Vec<LayerHit>, PgInferError> {
+        crate::fn_describe::mmap_describe_layers(&self.handle, entity, explicit_threshold)
     }
 
     fn infer(&self, prompt: &str, top_k: usize) -> Result<Vec<Prediction>, PgInferError> {

@@ -48,6 +48,7 @@ reqwest = { version = "0.12", features = ["blocking", "json"] }
 [features]
 default = []
 metal = ["infer-compute/metal"]
+moe-svd = []
 
 [dev-dependencies]
 criterion = "0.5"

@@ -68,6 +68,16 @@ pub struct ExplainedHit {
     pub also: String,
 }
 
+/// One per-layer activation from `describe_layers()` — not deduplicated.
+#[derive(Debug, Clone)]
+pub struct LayerHit {
+    pub layer: i32,
+    pub feature: i32,
+    pub target: String,
+    pub gate_score: f64,
+    pub also: String,
+}
+
 /// Per-layer metadata used by `infer_show_layers()`.
 #[derive(Debug, Clone)]
 pub struct LayerInfo {
@@ -147,6 +157,18 @@ pub trait Backend: Send + Sync {
     }
 
     fn implies(&self, subject: &str, object: &str) -> Result<bool, PgInferError>;
+
+    /// Return all per-layer activations without deduplication.
+    /// Local-only; remote backends return `RemoteUnsupported`.
+    fn describe_layers(
+        &self,
+        _entity: &str,
+        _explicit_threshold: Option<f64>,
+    ) -> Result<Vec<LayerHit>, PgInferError> {
+        Err(PgInferError::RemoteUnsupported {
+            operation: "describe_layers".into(),
+        })
+    }
 
     fn infer(&self, prompt: &str, top_k: usize) -> Result<Vec<Prediction>, PgInferError>;
 
