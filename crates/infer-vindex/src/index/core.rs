@@ -104,6 +104,11 @@ pub struct VectorIndex {
     #[allow(clippy::type_complexity)]
     pub(crate) q4k_ffn_cache: Mutex<Vec<[Option<Arc<Vec<f32>>>; 3]>>,
 
+    /// Relation cluster labels: maps (layer, feature) → cluster label string.
+    /// Loaded from `feature_clusters.jsonl` + `relation_clusters.json` at vindex load time.
+    /// Used by `feature_meta()` to populate `FeatureMeta.relation`.
+    pub(crate) relation_labels: HashMap<(usize, usize), String>,
+
     /// Layer range owned by this index instance (start inclusive, end exclusive).
     /// `None` means all layers are owned (default, no sharding).
     /// Set via `load_vindex_with_range` to restrict which layers are served,
@@ -180,6 +185,7 @@ impl Clone for VectorIndex {
             attn_q4_manifest: self.attn_q4_manifest.clone(),
             attn_q8_mmap: self.attn_q8_mmap.clone(),
             attn_q8_manifest: self.attn_q8_manifest.clone(),
+            relation_labels: self.relation_labels.clone(),
             layer_range: self.layer_range,
         }
     }
@@ -221,6 +227,7 @@ impl VectorIndex {
             interleaved_q4k_mmap: None,
             interleaved_q4k_manifest: None,
             q4k_ffn_cache: Mutex::new((0..num_layers).map(|_| [None, None, None]).collect()),
+            relation_labels: HashMap::new(),
             layer_range: None,
             gate_q4_mmap: None,
             gate_q4_slices: Vec::new(),
@@ -273,6 +280,7 @@ impl VectorIndex {
             interleaved_q4k_mmap: None,
             interleaved_q4k_manifest: None,
             q4k_ffn_cache: Mutex::new((0..num_layers).map(|_| [None, None, None]).collect()),
+            relation_labels: HashMap::new(),
             layer_range: None,
             gate_q4_mmap: None,
             gate_q4_slices: Vec::new(),
@@ -290,6 +298,67 @@ impl VectorIndex {
     /// Returns true if this index uses mmap'd gate vectors (zero heap copy).
     pub fn is_mmap(&self) -> bool {
         self.gate_mmap_bytes.is_some()
+    }
+
+    /// Load relation cluster labels from `relation_clusters.json` and
+    /// `feature_clusters.jsonl` in the given directory. Populates the
+    /// `relation_labels` map so `feature_meta()` can return relation labels.
+    ///
+    /// Silently returns Ok(0) if either file is missing (optional data).
+    pub fn load_relation_labels(&mut self, dir: &std::path::Path) -> Result<usize, crate::VindexError> {
+        use std::io::BufRead;
+
+        let clusters_path = dir.join("relation_clusters.json");
+        let assignments_path = dir.join("feature_clusters.jsonl");
+
+        if !clusters_path.exists() || !assignments_path.exists() {
+            return Ok(0);
+        }
+
+        // Parse cluster result to get labels per cluster index.
+        let clusters_text = std::fs::read_to_string(&clusters_path)
+            .map_err(crate::VindexError::Io)?;
+        let cluster_result: crate::clustering::ClusterResult = serde_json::from_str(&clusters_text)
+            .map_err(|e| crate::VindexError::Parse(format!("relation_clusters.json: {e}")))?;
+
+        // Build labels array: use explicit labels if present, otherwise
+        // join top_tokens as a fallback label.
+        let labels: Vec<String> = if !cluster_result.labels.is_empty() {
+            cluster_result.labels
+        } else {
+            cluster_result
+                .top_tokens
+                .iter()
+                .map(|tokens| tokens.join("/"))
+                .collect()
+        };
+
+        // Parse feature assignments (NDJSON: {"l": layer, "f": feature, "c": cluster})
+        let file = std::fs::File::open(&assignments_path)
+            .map_err(crate::VindexError::Io)?;
+        let reader = std::io::BufReader::new(file);
+        let mut count = 0usize;
+
+        for line in reader.lines() {
+            let line = line.map_err(crate::VindexError::Io)?;
+            if line.is_empty() {
+                continue;
+            }
+            let record: serde_json::Value = serde_json::from_str(&line)
+                .map_err(|e| crate::VindexError::Parse(format!("feature_clusters.jsonl: {e}")))?;
+            let layer = record["l"].as_u64().unwrap_or(0) as usize;
+            let feature = record["f"].as_u64().unwrap_or(0) as usize;
+            let cluster = record["c"].as_u64().unwrap_or(0) as usize;
+
+            if let Some(label) = labels.get(cluster) {
+                if !label.is_empty() {
+                    self.relation_labels.insert((layer, feature), label.clone());
+                    count += 1;
+                }
+            }
+        }
+
+        Ok(count)
     }
 
     /// Estimated heap bytes used by gate vectors (0 if mmap'd).

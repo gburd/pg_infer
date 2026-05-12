@@ -207,6 +207,9 @@ impl VectorIndex {
             }
         }
 
+        // Load relation cluster labels (optional — silently skipped if files missing).
+        let _ = index.load_relation_labels(dir);
+
         Ok(index)
     }
 }

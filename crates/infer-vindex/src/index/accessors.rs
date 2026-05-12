@@ -19,22 +19,33 @@ use super::types::*;
 impl VectorIndex {
     /// Look up metadata for a specific feature.
     /// Checks heap first (mutation overrides), then mmap (production read path).
+    /// Injects relation cluster label when available.
     pub fn feature_meta(&self, layer: usize, feature: usize) -> Option<FeatureMeta> {
         // Heap path first — catches mutation overrides (INSERT/UPDATE)
-        if let Some(meta) = self
+        let mut meta = if let Some(m) = self
             .down_meta
             .get(layer)
             .and_then(|v| v.as_ref())
             .and_then(|metas| metas.get(feature))
             .and_then(|m| m.clone())
         {
-            return Some(meta);
+            Some(m)
+        } else if let Some(ref dm) = self.down_meta_mmap {
+            // Mmap path (production — zero heap, no mutations)
+            dm.feature_meta(layer, feature)
+        } else {
+            None
+        };
+
+        // Inject relation cluster label if available and not already set.
+        if let Some(ref mut m) = meta {
+            if m.relation.is_none() {
+                if let Some(label) = self.relation_labels.get(&(layer, feature)) {
+                    m.relation = Some(label.clone());
+                }
+            }
         }
-        // Mmap path (production — zero heap, no mutations)
-        if let Some(ref dm) = self.down_meta_mmap {
-            return dm.feature_meta(layer, feature);
-        }
-        None
+        meta
     }
 
     /// Number of features indexed at a layer.

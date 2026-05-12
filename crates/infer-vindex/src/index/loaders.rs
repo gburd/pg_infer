@@ -165,6 +165,7 @@ impl VectorIndex {
             interleaved_q4k_mmap: None,
             interleaved_q4k_manifest: None,
             q4k_ffn_cache: Mutex::new((0..num_layers).map(|_| [None, None, None]).collect()),
+            relation_labels: HashMap::new(),
             gate_q4_mmap: None,
             gate_q4_slices: Vec::new(),
             lm_head_q4_mmap: None,
