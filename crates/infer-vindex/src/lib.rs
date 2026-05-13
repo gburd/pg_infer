@@ -85,7 +85,9 @@ pub use format::huggingface::{
 };
 pub use format::weights::{
     write_model_weights, write_model_weights_with_opts,
-    write_model_weights_q4k, write_model_weights_q4k_with_opts, Q4kWriteOptions,
+    write_model_weights_q4k, write_model_weights_q4k_with_opts,
+    write_attention_weights_q4k_gguf,
+    Q4kWriteOptions, QuantBlockFormat,
     load_model_weights, load_model_weights_with_opts, load_model_weights_q4k,
     WeightSource, StreamingWeights, WriteWeightsOptions, LoadWeightsOptions,
 };

@@ -91,7 +91,9 @@ kernel void fused_attention(
     }
 
     // ── Attention scores: Q · K^T for all k ≤ qi ──
-    threadgroup float tg_scores[4096]; // max seq_len
+    // Hard shader limit: threadgroup memory cannot be dynamically sized.
+    // This constrains MetalBackend::max_seq_len to at most 4096.
+    threadgroup float tg_scores[4096]; // max seq_len — hardware upper bound
     threadgroup float tg_max = 0.0f;
     threadgroup float tg_sum = 0.0f;
 

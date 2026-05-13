@@ -212,6 +212,95 @@ pub fn quantize_q4_k(data: &[f32]) -> Vec<u8> {
     out
 }
 
+/// Quantize f32 data to Q4_K in the canonical GGUF / llama.cpp 144-byte layout.
+///
+/// This is an explicit alias for [`quantize_q4_k`] — the primary quantizer
+/// already produces the GGUF-compatible format. Provided so that callers can
+/// name the GGUF format unambiguously when both the legacy 148-byte layout
+/// (historical) and the canonical 144-byte layout coexist in documentation.
+///
+/// Block layout (144 bytes per 256 values):
+/// ```text
+///   [0..1]    half d           (super-block scale)
+///   [2..3]    half dmin        (super-block min)
+///   [4..15]   12 bytes         (8×6-bit scales + 8×6-bit mins packed)
+///   [16..143] 128 bytes        (256 × 4-bit nibbles, paired sub-blocks)
+/// ```
+#[inline]
+pub fn quantize_q4_k_gguf(data: &[f32]) -> Vec<u8> {
+    quantize_q4_k(data)
+}
+
+/// Dequantize Q4_K data from the canonical GGUF 144-byte layout back to f32.
+///
+/// This is the inverse of [`quantize_q4_k`] / [`quantize_q4_k_gguf`].
+/// Implements the same logic as `dequantize_row_q4_K` in llama.cpp's
+/// `ggml-quants.c` and the `dequantize_q4_k` function in `infer-models`.
+///
+/// # Panics
+///
+/// Panics if `data.len()` is not exactly `(n_elements / 256) * 144` bytes,
+/// or if `n_elements` is not a multiple of 256.
+pub fn dequantize_q4_k_gguf(data: &[u8], n_elements: usize) -> Vec<f32> {
+    assert!(
+        n_elements % 256 == 0,
+        "n_elements must be a multiple of 256, got {n_elements}"
+    );
+    let block_size = 144;
+    let super_block = 256;
+    let n_blocks = n_elements / super_block;
+    assert_eq!(
+        data.len(),
+        n_blocks * block_size,
+        "expected {} bytes for {} elements, got {}",
+        n_blocks * block_size,
+        n_elements,
+        data.len()
+    );
+
+    let mut out = vec![0.0f32; n_elements];
+
+    for sb in 0..n_blocks {
+        let block = &data[sb * block_size..(sb + 1) * block_size];
+        let d = f16_to_f32(u16::from_le_bytes([block[0], block[1]]));
+        let dmin = f16_to_f32(u16::from_le_bytes([block[2], block[3]]));
+
+        // Unpack 12-byte packed scales + mins per `get_scale_min_k4`.
+        let p = &block[4..16];
+        let mut scales = [0u8; 8];
+        let mut mins = [0u8; 8];
+        for j in 0..4 {
+            scales[j] = p[j] & 0x3F;
+            mins[j] = p[j + 4] & 0x3F;
+            scales[j + 4] = (p[j + 8] & 0x0F) | ((p[j] >> 6) << 4);
+            mins[j + 4] = (p[j + 8] >> 4) | ((p[j + 4] >> 6) << 4);
+        }
+
+        // Four groups × 32 bytes. Each group holds two adjacent sub-blocks:
+        //   low nibbles  → sub-block 2g   (scales[2g], mins[2g])
+        //   high nibbles → sub-block 2g+1 (scales[2g+1], mins[2g+1])
+        let quants = &block[16..144];
+        let sb_base = sb * super_block;
+        for g in 0..4 {
+            let sb_lo = 2 * g;
+            let sb_hi = 2 * g + 1;
+            let sc_lo = d * scales[sb_lo] as f32;
+            let sc_hi = d * scales[sb_hi] as f32;
+            let mn_lo = dmin * mins[sb_lo] as f32;
+            let mn_hi = dmin * mins[sb_hi] as f32;
+            let chunk = &quants[g * 32..(g + 1) * 32];
+            let base_lo = sb_base + sb_lo * 32;
+            let base_hi = sb_base + sb_hi * 32;
+            for l in 0..32 {
+                let byte = chunk[l];
+                out[base_lo + l] = sc_lo * (byte & 0x0F) as f32 - mn_lo;
+                out[base_hi + l] = sc_hi * ((byte >> 4) & 0x0F) as f32 - mn_hi;
+            }
+        }
+    }
+    out
+}
+
 /// Quantize f32 data to Q6_K format (6-bit with sub-block scales, Ollama-compatible).
 ///
 /// Each super-block of 256 floats becomes 210 bytes:
@@ -593,5 +682,51 @@ mod tests {
              quantize_q4_k in infer-compute disagrees with \
              infer_models::quant::ggml::dequantize_q4_k (PR #24 llama.cpp format)"
         );
+    }
+
+    #[test]
+    fn q4_k_gguf_round_trip() {
+        // Verify quantize_q4_k_gguf + dequantize_q4_k_gguf round-trip.
+        let data: Vec<f32> = (0..256 * 2)
+            .map(|i| ((i as f32 - 255.0) / 100.0).sin() * 0.5)
+            .collect();
+        let bytes = quantize_q4_k_gguf(&data);
+        assert_eq!(bytes.len(), 144 * 2, "quantize_q4_k_gguf must produce 144 bytes per superblock");
+
+        let decoded = dequantize_q4_k_gguf(&bytes, 512);
+        assert_eq!(decoded.len(), 512);
+
+        let max_err = data
+            .iter()
+            .zip(&decoded)
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0f32, f32::max);
+        assert!(
+            max_err < 0.12,
+            "quantize_q4_k_gguf round-trip max error {max_err} > 0.12"
+        );
+    }
+
+    #[test]
+    fn dequantize_q4_k_gguf_matches_infer_models() {
+        // Verify our dequantize_q4_k_gguf agrees with the authoritative
+        // infer_models::quant::ggml::dequantize_q4_k.
+        let data: Vec<f32> = (0..256 * 3)
+            .map(|i| ((i as f32 * 0.037).cos()) * 1.5)
+            .collect();
+        let bytes = quantize_q4_k(&data);
+
+        let our_decoded = dequantize_q4_k_gguf(&bytes, 256 * 3);
+        let ref_decoded = infer_models::quant::ggml::dequantize_q4_k(&bytes, 256 * 3)
+            .expect("reference dequantize_q4_k");
+
+        // Must be bit-for-bit identical (same algorithm, same format).
+        for (i, (a, b)) in our_decoded.iter().zip(&ref_decoded).enumerate() {
+            assert_eq!(
+                a.to_bits(), b.to_bits(),
+                "dequantize_q4_k_gguf[{i}] = {a} differs from \
+                 infer_models dequantize_q4_k[{i}] = {b}"
+            );
+        }
     }
 }

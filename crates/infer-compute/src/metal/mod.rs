@@ -91,6 +91,10 @@ pub struct MetalBackend {
     pub scale_vector_pipeline: ComputePipelineState,
     /// KV cache for decode mode — initialized on first decode_token call.
     kv_cache: std::sync::Mutex<Option<ops::kv_cache::KVCache>>,
+    /// Maximum sequence length for KV cache allocation. Defaults to 4096.
+    /// Must not exceed 4096 — the fused_attention shader uses a fixed-size
+    /// threadgroup array `tg_scores[4096]` which is the hard upper bound.
+    max_seq_len: usize,
     pub rms_norm_q8_pipeline: ComputePipelineState,
     pub residual_norm_pipeline: ComputePipelineState,
     pub residual_norm_q8_pipeline: ComputePipelineState,
@@ -271,6 +275,7 @@ impl MetalBackend {
             qk_norm_pipeline,
             scale_vector_pipeline,
             kv_cache: std::sync::Mutex::new(None),
+            max_seq_len: 4096,
             rms_norm_q8_pipeline, residual_norm_pipeline, residual_norm_q8_pipeline,
             f32_gemv_pipeline,
             f16_gemv_pipeline,
@@ -289,6 +294,28 @@ impl MetalBackend {
     pub fn cache_size(&self) -> usize { self.bufs.len() }
     pub fn bufs(&self) -> &BufferCache { &self.bufs }
     pub fn queue(&self) -> &CommandQueue { &self.queue }
+
+    /// Maximum sequence length for KV cache allocation.
+    pub fn max_seq_len(&self) -> usize { self.max_seq_len }
+
+    /// Set the maximum sequence length for KV cache allocation.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `max_seq` exceeds 4096 — the fused_attention shader uses a
+    /// fixed-size threadgroup array (`tg_scores[4096]`) that cannot be resized
+    /// at runtime, making 4096 the hard upper bound.
+    pub fn with_max_seq_len(mut self, max_seq: usize) -> Self {
+        assert!(
+            max_seq <= 4096,
+            "max_seq_len ({max_seq}) exceeds the Metal shader limit of 4096. \
+             The fused_attention kernel uses `threadgroup float tg_scores[4096]` \
+             which cannot be increased without recompiling the shader with a \
+             larger constant."
+        );
+        self.max_seq_len = max_seq;
+        self
+    }
 
     /// Access the KV cache for hybrid decode (GPU attention + CPU FFN).
     /// Creates the cache on first access.

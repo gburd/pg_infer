@@ -910,12 +910,16 @@ pub fn dispatch_full_pipeline(
 
     // Populate KV cache from GPU-computed RoPE'd K and V (post-commit, buffers readable)
     if let Some(ref mut kv) = kv_cache {
+        // Read max_seq from an existing layer — the cache was pre-allocated by
+        // MetalBackend with the configured max_seq_len. Fall back to 4096 only
+        // if the cache is somehow empty (should not happen in practice).
+        let cache_max_seq = kv.layers.first().map(|l| l.max_seq).unwrap_or(4096);
         for l in 0..num_layers {
             let lhd = layers[l].head_dim;
             let lnkv = layers[l].num_kv_heads;
             while kv.layers.len() <= l {
                 kv.layers.push(super::kv_cache::LayerKVCache::new(
-                    bufs, 4096, lnkv, lhd));
+                    bufs, cache_max_seq, lnkv, lhd));
             }
             let total_kv = seq_len * lnkv * lhd;
             let k_src = k_outs[l].contents() as *const f32;

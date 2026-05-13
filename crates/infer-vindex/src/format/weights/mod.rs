@@ -18,8 +18,9 @@ pub mod load;
 pub use write::{
     write_model_weights, write_model_weights_with_opts,
     write_model_weights_q4k, write_model_weights_q4k_with_opts,
+    write_attention_weights_q4k_gguf,
     write_ffn_interleaved_q4k,
-    Q4kWriteOptions, StreamingWeights, WeightSource, WriteWeightsOptions,
+    Q4kWriteOptions, QuantBlockFormat, StreamingWeights, WeightSource, WriteWeightsOptions,
 };
 pub use load::{
     load_model_weights, load_model_weights_with_opts, load_model_weights_q4k,

@@ -134,11 +134,11 @@ ComputeBackend trait supports it. Need: CUDA buffer management, kernel ports for
 
 The `prefill_q4` GPU pipeline runs the forward pass. KV cache is populated via CPU `prefill_with_kv` afterward. Integrate KV cache writes into the GPU pipeline to eliminate the CPU roundtrip.
 
-### Dynamic KV cache sizing
-**Effort**: Low  
-**Status**: Fixed at 4096 max_seq
+### Dynamic KV cache sizing — DONE
+**Effort**: Low
+**Status**: ✅ Complete (2026-05) — `MetalBackend::with_max_seq_len()` configures allocation; defaults to 4096 (shader hard limit)
 
-Current KV cache allocates for 4096 tokens at creation. Need dynamic growth or configurable max_seq for long-context inference.
+`max_seq_len` field on `MetalBackend` replaces all 7 hardcoded `4096` values in KV cache creation. Validated against shader threadgroup limit (panics if >4096). Shader constants annotated as hardware limits.
 
 ## P2: Research
 
@@ -207,3 +207,4 @@ Single kernel per layer: norm → QKV → attention → O → residual → norm 
 | Single global encoder | 2026-04-09 | One encoder for all 34 layers (no per-layer create/end) |
 | **Cooperative SIMD norms** | **2026-04-09** | **O(N²)→O(N) in rms_norm/residual_norm — saved ~10ms** |
 | **Ollama EXCEEDED** | **2026-04-09** | **8.5ms / 117 tok/s = 0.83x Ollama (17% faster)** |
+| Dynamic KV cache sizing | 2026-05 | Configurable max_seq_len (default 4096, shader limit) |

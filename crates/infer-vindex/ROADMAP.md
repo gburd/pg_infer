@@ -26,12 +26,12 @@ Added `load_interleaved_q4k()`, `has_interleaved_q4k()`, `interleaved_q4k_mmap_r
 Inference `predict_honest` now prefers Q4_K FFN (`interleaved_q4k.bin`) over Q4_0.
 Format tag (`ffn_format`) passed through `FullPipelineLayer` to compute for shader dispatch.
 
-### GGUF Q4_K format option (144 bytes vs 148 bytes)
-**Impact**: Direct compatibility with llama.cpp weight files  
-**Effort**: Low  
-**Status**: Quantizer ready in infer-compute (`quantize_q4_k_gguf`)
+### GGUF Q4_K format option (144 bytes vs 148 bytes) — DONE
+**Impact**: Direct compatibility with llama.cpp weight files
+**Effort**: Low
+**Status**: ✅ Complete (2026-05)
 
-Add option to store attention weights in GGUF-canonical 144-byte Q4_K format (packed scales+mins in 12 bytes) instead of our 148-byte format.
+`quantize_q4_k_gguf` + `dequantize_q4_k_gguf` in infer-compute, `write_attention_weights_q4k_gguf` in infer-vindex. Manifest entries tagged `Q4_K_GGUF` for explicit GGUF-compatibility identification. Note: `quantize_q4_k` already produced the GGUF-compatible 144-byte layout; the `_gguf` variants make this explicit in the API and documentation.
 
 ## P1: Production Hardening
 
@@ -93,3 +93,4 @@ Add new layers/features to an existing vindex without full rebuild.
 | 8 ADRs documented | 2026-04-07 | All major decisions recorded |
 | PERFORMANCE.md + format alignment | 2026-04-07 | Fresh benchmarks, verified pipeline |
 | Q4_K FFN in vindex | 2026-05 | Default Q4_K FFN for dense models |
+| GGUF Q4_K format option | 2026-05 | `quantize_q4_k_gguf` + vindex writer |

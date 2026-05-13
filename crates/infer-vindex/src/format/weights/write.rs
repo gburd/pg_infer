@@ -544,12 +544,19 @@ use crate::config::dtype::write_floats;
 // ── Q4_K / Q6_K streaming writer ──────────────────────────────────────────
 
 /// Per-block quantisation format for a single tensor in the Q4_K pipeline.
-/// Serde writes / reads the literal strings `"Q4_K"` and `"Q6_K"` to match
-/// llama.cpp / Ollama on-disk conventions.
+/// Serde writes / reads the literal strings `"Q4_K"`, `"Q4_K_GGUF"`, and
+/// `"Q6_K"` to match llama.cpp / Ollama on-disk conventions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum QuantBlockFormat {
+    /// Q4_K: 144-byte GGUF-compatible superblock (the default since the
+    /// quantizer already emits the canonical llama.cpp layout).
     #[serde(rename = "Q4_K")]
     Q4K,
+    /// Q4_K_GGUF: explicit tag for the canonical GGUF 144-byte layout.
+    /// Byte-identical to `Q4K` — exists for manifest clarity when callers
+    /// want to declare GGUF compatibility unambiguously.
+    #[serde(rename = "Q4_K_GGUF")]
+    Q4KGGUF,
     #[serde(rename = "Q6_K")]
     Q6K,
 }
@@ -1154,6 +1161,104 @@ pub fn write_model_weights_q4k_with_opts(
     std::fs::write(&config_path, config_json)?;
 
     callbacks.on_stage_done("model_weights_q4k", start.elapsed().as_secs_f64() * 1000.0);
+    Ok(())
+}
+
+/// Write attention weights in the explicit GGUF-compatible 144-byte Q4_K layout.
+///
+/// Functionally equivalent to the attention portion of
+/// [`write_model_weights_q4k_with_opts`] — the quantized bytes are identical
+/// because [`quantize_q4_k`] already produces the GGUF layout. The difference
+/// is that the manifest tags non-V tensors with `QuantBlockFormat::Q4KGGUF`
+/// so downstream tooling can verify GGUF compatibility at a glance.
+///
+/// Emits: `attn_weights_q4k_gguf.bin` + `attn_weights_q4k_gguf_manifest.json`
+///   - Q/K/O tensors → `Q4_K_GGUF` (144 bytes / 256 values)
+///   - V tensors → `Q6_K` (210 bytes / 256 values)
+pub fn write_attention_weights_q4k_gguf(
+    source: &dyn WeightSource,
+    dir: &Path,
+    callbacks: &mut dyn IndexBuildCallbacks,
+) -> Result<(), VindexError> {
+    use infer_compute::cpu::ops::q4_common::{quantize_q4_k_gguf, quantize_q6_k};
+
+    callbacks.on_stage("attn_weights_q4k_gguf");
+    let start = std::time::Instant::now();
+
+    let arch = source.arch();
+    let num_layers = source.num_layers();
+
+    let attn_path = dir.join("attn_weights_q4k_gguf.bin");
+    let mut attn_file = BufWriter::new(std::fs::File::create(&attn_path)?);
+    let mut attn_offset: u64 = 0;
+    let mut attn_manifest: Vec<Q4kAttnEntry> = Vec::with_capacity(num_layers * 4);
+
+    for layer in 0..num_layers {
+        callbacks.on_layer_start("attn_q4k_gguf", layer, num_layers);
+
+        let q_key = arch.attn_q_key(layer);
+        let k_key = arch.attn_k_key(layer);
+        let v_key = arch.attn_v_key(layer);
+        let o_key = arch.attn_o_key(layer);
+
+        let q = source.get_tensor(&q_key);
+        let k = source.get_tensor(&k_key);
+        let v = resolve_v_tensor(
+            source.get_tensor(&v_key),
+            &k,
+            arch.v_shares_k(layer),
+        );
+        let o = source.get_tensor(&o_key);
+
+        #[allow(clippy::type_complexity)]
+        let slots: [(&str, Option<(Vec<f32>, usize, usize)>); 4] = [
+            (q_key.as_str(), q),
+            (k_key.as_str(), k),
+            (v_key.as_str(), v),
+            (o_key.as_str(), o),
+        ];
+
+        for (i, (key, tensor)) in slots.iter().enumerate() {
+            let (data, rows, cols) = match tensor {
+                Some(t) => t.clone(),
+                None => continue,
+            };
+
+            let is_v = i == 2;
+            let (padded, padded_cols) = pad_rows_to_256(&data, rows, cols);
+            let q_bytes = if is_v {
+                quantize_q6_k(&padded)
+            } else {
+                quantize_q4_k_gguf(&padded)
+            };
+            let format = if is_v {
+                QuantBlockFormat::Q6K
+            } else {
+                QuantBlockFormat::Q4KGGUF
+            };
+
+            attn_file.write_all(&q_bytes)?;
+            let length = q_bytes.len() as u64;
+            attn_manifest.push(Q4kAttnEntry {
+                key: key.to_string(),
+                shape: vec![rows, padded_cols],
+                format,
+                offset: attn_offset,
+                length,
+            });
+            attn_offset += length;
+        }
+
+        callbacks.on_layer_done("attn_q4k_gguf", layer, 0.0);
+    }
+    attn_file.flush()?;
+    drop(attn_file);
+
+    let manifest_json = serde_json::to_string_pretty(&attn_manifest)
+        .map_err(|e| VindexError::Parse(e.to_string()))?;
+    std::fs::write(dir.join("attn_weights_q4k_gguf_manifest.json"), manifest_json)?;
+
+    callbacks.on_stage_done("attn_weights_q4k_gguf", start.elapsed().as_secs_f64() * 1000.0);
     Ok(())
 }
 

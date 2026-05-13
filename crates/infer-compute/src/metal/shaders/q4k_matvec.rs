@@ -16,7 +16,10 @@
 pub const SHADER: &str = r#"
 constant uint Q4K_ROWS_PER_TG  = 8;
 constant uint Q4K_BLOCK_SIZE   = 144;
-constant uint Q4K_MAX_K        = 4096; // 16 KB threadgroup
+// Hard shader limit: threadgroup memory sized to Q4K_MAX_K floats.
+// This constrains the maximum hidden dimension per threadgroup, NOT max_seq_len directly,
+// but it is a Metal threadgroup memory constraint that cannot change at runtime.
+constant uint Q4K_MAX_K        = 4096; // 16 KB threadgroup — hardware upper bound
 
 kernel void q4k_matvec(
     device const uchar*  W4K   [[buffer(0)]],

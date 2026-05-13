@@ -8,7 +8,9 @@
 pub const SHADER: &str = r#"
 constant uint Q4K_GU_ROWS_PER_TG = 8;
 constant uint Q4K_GU_BLOCK_SIZE  = 144;
-constant uint Q4K_GU_MAX_K       = 4096; // 16 KB
+// Hard shader limit: threadgroup memory sized to Q4K_GU_MAX_K floats.
+// This is a Metal threadgroup memory constraint that cannot change at runtime.
+constant uint Q4K_GU_MAX_K       = 4096; // 16 KB — hardware upper bound
 
 kernel void q4k_ffn_gate_up(
     device const uchar*  Wg    [[buffer(0)]],

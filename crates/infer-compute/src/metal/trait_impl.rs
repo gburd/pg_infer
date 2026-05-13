@@ -198,12 +198,12 @@ impl ComputeBackend for MetalBackend {
             .collect();
         let mut cache_guard = self.kv_cache.lock().unwrap();
         if cache_guard.is_none() {
-            *cache_guard = Some(ops::kv_cache::KVCache::new_per_layer(&self.bufs, &shapes, 4096));
+            *cache_guard = Some(ops::kv_cache::KVCache::new_per_layer(&self.bufs, &shapes, self.max_seq_len));
         }
         let kv = cache_guard.as_mut().unwrap();
         while kv.layers.len() < num_layers {
             let (nkv, hd) = shapes[kv.layers.len()];
-            kv.layers.push(ops::kv_cache::LayerKVCache::new(&self.bufs, 4096, nkv, hd));
+            kv.layers.push(ops::kv_cache::LayerKVCache::new(&self.bufs, self.max_seq_len, nkv, hd));
         }
 
         // Hybrid MoE models (Gemma 4 26B A4B): each layer requires a CPU MoE
@@ -269,12 +269,12 @@ impl ComputeBackend for MetalBackend {
         let mut cache_guard = self.kv_cache.lock().unwrap();
         // Ensure KV cache exists with enough layers
         if cache_guard.is_none() {
-            *cache_guard = Some(self.create_kv_cache(layer + 1, 4096, num_kv_heads, head_dim));
+            *cache_guard = Some(self.create_kv_cache(layer + 1, self.max_seq_len, num_kv_heads, head_dim));
         }
         let kv = cache_guard.as_mut().unwrap();
         // Extend if needed
         while kv.layers.len() <= layer {
-            kv.layers.push(ops::kv_cache::LayerKVCache::new(&self.bufs, 4096, num_kv_heads, head_dim));
+            kv.layers.push(ops::kv_cache::LayerKVCache::new(&self.bufs, self.max_seq_len, num_kv_heads, head_dim));
         }
 
         let lc = &mut kv.layers[layer];
@@ -315,7 +315,7 @@ impl ComputeBackend for MetalBackend {
         let num_layers = layers.len();
         let mut cache_guard = self.kv_cache.lock().unwrap();
         if cache_guard.is_none() {
-            *cache_guard = Some(self.create_kv_cache(num_layers, 4096, num_kv_heads, head_dim));
+            *cache_guard = Some(self.create_kv_cache(num_layers, self.max_seq_len, num_kv_heads, head_dim));
         }
         let kv = cache_guard.as_mut().unwrap();
         Some(MetalBackend::decode_token(self, kv, layers, x, hidden, inter, q_dim, kv_dim,
@@ -335,7 +335,7 @@ impl ComputeBackend for MetalBackend {
         let num_layers = layers.len();
         let mut cache_guard = self.kv_cache.lock().unwrap();
         if cache_guard.is_none() {
-            *cache_guard = Some(self.create_kv_cache(num_layers, 4096, num_kv_heads, head_dim));
+            *cache_guard = Some(self.create_kv_cache(num_layers, self.max_seq_len, num_kv_heads, head_dim));
         }
         let kv = cache_guard.as_mut().unwrap();
         Some(MetalBackend::decode_token_with_moe_fn(self, kv, layers, x,
@@ -355,7 +355,7 @@ impl ComputeBackend for MetalBackend {
         let num_layers = layers.len();
         let mut cache_guard = self.kv_cache.lock().unwrap();
         if cache_guard.is_none() {
-            *cache_guard = Some(self.create_kv_cache(num_layers, 4096, num_kv_heads, head_dim));
+            *cache_guard = Some(self.create_kv_cache(num_layers, self.max_seq_len, num_kv_heads, head_dim));
         }
         let kv = cache_guard.as_mut().unwrap();
         let (res, ta, tgu, td) = MetalBackend::decode_token_split_profile(
