@@ -3,11 +3,15 @@
 //! The cost model is dynamic: derived from model/backend characteristics
 //! queried at plan time, not hardcoded constants.  This ensures the planner
 //! makes correct decisions about when to use the infer AM vs seq scan + sort.
+//!
+//! For v2 indexes (HNSW), the cost is O(log N) since the HNSW graph
+//! provides approximate nearest neighbor search without a full scan.
 
 use pgrx::pg_sys;
 use pgrx::prelude::*;
 
 use crate::am_options;
+use crate::am_pages;
 
 /// Cost estimation callback for the `infer` AM.
 ///
@@ -42,30 +46,58 @@ pub unsafe extern "C-unwind" fn infer_amcostestimate(
         10_000.0
     };
 
-    // Read model name from the index metapage to determine cost params.
-    let cost_params = match read_cost_params(index_info) {
-        Some(p) => p,
-        None => {
-            // Conservative fallback: assume expensive local backend.
-            CostParams {
-                embed_cost: 100.0,
-                per_row_cost: 50.0,
+    // Check if this is a v2 (HNSW) index by reading the metapage version.
+    let is_v2 = check_index_version_v2(index_info);
+
+    if is_v2 {
+        // v2 HNSW index: O(log N) cost model.
+        let ef_search = crate::gucs::am_hnsw_ef_search() as f64;
+        let oversampling = crate::gucs::rerank_oversampling() as f64;
+
+        // Startup: embed the query vector (one tokenize + embed).
+        let startup = 50.0;
+
+        // HNSW traversal cost: proportional to ef_search * log2(N).
+        let log_n = if tuples > 1.0 { tuples.log2() } else { 1.0 };
+        let hnsw_cost = ef_search * log_n * 0.1; // SQ8 distance is cheap
+
+        // Re-rank cost: score top (ef_search * oversampling) candidates with full model.
+        let rerank_candidates = ef_search * oversampling;
+        let rerank_cost = rerank_candidates * 5.0; // re-rank per candidate
+
+        let total = startup + hnsw_cost + rerank_cost;
+
+        *index_startup_cost = startup;
+        *index_total_cost = total;
+        *index_selectivity = 1.0 / tuples.max(1.0); // highly selective
+        *index_correlation = 0.0;
+        *index_pages = 1.0; // estimate; actual pages stored in metapage
+    } else {
+        // v1 full-scan index: O(N) cost model.
+        let cost_params = match read_cost_params(index_info) {
+            Some(p) => p,
+            None => {
+                // Conservative fallback: assume expensive local backend.
+                CostParams {
+                    embed_cost: 100.0,
+                    per_row_cost: 50.0,
+                }
             }
-        }
-    };
+        };
 
-    // Startup cost: embed the query (one tokenize + one embed lookup).
-    let startup = cost_params.embed_cost;
+        // Startup cost: embed the query (one tokenize + one embed lookup).
+        let startup = cost_params.embed_cost;
 
-    // Total cost scales with number of tuples.
-    // The planner will compare this against SeqScan + Sort costs.
-    let total = startup + (tuples * cost_params.per_row_cost);
+        // Total cost scales with number of tuples.
+        // The planner will compare this against SeqScan + Sort costs.
+        let total = startup + (tuples * cost_params.per_row_cost);
 
-    *index_startup_cost = startup;
-    *index_total_cost = total;
-    *index_selectivity = 1.0; // scans all rows; LIMIT prunes at executor
-    *index_correlation = 0.0; // output in distance order, not physical order
-    *index_pages = 1.0; // just the metapage
+        *index_startup_cost = startup;
+        *index_total_cost = total;
+        *index_selectivity = 1.0; // scans all rows; LIMIT prunes at executor
+        *index_correlation = 0.0; // output in distance order, not physical order
+        *index_pages = 1.0; // just the metapage
+    }
 }
 
 /// Cost parameters derived from model metadata at plan time.
@@ -165,4 +197,21 @@ fn query_model_metadata(model_name: &str) -> Option<ModelMeta> {
         }
         None
     })
+}
+
+/// Check if an index is v2 (HNSW) by reading the metapage version.
+///
+/// Returns `false` if the metapage cannot be read (plan-time safety).
+unsafe fn check_index_version_v2(index_info: *mut pg_sys::IndexOptInfo) -> bool {
+    let index_rel = pg_sys::RelationIdGetRelation((*index_info).indexoid);
+    if index_rel.is_null() {
+        return false;
+    }
+
+    let result = am_pages::read_metapage_version(index_rel)
+        .map(|v| v >= 2)
+        .unwrap_or(false);
+
+    pg_sys::RelationClose(index_rel);
+    result
 }

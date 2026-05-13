@@ -94,6 +94,26 @@ pub static PARALLEL_SIMILARITY: GucSetting<bool> = GucSetting::<bool>::new(false
 pub static GATE_CACHE_MAX_LAYERS: GucSetting<i32> = GucSetting::<i32>::new(4);
 
 // ---------------------------------------------------------------------------
+// Phase 2 AM: HNSW index scan parameters
+// ---------------------------------------------------------------------------
+
+/// HNSW ef_search for the access method (index scan beam width).
+///
+/// Controls the accuracy/speed tradeoff during ORDER BY <~> queries
+/// through the v2 HNSW index.  Higher = more accurate but slower.
+/// This is separate from `infer.hnsw_ef_search` which controls the
+/// internal gate-level HNSW used by similar_to().
+pub static AM_HNSW_EF_SEARCH: GucSetting<i32> = GucSetting::<i32>::new(64);
+
+/// Re-rank oversampling factor for v2 index scans.
+///
+/// During a v2 HNSW scan, we retrieve ef_search * oversampling candidates
+/// from the HNSW graph, then re-rank using the full model to return the
+/// final results.  Higher values improve recall at the cost of more
+/// re-ranking work.  Default: 4.
+pub static RERANK_OVERSAMPLING: GucSetting<i32> = GucSetting::<i32>::new(4);
+
+// ---------------------------------------------------------------------------
 // Remote backend configuration
 // ---------------------------------------------------------------------------
 
@@ -332,6 +352,29 @@ pub unsafe fn init() {
         GucContext::Suset,
         GucFlags::default(),
     );
+
+    // Phase 2 AM GUCs.
+    GucRegistry::define_int_guc(
+        c"infer.am_hnsw_ef_search",
+        c"HNSW beam width for v2 index scans.",
+        c"Controls accuracy/speed for ORDER BY <~> through the HNSW index. Default: 64.",
+        &AM_HNSW_EF_SEARCH,
+        16,
+        4096,
+        GucContext::Userset,
+        GucFlags::default(),
+    );
+
+    GucRegistry::define_int_guc(
+        c"infer.rerank_oversampling",
+        c"Re-rank oversampling factor for v2 index scans.",
+        c"Retrieve ef_search * oversampling candidates, re-rank with full model. Default: 4.",
+        &RERANK_OVERSAMPLING,
+        1,
+        32,
+        GucContext::Userset,
+        GucFlags::default(),
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -446,4 +489,18 @@ pub fn grid_url() -> Option<String> {
 /// Return the grid poll interval as a `Duration`.
 pub fn grid_poll_interval() -> std::time::Duration {
     std::time::Duration::from_secs(GRID_POLL_INTERVAL_SECS.get().max(5) as u64)
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2 AM accessors
+// ---------------------------------------------------------------------------
+
+/// Return the HNSW ef_search for v2 AM index scans.
+pub fn am_hnsw_ef_search() -> usize {
+    AM_HNSW_EF_SEARCH.get() as usize
+}
+
+/// Return the re-rank oversampling factor.
+pub fn rerank_oversampling() -> usize {
+    RERANK_OVERSAMPLING.get() as usize
 }

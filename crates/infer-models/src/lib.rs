@@ -35,4 +35,5 @@ pub use weights::{ModelWeights, WeightArray};
 pub use loading::{
     is_ffn_tensor, load_gguf, load_model_dir, load_model_dir_filtered,
     load_model_dir_walk_only, resolve_model_path,
+    load_gguf_quantized, GgufQuantFormat, QuantizedModelWeights, QuantizedTensor,
 };

@@ -8,7 +8,13 @@ mod am;
 mod am_build;
 mod am_cost;
 mod am_options;
+#[allow(dead_code)]
+mod am_pages;
 mod am_scan;
+#[allow(dead_code)]
+mod hnsw;
+#[allow(dead_code)]
+mod sq8;
 mod backend;
 mod error;
 mod fn_cache;

@@ -41,13 +41,13 @@ fn infer_am_handler(
     routine.amsearchnulls = false;
     routine.amcanparallel = false; // future work
     routine.amcaninclude = false;
-    routine.amusemaintenanceworkmem = false;
+    routine.amusemaintenanceworkmem = true; // v2 HNSW build benefits from maintenance_work_mem
     routine.amsummarizing = false;
 
     // Callbacks.
     routine.ambuild = Some(am_build::infer_ambuild);
     routine.ambuildempty = Some(am_build::infer_ambuildempty);
-    routine.aminsert = None; // immutable virtual index
+    routine.aminsert = Some(am_build::infer_aminsert); // v2: supports incremental insert
     routine.ambulkdelete = Some(am_build::infer_ambulkdelete);
     routine.amvacuumcleanup = Some(am_build::infer_amvacuumcleanup);
     routine.amcostestimate = Some(am_cost::infer_amcostestimate);

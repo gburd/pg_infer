@@ -1,7 +1,72 @@
 //! Model loading — imports from infer-models.
 
 pub use infer_models::ModelWeights;
+pub use infer_models::QuantizedModelWeights;
 pub use infer_models::{load_model_dir, load_model_dir_walk_only, resolve_model_path};
+pub use infer_models::load_gguf_quantized;
+
+/// Enum to hold either f32-expanded weights or native quantized weights.
+///
+/// This allows the inference engine to work with both loading paths:
+/// - `F32`: standard load path where all tensors are dequantized to f32 arrays
+/// - `Quantized`: skip-dequant path where 2D weights stay in native format (Q4_K, Q6_K, etc.)
+///
+/// The forward pass checks which variant is active and uses quantized matvec kernels
+/// when weights are `Quantized`, avoiding the f32 intermediate entirely.
+pub enum ModelWeightsVariant {
+    /// Standard f32 weights (from load_gguf, load_model_dir, etc.)
+    F32(ModelWeights),
+    /// Native quantized weights (from load_gguf_quantized) — ~6x memory savings.
+    Quantized(QuantizedModelWeights),
+}
+
+impl ModelWeightsVariant {
+    /// Get the number of layers regardless of variant.
+    pub fn num_layers(&self) -> usize {
+        match self {
+            Self::F32(w) => w.num_layers,
+            Self::Quantized(w) => w.num_layers(),
+        }
+    }
+
+    /// Get hidden size regardless of variant.
+    pub fn hidden_size(&self) -> usize {
+        match self {
+            Self::F32(w) => w.hidden_size,
+            Self::Quantized(w) => w.hidden_size(),
+        }
+    }
+
+    /// Get a 1D vector (norm weights, biases) by key — available in both variants.
+    pub fn get_vector(&self, key: &str) -> Option<&[f32]> {
+        match self {
+            Self::F32(w) => w.vectors.get(key).map(|v| v.as_slice()),
+            Self::Quantized(w) => w.get_vector(key),
+        }
+    }
+
+    /// Returns true if this is the quantized variant.
+    pub fn is_quantized(&self) -> bool {
+        matches!(self, Self::Quantized(_))
+    }
+
+    /// Get the f32 variant, or None if quantized.
+    pub fn as_f32(&self) -> Option<&ModelWeights> {
+        match self {
+            Self::F32(w) => Some(w),
+            Self::Quantized(_) => None,
+        }
+    }
+
+    /// Get the quantized variant, or None if f32.
+    pub fn as_quantized(&self) -> Option<&QuantizedModelWeights> {
+        match self {
+            Self::F32(_) => None,
+            Self::Quantized(w) => Some(w),
+        }
+    }
+}
+>>>>>>> theirs
 
 /// Synthetic test fixtures for unit tests that need a functional `ModelWeights`
 /// without loading from disk.

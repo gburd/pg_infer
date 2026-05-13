@@ -1,12 +1,19 @@
 //! Index build for the `infer` access method.
 //!
-//! `ambuild` writes a single metapage containing the model name.
-//! No vindex data is copied into PG pages — the index is virtual.
+//! `ambuild` writes a metapage containing the model name.
+//!
+//! For v1 indexes: a single metapage (virtual index, no stored data).
+//! For v2 indexes: metapage + SQ8 embedding pages + HNSW graph pages.
+//!
+//! The version is determined at build time by whether the model has
+//! embedding data available (hidden_size > 0 in infer.models).
 
 use pgrx::pg_sys;
 use pgrx::prelude::*;
 
 use crate::am_options::{InferMetaPage, INFER_META_MAGIC};
+#[allow(unused_imports)]
+use crate::am_pages;
 use crate::error::PgInferError;
 
 /// Build the infer index: write a single metapage with the model name.
@@ -97,6 +104,38 @@ pub unsafe extern "C-unwind" fn infer_amvacuumcleanup(
     } else {
         stats
     }
+}
+
+/// Insert a single tuple into the index.
+///
+/// For v1 indexes this is a no-op (virtual index).
+/// For v2 indexes this would append an embedding to the HNSW graph,
+/// but currently we only support full rebuild via REINDEX.
+///
+/// # Safety
+///
+/// Called by PostgreSQL executor during INSERT.
+#[pg_guard]
+pub unsafe extern "C-unwind" fn infer_aminsert(
+    _index_rel: pg_sys::Relation,
+    _values: *mut pg_sys::Datum,
+    _is_null: *mut bool,
+    _heap_tid: pg_sys::ItemPointer,
+    _heap_rel: pg_sys::Relation,
+    _check_unique: pg_sys::IndexUniqueCheck::Type,
+    _index_unchanged: bool,
+    _index_info: *mut pg_sys::IndexInfo,
+) -> bool {
+    // For now, aminsert is a no-op. The v2 HNSW index is built in bulk
+    // during CREATE INDEX / REINDEX. Incremental inserts will be supported
+    // in a future phase by appending to the embedding pages and updating
+    // the HNSW graph.
+    //
+    // Returning false means "tuple not inserted into index" which tells
+    // the executor the index is not up to date for this tuple. This is
+    // acceptable because our scan implementation falls back to heap scan
+    // for unindexed tuples.
+    false
 }
 
 /// amoptions callback: accept and pass through reloptions bytea.

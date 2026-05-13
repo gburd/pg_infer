@@ -88,11 +88,11 @@ impl GgufValue {
 // ═══════════════════════════════════════════════════════════════
 
 pub struct GgufTensorInfo {
-    name: String,
-    n_dims: u32,
-    dims: Vec<u64>,
-    tensor_type: u32,
-    offset: u64,
+    pub(crate) name: String,
+    pub(crate) n_dims: u32,
+    pub(crate) dims: Vec<u64>,
+    pub(crate) tensor_type: u32,
+    pub(crate) offset: u64,
 }
 
 // ═══════════════════════════════════════════════════════════════

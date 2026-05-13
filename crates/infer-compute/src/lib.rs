@@ -38,6 +38,9 @@ pub mod pipeline;
 #[cfg(feature = "metal")]
 pub mod metal;
 
+#[cfg(feature = "cuda")]
+pub mod cuda;
+
 // ── Re-exports: pipeline types ──
 
 pub use pipeline::{
@@ -55,6 +58,9 @@ pub use cpu::ops::linalg::{cholesky, cholesky_solve, cholesky_inverse, ridge_dec
 
 #[cfg(feature = "metal")]
 pub use metal::MetalBackend;
+
+#[cfg(feature = "cuda")]
+pub use cuda::CudaBackend;
 
 /// Create the best available backend.
 ///
@@ -75,6 +81,13 @@ pub fn default_backend() -> Box<dyn ComputeBackend> {
             return Box::new(m);
         }
         eprintln!("[compute] Metal not available, falling back to CPU");
+    }
+    #[cfg(feature = "cuda")]
+    {
+        match cuda::CudaBackend::new(0) {
+            Ok(c) => return Box::new(c),
+            Err(e) => eprintln!("[compute] CUDA not available ({e}), falling back to CPU"),
+        }
     }
     Box::new(cpu::CpuBackend)
 }
