@@ -47,11 +47,14 @@ FROM directive in Vindexfile resolves `hf://user/repo` paths via `resolve_hf_vin
 
 `write_checkpoint()` / `has_checkpoint()` + `build_vindex_resume()` entry point for interrupted builds.
 
-### Q4_K FFN in vindex
-**Effort**: Low  
-**Status**: Not started (Q4_0 interleaved exists)
+### Q4_K FFN in vindex — DONE
+**Effort**: Low
+**Status**: ✅ Complete (2026-05)
 
-Currently FFN gate/up/down stored as Q4_0. Switch to Q4_K (matching Ollama) for better precision at similar size.
+Extraction now emits `interleaved_q4k.bin` (Q4_K gate/up + Q6_K down) by default for all
+dense models regardless of `--quant` setting. Both the streaming and non-streaming build
+paths call `write_ffn_interleaved_q4k()`. Inference already prefers Q4_K when the file is
+present; legacy Q4_0 (`interleaved_q4.bin`) remains a supported fallback for old vindexes.
 
 ## P2: Research
 
@@ -89,3 +92,4 @@ Add new layers/features to an existing vindex without full rebuild.
 | Example cleanup (13→11) | 2026-04-07 | Removed Q4_0 attn + Q4_0 interleaved |
 | 8 ADRs documented | 2026-04-07 | All major decisions recorded |
 | PERFORMANCE.md + format alignment | 2026-04-07 | Fresh benchmarks, verified pipeline |
+| Q4_K FFN in vindex | 2026-05 | Default Q4_K FFN for dense models |

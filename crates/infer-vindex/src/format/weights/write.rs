@@ -649,6 +649,74 @@ pub fn write_model_weights_q4k(
     write_model_weights_q4k_with_opts(source, dir, callbacks, Q4kWriteOptions::default())
 }
 
+/// Write **only** the Q4_K interleaved FFN file (`interleaved_q4k.bin` +
+/// `interleaved_q4k_manifest.json`).
+///
+/// This is the standalone FFN-only entrypoint: it does NOT touch attention
+/// weights, norms, lm_head, or `index.json`. Use it when you want to add a
+/// Q4_K FFN sidecar to a vindex that was extracted with `QuantFormat::None`
+/// (f32/f16 base weights). The inference engine will automatically prefer
+/// the Q4_K path when `interleaved_q4k.bin` is present.
+///
+/// Layout: layer-major `[gate Q4_K | up Q4_K | down Q6_K]` per layer.
+/// With `opts.down_q4k = true`, down is also Q4_K.
+pub fn write_ffn_interleaved_q4k(
+    source: &dyn WeightSource,
+    dir: &Path,
+    callbacks: &mut dyn IndexBuildCallbacks,
+    opts: Q4kWriteOptions,
+) -> Result<(), VindexError> {
+    use infer_compute::cpu::ops::q4_common::{quantize_q4_k, quantize_q6_k};
+
+    callbacks.on_stage("ffn_q4k");
+    let start = std::time::Instant::now();
+
+    let arch = source.arch();
+    let num_layers = source.num_layers();
+
+    let ff_path = dir.join("interleaved_q4k.bin");
+    let mut ff_file = BufWriter::new(std::fs::File::create(&ff_path)?);
+    let mut ff_offset: u64 = 0;
+    let mut ff_manifest: Vec<Q4kAttnEntry> = Vec::with_capacity(num_layers * 3);
+
+    for layer in 0..num_layers {
+        callbacks.on_layer_start("ffn_q4k", layer, num_layers);
+        for (i, key) in [
+            arch.ffn_gate_key(layer),
+            arch.ffn_up_key(layer),
+            arch.ffn_down_key(layer),
+        ].iter().enumerate() {
+            if let Some((data, rows, cols)) = source.get_tensor(key) {
+                let (padded, padded_cols) = pad_rows_to_256(&data, rows, cols);
+                let is_down = i == 2;
+                let use_q6 = is_down && !opts.down_q4k;
+                let q_bytes = if use_q6 { quantize_q6_k(&padded) } else { quantize_q4_k(&padded) };
+                let format = if use_q6 { QuantBlockFormat::Q6K } else { QuantBlockFormat::Q4K };
+                ff_file.write_all(&q_bytes)?;
+                let length = q_bytes.len() as u64;
+                ff_manifest.push(Q4kAttnEntry {
+                    key: key.clone(),
+                    shape: vec![rows, padded_cols],
+                    format,
+                    offset: ff_offset,
+                    length,
+                });
+                ff_offset += length;
+            }
+        }
+        callbacks.on_layer_done("ffn_q4k", layer, 0.0);
+    }
+    ff_file.flush()?;
+    drop(ff_file);
+
+    let ff_manifest_json = serde_json::to_string_pretty(&ff_manifest)
+        .map_err(|e| VindexError::Parse(e.to_string()))?;
+    std::fs::write(dir.join("interleaved_q4k_manifest.json"), ff_manifest_json)?;
+
+    callbacks.on_stage_done("ffn_q4k", start.elapsed().as_secs_f64() * 1000.0);
+    Ok(())
+}
+
 /// Like [`write_model_weights_q4k`] but accepts a [`Q4kWriteOptions`] knob
 /// to toggle the FFN down-proj quantisation format.
 pub fn write_model_weights_q4k_with_opts(
@@ -739,59 +807,8 @@ pub fn write_model_weights_q4k_with_opts(
     std::fs::write(dir.join("attn_weights_q4k_manifest.json"), manifest_json)?;
 
     // ── interleaved_q4k.bin (FFN gate/up/down) + manifest ──
-    //
-    // Layer-major: for each layer, `gate Q4_K + up Q4_K + down Q6_K`
-    // concatenated. Stride is regular across layers but block sizes
-    // depend on the architecture's hidden / intermediate, so we emit a
-    // sidecar manifest symmetric with `attn_weights_q4k_manifest.json`.
-    // Downstream readers resolve by key + layer instead of recomputing
-    // byte offsets; a shape/stride mismatch now fails at load rather
-    // than silently corrupting.
-    let ff_path = dir.join("interleaved_q4k.bin");
-    let mut ff_file = BufWriter::new(std::fs::File::create(&ff_path)?);
-    let mut ff_offset: u64 = 0;
-    let mut ff_manifest: Vec<Q4kAttnEntry> = Vec::with_capacity(num_layers * 3);
-
-    for layer in 0..num_layers {
-        callbacks.on_layer_start("ffn_q4k", layer, num_layers);
-        for (i, key) in [
-            arch.ffn_gate_key(layer),
-            arch.ffn_up_key(layer),
-            arch.ffn_down_key(layer),
-        ].iter().enumerate() {
-            if let Some((data, rows, cols)) = source.get_tensor(key) {
-                // Row-pad to 256 so each row aligns to a super-block boundary.
-                // Without this, matrices with `cols % 256 != 0` (e.g. Gemma 4
-                // 26B A4B's down_proj with inner dim 2112) store contiguous
-                // quantisation that every row past row 0 reads wrong. See
-                // `pad_rows_to_256` docs.
-                let (padded, padded_cols) = pad_rows_to_256(&data, rows, cols);
-                // Gate (i=0) and up (i=1) always Q4_K. Down (i=2) defaults
-                // to Q6_K for llama.cpp compatibility, Q4_K when opts.down_q4k.
-                let is_down = i == 2;
-                let use_q6 = is_down && !opts.down_q4k;
-                let q_bytes = if use_q6 { quantize_q6_k(&padded) } else { quantize_q4_k(&padded) };
-                let format = if use_q6 { QuantBlockFormat::Q6K } else { QuantBlockFormat::Q4K };
-                ff_file.write_all(&q_bytes)?;
-                let length = q_bytes.len() as u64;
-                ff_manifest.push(Q4kAttnEntry {
-                    key: key.clone(),
-                    shape: vec![rows, padded_cols],
-                    format,
-                    offset: ff_offset,
-                    length,
-                });
-                ff_offset += length;
-            }
-        }
-        callbacks.on_layer_done("ffn_q4k", layer, 0.0);
-    }
-    ff_file.flush()?;
-    drop(ff_file);
-
-    let ff_manifest_json = serde_json::to_string_pretty(&ff_manifest)
-        .map_err(|e| VindexError::Parse(e.to_string()))?;
-    std::fs::write(dir.join("interleaved_q4k_manifest.json"), ff_manifest_json)?;
+    // Delegate to the standalone FFN writer.
+    write_ffn_interleaved_q4k(source, dir, callbacks, opts)?;
 
     // ── experts_packed.bin (hybrid MoE PackedBF16, e.g. Gemma 4 26B A4B) ──
     //

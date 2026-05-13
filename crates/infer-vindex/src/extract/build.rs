@@ -518,6 +518,16 @@ impl<'a> BuildContext<'a> {
         if extract_level != crate::ExtractLevel::Browse {
             crate::format::weights::write_model_weights(self.weights, self.output_dir, self.callbacks)?;
             config.has_model_weights = true;
+            // Also emit interleaved_q4k.bin for FFN — inference prefers
+            // Q4_K over f32 up/down_weights.bin for faster matvec dispatch.
+            if !self.is_moe {
+                crate::format::weights::write_ffn_interleaved_q4k(
+                    self.weights,
+                    self.output_dir,
+                    self.callbacks,
+                    crate::format::weights::Q4kWriteOptions::default(),
+                )?;
+            }
         }
 
         // Final pass — provenance + checksums.

@@ -560,6 +560,14 @@ pub fn build_vindex_streaming(
                 crate::format::weights::write_model_weights_with_opts(
                     &streaming_source, output_dir, callbacks, level_opts,
                 )?;
+                // Also emit interleaved_q4k.bin for the FFN — inference
+                // prefers Q4_K over f32 up/down_weights.bin for matvec
+                // (faster dispatch, Ollama-compatible precision).
+                if level_opts.level.writes_ffn() && !arch.is_moe() {
+                    crate::format::weights::write_ffn_interleaved_q4k(
+                        &streaming_source, output_dir, callbacks, q4k_opts,
+                    )?;
+                }
             }
             QuantFormat::Q4k => {
                 // Q4K doesn't write `up_weights.bin` / `down_weights.bin`

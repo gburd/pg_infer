@@ -43,11 +43,11 @@ Implemented in `engines/markov_residual/`. Stores per-layer pre-attention residu
 **Status**: ✅ Stale — no `ffn/experimental/` directory exists. Production backends only.
 
 ### Example reorganization
-**Effort**: Low  
-**Status**: Not started
+**Effort**: Low
+**Status**: ✅ Complete (2026-05) — examples renamed with prefix convention
 
-22 examples need prefix-based organization like infer-compute:
-`demo_`, `compare_`, `profile_`, `bench_`, `test_`
+49 examples organized with prefix-based naming:
+`demo_` (8), `bench_` (17), `profile_` (10), `test_` (14)
 
 ### Add doc tests
 **Effort**: Low  

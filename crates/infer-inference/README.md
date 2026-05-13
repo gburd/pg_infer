@@ -110,26 +110,26 @@ cargo run --release -p infer-inference --example bench_walk_inference -- \
   --model google/gemma-3-4b-it --vindex path/to/vindex
 
 # Walk boundary sweep (correctness proof across all 34 layers)
-cargo run --release -p infer-inference --example walk_boundary_sweep -- \
+cargo run --release -p infer-inference --example bench_walk_boundary_sweep -- \
   --model google/gemma-3-4b-it --vindex path/to/vindex
 
 # Fused attention demo and benchmark
-cargo run --release -p infer-inference --example attention_demo
+cargo run --release -p infer-inference --example demo_attention
 cargo run --release -p infer-inference --example bench_attention
 
 # Backend demo and benchmark (CPU vs Metal)
-cargo run --release -p infer-inference --example backend_demo --features metal
+cargo run --release -p infer-inference --example demo_backend --features metal
 cargo run --release -p infer-inference --example bench_backend --features metal
 
 # Full inference benchmark (needs model weights)
 cargo run --release -p infer-inference --example bench_inference
 
 # End-to-end inference demo (needs model weights)
-cargo run --release -p infer-inference --example inference_demo
+cargo run --release -p infer-inference --example demo_inference
 
 # Clustering and pair matching demos
-cargo run -p infer-inference --example clustering_demo
-cargo run -p infer-inference --example pair_matching_demo
+cargo run -p infer-inference --example demo_clustering
+cargo run -p infer-inference --example demo_pair_matching
 ```
 
 ### Vindex tools
