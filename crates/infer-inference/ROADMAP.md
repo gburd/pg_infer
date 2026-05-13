@@ -49,11 +49,12 @@ Implemented in `engines/markov_residual/`. Stores per-layer pre-attention residu
 49 examples organized with prefix-based naming:
 `demo_` (8), `bench_` (17), `profile_` (10), `test_` (14)
 
-### Add doc tests
-**Effort**: Low  
-**Status**: 0 doc tests currently
+### Add doc tests — DONE
+**Effort**: Low
+**Status**: ✅ Complete (2026-05)
 
-Add examples to `attention.rs`, `forward.rs`, `layer_graph/mod.rs`.
+18 doc tests across `attention/` (rope, decode, block, mod), `forward/` (embed, mod, predict, ple),
+`layer_graph/` (mod, cached, dense, template), `error.rs`, and `tokenizer.rs`.
 
 ## P2: Research
 
@@ -86,3 +87,4 @@ with persistent KV cache. Sliding-window variant available via `generate_cached_
 | Post-norm guard | 2026-04-07 | Gemma3 falls to CPU correctly |
 | Zero warnings | 2026-04-07 | Clean build |
 | PERFORMANCE.md | 2026-04-07 | Benchmark data documented |
+| Doc tests | 2026-05 | 18 examples across attention, forward, layer_graph |

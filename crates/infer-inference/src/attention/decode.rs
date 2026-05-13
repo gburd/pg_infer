@@ -22,6 +22,20 @@ use super::rope::apply_rope_partial_at;
 ///
 /// Memory: O(num_layers × window × kv_dim × 4 bytes) when bounded,
 /// O(num_layers × seq_len × kv_dim × 4 bytes) when unbounded.
+/// # Examples
+///
+/// ```
+/// use infer_inference::attention::KvCache;
+///
+/// // Unbounded cache for a 21-layer model
+/// let cache = KvCache::with_layers(21);
+/// assert_eq!(cache.cached_len(0), 0);
+/// assert_eq!(cache.next_position, 0);
+///
+/// // Bounded (sliding window) cache — keeps last 512 positions
+/// let bounded = KvCache::with_window(21, 512);
+/// assert_eq!(bounded.max_window, Some(512));
+/// ```
 #[derive(Clone, Debug, Default)]
 pub struct KvCache {
     /// One entry per layer. `None` for layers that reuse another

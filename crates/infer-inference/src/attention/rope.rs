@@ -7,6 +7,21 @@ use ndarray::Array2;
 
 /// Apply full RoPE to Q or K vectors.
 /// x: (seq_len, num_heads * head_dim)
+///
+/// # Examples
+///
+/// ```
+/// use ndarray::Array2;
+/// use infer_inference::attention::apply_rope;
+///
+/// // Single token, 2 heads, head_dim=4 → input shape (1, 8)
+/// let x = Array2::from_shape_vec((1, 8), vec![1.0; 8]).unwrap();
+/// let rotated = apply_rope(&x, 2, 4, 10000.0);
+///
+/// assert_eq!(rotated.shape(), &[1, 8]);
+/// // Position 0 with freq 0 → cos(0)=1, sin(0)=0, so first pair unchanged
+/// assert!((rotated[[0, 0]] - 1.0).abs() < 1e-5);
+/// ```
 pub fn apply_rope(
     x: &Array2<f32>,
     num_heads: usize,
