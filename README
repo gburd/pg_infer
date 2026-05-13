@@ -1,8 +1,22 @@
 pg_infer
 ========
 
+Status: EXPERIMENTAL (v0.1.0-alpha)
+
 A PostgreSQL extension that exposes transformer model knowledge as
 SQL-queryable relations.  Built on pgrx 0.17 for PostgreSQL 18+.
+
+This project is in early experimental stage.  It is functional, tested
+(769+ tests passing), and performant on supported hardware, but:
+
+  - The SQL API may change without notice between releases
+  - No production deployments exist yet
+  - Some compute paths require specific hardware (Apple Metal, NVIDIA CUDA)
+  - The vindex format is not yet frozen
+
+Use pg_infer if you want to explore what's possible at the intersection
+of transformer model internals and relational databases.  Do not use it
+for production workloads without accepting the risk of breaking changes.
 
 pg_infer lets you ask questions about what a language model "knows" --
 its internal feature activations, learned associations, and semantic
