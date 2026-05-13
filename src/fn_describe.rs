@@ -87,8 +87,8 @@ pub(crate) fn mmap_describe(
     let gate_threshold = resolve_threshold(explicit_threshold, &all_hits);
 
     // 4. Filter and accumulate edges by target token.
-    // Map: lowercased target → (original target, best gate score, best layer, count)
-    let mut edges: HashMap<String, (String, f32, usize, usize)> = HashMap::new();
+    // Map: lowercased target → (original target, best gate score, best layer, count, secondaries)
+    let mut edges: HashMap<String, (String, f32, usize, usize, Vec<String>)> = HashMap::new();
 
     for &(layer, feature_idx, gate_score) in &all_hits {
         if gate_score < gate_threshold {
@@ -112,7 +112,7 @@ pub(crate) fn mmap_describe(
         // Coherence filter: check that at least one secondary token is
         // also a content word.  This matches LARQL describe.rs:424-448.
         // Exclude secondaries matching the primary token or the query entity.
-        let has_coherent_secondary = meta
+        let coherent_secondaries: Vec<String> = meta
             .top_k
             .iter()
             .filter(|e| {
@@ -121,9 +121,11 @@ pub(crate) fn mmap_describe(
                     && e.token.to_lowercase() != entity_lower
             })
             .take(5)
-            .any(|e| helpers::is_content_token(&e.token));
+            .filter(|e| helpers::is_content_token(&e.token))
+            .map(|e| e.token.clone())
+            .collect();
 
-        if !has_coherent_secondary && gate_score < 20.0 {
+        if coherent_secondaries.is_empty() && gate_score < 20.0 {
             // No coherent secondary tokens and gate score is weak —
             // skip this edge.  Strong scores (≥ 20.0) are accepted on
             // the primary token alone.
@@ -133,11 +135,12 @@ pub(crate) fn mmap_describe(
         let key = tok.to_lowercase();
         let entry = edges
             .entry(key)
-            .or_insert_with(|| (tok.clone(), 0.0, layer, 0));
+            .or_insert_with(|| (tok.clone(), 0.0, layer, 0, Vec::new()));
 
         if gate_score > entry.1 {
             entry.1 = gate_score;
             entry.2 = layer;
+            entry.4 = coherent_secondaries;
         }
         entry.3 += 1;
     }
@@ -148,12 +151,21 @@ pub(crate) fn mmap_describe(
 
     let results: Vec<crate::backend::Edge> = ranked
         .into_iter()
-        .map(|(target, score, layer, _count)| crate::backend::Edge {
-            // Relation labelling requires a trained classifier (Phase 2).
-            relation: String::new(),
-            target,
-            gate_score: score as f64,
-            layer: layer as i32,
+        .map(|(target, score, layer, _count, secondaries)| {
+            let sec_refs: Vec<&str> = secondaries.iter().map(|s| s.as_str()).collect();
+            let relation = crate::relation_classify::classify_relation(
+                layer,
+                num_layers,
+                &target,
+                score,
+                &sec_refs,
+            );
+            crate::backend::Edge {
+                relation: relation.to_string(),
+                target,
+                gate_score: score as f64,
+                layer: layer as i32,
+            }
         })
         .collect();
 

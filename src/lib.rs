@@ -25,6 +25,7 @@ mod helpers;
 mod interrupt;
 mod model_mgmt;
 mod registry;
+mod relation_classify;
 mod tracing_layer;
 
 // Bootstrap the infer schema and model registry table during CREATE EXTENSION.
