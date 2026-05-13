@@ -98,7 +98,7 @@ pub use patch::refine::{refine_gates, RefineInput, RefineResult, RefinedGate};
 // Storage engine
 pub use storage::{
     memit_solve, CompactStatus, Epoch, MemitCycle, MemitFact, MemitSolveResult, MemitStore,
-    StorageEngine,
+    ResidualCache, ResidualCacheBuilder, ResidualEntry, StorageEngine,
 };
 
 // Vindexfile

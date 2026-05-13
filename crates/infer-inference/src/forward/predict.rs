@@ -124,6 +124,33 @@ pub(super) fn logits_to_predictions(
 }
 
 /// Run a full forward pass and return the top-k next token predictions.
+///
+/// Embeds the given token IDs, runs through all transformer layers with
+/// dense attention and weight-based FFN, then projects to logits and
+/// returns the top-k most likely next tokens with their probabilities.
+///
+/// Uses temperature 1.0 (no scaling). For temperature control, use
+/// [`predict_with_temperature`].
+///
+/// # Examples
+///
+/// ```no_run
+/// use infer_inference::{predict, load_model_dir, load_tokenizer};
+/// use std::path::Path;
+///
+/// let model_dir = Path::new("/path/to/model");
+/// let weights = load_model_dir(model_dir).unwrap();
+/// let tokenizer = load_tokenizer(model_dir).unwrap();
+///
+/// let token_ids = vec![1, 450, 5765, 315]; // "The capital of"
+/// let result = predict(&weights, &tokenizer, &token_ids, 5);
+///
+/// // result.predictions is Vec<(String, f64)> sorted by probability
+/// assert!(result.predictions.len() <= 5);
+/// for (token_str, prob) in &result.predictions {
+///     assert!(*prob >= 0.0 && *prob <= 1.0);
+/// }
+/// ```
 pub fn predict(
     weights: &ModelWeights,
     tokenizer: &tokenizers::Tokenizer,

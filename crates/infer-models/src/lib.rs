@@ -6,7 +6,7 @@ pub mod quant;
 pub mod vectors;
 pub mod weights;
 
-pub use config::{Activation, ExpertFormat, FfnType, ModelArchitecture, ModelConfig, NormType, RopeScaling};
+pub use config::{Activation, ExpertFormat, FfnLayerType, FfnType, ModelArchitecture, ModelConfig, NormType, RopeScaling};
 pub use detect::{detect_architecture, detect_from_json, detect_from_json_strict, ModelError};
 
 pub use architectures::bitnet::BitNetArch;

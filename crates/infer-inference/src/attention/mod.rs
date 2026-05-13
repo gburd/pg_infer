@@ -15,6 +15,28 @@ pub mod gpu;
 use ndarray::Array2;
 
 /// Per-head attention weights for the last token position.
+///
+/// Captures the attention distribution across all sequence positions for
+/// each head at the final (generated) token. Useful for interpretability
+/// and attention-pattern analysis.
+///
+/// # Examples
+///
+/// ```
+/// use infer_inference::AttentionWeights;
+///
+/// // 8 heads, each attending over 5 positions
+/// let heads: Vec<Vec<f32>> = (0..8)
+///     .map(|_| vec![0.2, 0.2, 0.2, 0.2, 0.2])
+///     .collect();
+/// let attn = AttentionWeights { heads };
+///
+/// assert_eq!(attn.heads.len(), 8);
+/// assert_eq!(attn.heads[0].len(), 5);
+/// // Each head's weights should sum to ~1.0 (softmax output)
+/// let sum: f32 = attn.heads[0].iter().sum();
+/// assert!((sum - 1.0).abs() < 1e-5);
+/// ```
 pub struct AttentionWeights {
     /// Per-head attention distribution for the last sequence position.
     /// `heads[h][j]` = attention weight from last token to position j.

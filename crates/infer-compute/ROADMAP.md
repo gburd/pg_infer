@@ -28,6 +28,11 @@ Previous: 29.2ms / 34 tok/s (2.84x Ollama).
 
 L0-12 are template-fixed (0.999 cosine similarity). At 0.25ms/layer × 8 layers = 2ms → ~500 tok/s.
 
+### CUDA prefill pipeline with post-norm support
+**Impact**: GPU prefill on NVIDIA hardware (Linux)
+**Effort**: Medium
+**Status**: ✅ Complete (2026-05) — ports Metal prefill logic to cuBLAS, handles both pre-norm and post-norm
+
 ### ✅ Optimize KV cache attend kernel
 **Status**: Complete — simd_max/simd_sum reductions, float4 Q·K dot products, 1024-entry scores.
 

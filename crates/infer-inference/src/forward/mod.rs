@@ -44,6 +44,28 @@ pub struct TraceResult {
 }
 
 /// Prediction result from a full forward pass.
+///
+/// Contains the top-k next-token predictions sorted by probability (descending),
+/// along with their raw token IDs for autoregressive use.
+///
+/// # Examples
+///
+/// ```
+/// use infer_inference::forward::PredictResult;
+///
+/// let result = PredictResult {
+///     predictions: vec![
+///         ("Paris".to_string(), 0.42),
+///         ("London".to_string(), 0.18),
+///         ("Berlin".to_string(), 0.09),
+///     ],
+///     token_ids: vec![3681, 4566, 9823],
+/// };
+///
+/// // The top prediction is the first entry
+/// assert_eq!(result.predictions[0].0, "Paris");
+/// assert_eq!(result.predictions.len(), result.token_ids.len());
+/// ```
 pub struct PredictResult {
     pub predictions: Vec<(String, f64)>,
     /// Top-k token IDs parallel to `predictions`. `token_ids[i]`

@@ -7,7 +7,7 @@
 ### Fix GPU prefill for post-norm models (Gemma3)
 **Impact**: 203ms → ~17ms honest with GPU prefill  
 **Effort**: Medium  
-**Status**: In progress — activation fix done, post-norm wiring incomplete
+**Status**: In progress — Metal done, CUDA port complete (hardware validation pending)
 
 The GPU `prefill_q4` path produces wrong output for Gemma3 post-norm architecture.
 Root cause: `prefill.rs` doesn't mirror `full_pipeline.rs`'s post-norm handling.

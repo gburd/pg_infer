@@ -25,6 +25,20 @@ pub fn load_tokenizer(model_dir: &Path) -> Result<tokenizers::Tokenizer, Inferen
 /// resulting encoding doesn't already start with that id. Safe to call
 /// on Gemma 2/3/Llama/etc.; they return `None` and the encoding is
 /// untouched.
+///
+/// # Examples
+///
+/// ```no_run
+/// use infer_inference::{encode_prompt, load_model_dir, load_tokenizer};
+/// use std::path::Path;
+///
+/// let model_dir = Path::new("/path/to/model");
+/// let weights = load_model_dir(model_dir).unwrap();
+/// let tokenizer = load_tokenizer(model_dir).unwrap();
+///
+/// let token_ids = encode_prompt(&tokenizer, &*weights.arch, "Hello world").unwrap();
+/// assert!(!token_ids.is_empty());
+/// ```
 pub fn encode_prompt(
     tokenizer: &tokenizers::Tokenizer,
     arch: &dyn ModelArchitecture,

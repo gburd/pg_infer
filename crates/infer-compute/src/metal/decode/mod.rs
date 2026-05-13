@@ -167,6 +167,17 @@ impl MetalBackend {
         for l in 0..num_layers {
             let layer = &layers[l];
 
+            // Skip cached layers: write pre-computed residual into next h buffer.
+            if let Some(cached) = layer.cached_residual {
+                let new_h = if l % 2 == 0 { &h_a } else { &h_b };
+                let dst = new_h.contents() as *mut f32;
+                unsafe {
+                    std::ptr::copy_nonoverlapping(cached.as_ptr(), dst, hidden);
+                }
+                h_buf = new_h;
+                continue;
+            }
+
             // Snapshot the layer input for HF-reference diff. Must be taken
             // before any compute since `h_buf` = layer-N input at this point
             // (it's the previous layer's `new_h`, or the embedding for L0).

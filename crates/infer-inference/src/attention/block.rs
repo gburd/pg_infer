@@ -8,7 +8,35 @@ use super::{AttentionWeights, SharedKV};
 use super::rope::apply_rope_partial;
 use super::gqa::gqa_attention_with_weights;
 
-/// Run the full attention block. Returns (h_post_attn, attn_projected, optional_weights).
+/// Run the full attention block for a single transformer layer.
+///
+/// Performs: input norm, Q/K/V projection, RoPE, grouped-query attention,
+/// O-projection, and residual addition. Returns:
+/// - `h_post_attn`: the residual after attention (input to FFN)
+/// - `attn_projected`: the raw attention output before residual add
+/// - `optional_weights`: per-head attention patterns (if `capture_attention` is true)
+///
+/// Returns `None` if the required weight tensors are missing.
+///
+/// # Examples
+///
+/// ```no_run
+/// use infer_inference::attention::run_attention_block;
+/// use infer_inference::load_model_dir;
+/// use std::path::Path;
+///
+/// let weights = load_model_dir(Path::new("/path/to/model")).unwrap();
+/// let h = infer_inference::forward::embed_tokens_pub(&weights, &[1, 450, 5765]);
+///
+/// let (h_post_attn, _proj, attn_weights) =
+///     run_attention_block(&weights, &h, 0, true).unwrap();
+///
+/// // h_post_attn has same shape as input
+/// assert_eq!(h_post_attn.shape(), h.shape());
+/// // Attention weights captured for analysis
+/// let attn = attn_weights.unwrap();
+/// assert!(!attn.heads.is_empty());
+/// ```
 #[allow(clippy::too_many_arguments)]
 pub fn run_attention_block(
     weights: &crate::model::ModelWeights,

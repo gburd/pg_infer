@@ -14,9 +14,9 @@ Architecture config is now authoritative. `attention/block.rs` uses `arch.v_shar
 ### Validate PLE (per-layer embeddings) end-to-end
 **Impact**: Correct Gemma 4 E2B inference  
 **Effort**: Medium  
-**Status**: Keys and config parsed, forward pass not yet wired
+**Status**: ✅ Complete (2026-05) — forward pass wired, E2E test validates precompute + gate + contribution
 
-PLE adds a gated embedding lookup per layer. Keys (`per_layer_embed_key`, `per_layer_input_gate_key`, `per_layer_projection_key`, `post_per_layer_input_norm_key`) are all implemented. Need to wire into inference and verify against HuggingFace reference outputs.
+PLE adds a gated embedding lookup per layer. Keys (`per_layer_embed_key`, `per_layer_input_gate_key`, `per_layer_projection_key`, `post_per_layer_input_norm_key`) are all implemented. Forward pass integration in `forward/ple.rs` with `precompute_per_layer_inputs` + `apply_per_layer_embedding`. E2E test at `infer-inference/tests/test_ple_e2e.rs`.
 
 ### KV layer sharing in inference
 **Impact**: Memory savings for Gemma 4 (20 shared layers = 20 fewer KV caches)  
@@ -66,10 +66,10 @@ Apple MLX models sometimes use `.npz` format. Add npz parsing alongside safetens
 ## P3: Trait Evolution
 
 ### Per-layer FFN type
-**Effort**: Low  
-**Status**: Not started
+**Effort**: Low
+**Status**: ✅ Complete (2026-05)
 
-Some models (e.g., future MoE variants) may have different FFN types per layer (dense for early layers, MoE for later). Add `ffn_type_for_layer(layer)` method.
+`FfnLayerType` enum (`Dense` / `MoE { num_experts, top_k }`) and `ffn_type_for_layer(layer)` method on `ModelArchitecture`. Default returns `Dense`; overridden in Mixtral (all MoE), GPT-OSS (all MoE), DeepSeek v2/v3 (layer 0 dense, rest MoE), DeepSeek-V4 (same), and Gemma 4 (hybrid MoE when `enable_moe_block`).
 
 ### Attention pattern abstraction
 **Effort**: Medium  

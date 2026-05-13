@@ -7,6 +7,27 @@ use super::{LayerGraph, LayerOutput};
 
 /// Dense baseline: standard matmul attention + pluggable FFN backend.
 /// This is today's working path — nothing changes, just wrapped in the trait.
+///
+/// Uses full dense matrix multiplications for both attention and FFN.
+/// The `backend` field optionally enables GPU-accelerated attention.
+/// Set `capture_activation`/`capture_attention` to `true` to record
+/// intermediate values for analysis.
+///
+/// # Examples
+///
+/// ```ignore
+/// use infer_inference::layer_graph::DenseLayerGraph;
+/// use infer_inference::ffn::WeightFfn;
+///
+/// let ffn = WeightFfn { weights: &model_weights };
+/// let graph = DenseLayerGraph {
+///     ffn: &ffn,
+///     backend: None,
+///     capture_activation: false,
+///     capture_attention: false,
+/// };
+/// assert_eq!(graph.name(), "dense");
+/// ```
 pub struct DenseLayerGraph<'a> {
     pub ffn: &'a dyn FfnBackend,
     pub backend: Option<&'a dyn ComputeBackend>,
@@ -45,6 +66,23 @@ impl<'a> LayerGraph for DenseLayerGraph<'a> {
 }
 
 /// Per-layer graph selection: different layers can use different backends.
+///
+/// Allows assigning a distinct [`LayerGraph`] implementation to each layer.
+/// If the requested layer index exceeds the configured vec, the last entry
+/// is used as a fallback.
+///
+/// # Examples
+///
+/// ```ignore
+/// use infer_inference::layer_graph::{PerLayerGraph, CachedLayerGraph, DenseLayerGraph};
+///
+/// // Layers 0-12 use a cache, layers 13+ use dense
+/// let layers: Vec<&dyn LayerGraph> = (0..32)
+///     .map(|i| if i <= 12 { &cached as &dyn LayerGraph } else { &dense })
+///     .collect();
+/// let graph = PerLayerGraph::new(layers);
+/// assert_eq!(graph.name(), "per-layer");
+/// ```
 pub struct PerLayerGraph<'a> {
     layers: Vec<&'a dyn LayerGraph>,
 }

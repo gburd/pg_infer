@@ -6,7 +6,7 @@
 //! - YaRN RoPE scaling for extended context
 //! - Tensor key pattern: experts under mlp.experts.{id}, shared under mlp.shared_experts
 
-use crate::config::{ModelArchitecture, ModelConfig};
+use crate::config::{FfnLayerType, ModelArchitecture, ModelConfig};
 
 pub struct DeepSeekArch {
     config: ModelConfig,
@@ -31,6 +31,19 @@ impl ModelArchitecture for DeepSeekArch {
 
     fn is_moe(&self) -> bool {
         self.config.num_experts.unwrap_or(0) > 0
+    }
+
+    fn ffn_type_for_layer(&self, layer: usize) -> FfnLayerType {
+        // DeepSeek v2/v3: layer 0 is always dense, remaining layers are MoE
+        // (when num_experts > 0).
+        if layer == 0 || self.config.num_experts.unwrap_or(0) == 0 {
+            FfnLayerType::Dense
+        } else {
+            FfnLayerType::MoE {
+                num_experts: self.config.num_experts.unwrap_or(64),
+                top_k: self.config.num_experts_per_token.unwrap_or(6),
+            }
+        }
     }
 
     fn num_experts(&self) -> usize {

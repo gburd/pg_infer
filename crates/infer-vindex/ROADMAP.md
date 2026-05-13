@@ -13,7 +13,7 @@
 ### Store pre-computed residuals for template-fixed layers (L0-12)
 **Impact**: Enables 155+ tok/s decode (skip 13 of 21 layers)  
 **Effort**: Medium  
-**Status**: Not started (infrastructure ready — CachedLayerGraph in infer-inference)
+**Status**: In progress — ResidualCache on-disk format implemented
 
 The vindex needs to store cached residuals per template. During extraction, run one forward pass per template through L0-12 and save the output residual. At decode time, look up the cached residual instead of computing 13 layers.
 

@@ -167,6 +167,11 @@ pub struct FullPipelineLayer<'a> {
     /// FFN bias on down projection (StarCoder2). None = no bias.
     pub ffn_down_bias: Option<&'a [f32]>,
 
+    /// Pre-computed residual for this layer (if template-cached).
+    /// When Some, the decode pipeline skips all computation for this layer
+    /// and uses this as the output hidden state directly.
+    pub cached_residual: Option<&'a [f32]>,
+
     /// Hybrid MoE block (Gemma 4 26B A4B: dense MLP + expert block, outputs summed).
     /// None for all dense models.
     pub moe: Option<MoeLayerWeights<'a>>,

@@ -529,6 +529,16 @@ pub fn dispatch_full_pipeline(
     }
 
     for l in 0..num_layers {
+        // Skip cached layers: write pre-computed residual into next h buffer.
+        if let Some(cached) = layers[l].cached_residual {
+            let dst = h_bufs[l + 1].contents() as *mut f32;
+            let count = cached.len().min(seq_len * hidden);
+            unsafe {
+                std::ptr::copy_nonoverlapping(cached.as_ptr(), dst, count);
+            }
+            continue;
+        }
+
         let eps = layers[l].eps;
         let layer_rope_base = layers[l].rope_base;
         let layer_head_dim = layers[l].head_dim;

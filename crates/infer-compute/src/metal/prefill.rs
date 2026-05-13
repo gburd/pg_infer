@@ -159,6 +159,12 @@ pub fn dispatch_prefill(
     let cmd = queue.new_command_buffer();
 
     for l in 0..num_layers {
+        // Skip cached layers: overwrite h_buf with pre-computed residual.
+        if let Some(cached) = layers[l].cached_residual {
+            h_buf = bufs.transient_from_f32(cached);
+            continue;
+        }
+
         let norm_offset = layers[l].norm_offset;
         let eps = layers[l].eps;
         let has_post_norms = layers[l].has_post_norms;

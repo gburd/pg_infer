@@ -7,6 +7,24 @@ use super::{LayerGraph, LayerOutput};
 // ── Template detection ──
 
 /// Known template patterns for routing.
+///
+/// Associates a token prefix with a range of layers that can be cached
+/// for prompts matching this template.
+///
+/// # Examples
+///
+/// ```
+/// use infer_inference::layer_graph::TemplatePattern;
+///
+/// let pattern = TemplatePattern {
+///     name: "The capital of".to_string(),
+///     prefix_tokens: vec![450, 5765, 315],
+///     cached_layers: 0..=12,
+/// };
+/// assert_eq!(pattern.name, "The capital of");
+/// assert!(pattern.cached_layers.contains(&6));
+/// assert!(!pattern.cached_layers.contains(&13));
+/// ```
 #[derive(Clone, Debug)]
 pub struct TemplatePattern {
     pub name: String,
@@ -18,6 +36,41 @@ pub struct TemplatePattern {
 
 /// Detect which template a token sequence matches, if any.
 /// Matches by longest prefix overlap.
+///
+/// Returns the index into `templates` for the longest matching prefix, or
+/// `None` if no template matches. BOS tokens are automatically skipped
+/// when the first token of `token_ids` differs from the template prefix.
+///
+/// # Examples
+///
+/// ```
+/// use infer_inference::layer_graph::{TemplatePattern, detect_template};
+///
+/// let templates = vec![
+///     TemplatePattern {
+///         name: "capital_of".to_string(),
+///         prefix_tokens: vec![100, 200, 300],
+///         cached_layers: 0..=12,
+///     },
+///     TemplatePattern {
+///         name: "born_in".to_string(),
+///         prefix_tokens: vec![100, 200],
+///         cached_layers: 0..=8,
+///     },
+/// ];
+///
+/// // Matches "capital_of" (longer prefix wins)
+/// let tokens = vec![100, 200, 300, 400, 500];
+/// assert_eq!(detect_template(&tokens, &templates), Some(0));
+///
+/// // Matches "born_in" (prefix [100, 200] matches but not [100, 200, 300])
+/// let tokens = vec![100, 200, 999];
+/// assert_eq!(detect_template(&tokens, &templates), Some(1));
+///
+/// // No match
+/// let tokens = vec![999, 888];
+/// assert_eq!(detect_template(&tokens, &templates), None);
+/// ```
 pub fn detect_template(token_ids: &[u32], templates: &[TemplatePattern]) -> Option<usize> {
     let mut best = None;
     let mut best_len = 0;

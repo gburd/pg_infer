@@ -15,7 +15,7 @@
 //! 2. `sliding_window_pattern` field (every Nth layer is full)
 //! 3. Default pattern of 6 (every 6th layer is full)
 
-use crate::config::{Activation, ExpertFormat, ModelArchitecture, ModelConfig};
+use crate::config::{Activation, ExpertFormat, FfnLayerType, ModelArchitecture, ModelConfig};
 
 pub struct Gemma4Arch {
     config: ModelConfig,
@@ -221,6 +221,19 @@ impl ModelArchitecture for Gemma4Arch {
 
     fn is_moe(&self) -> bool {
         self.config.enable_moe_block
+    }
+
+    fn ffn_type_for_layer(&self, _layer: usize) -> FfnLayerType {
+        if self.config.enable_moe_block {
+            FfnLayerType::MoE {
+                num_experts: self.config.num_experts.unwrap_or(0),
+                top_k: self.config.top_k_experts
+                    .or(self.config.num_experts_per_token)
+                    .unwrap_or(0),
+            }
+        } else {
+            FfnLayerType::Dense
+        }
     }
 
     fn is_hybrid_moe(&self) -> bool {

@@ -13,6 +13,7 @@
 mod ops;
 mod kernels;
 mod buffers;
+pub mod prefill;
 
 use std::sync::Arc;
 
@@ -30,11 +31,11 @@ use buffers::BufferPool;
 /// Q4_K/Q6_K matrix-vector products. Operations not yet GPU-accelerated fall
 /// back to the CPU backend.
 pub struct CudaBackend {
-    device: Arc<CudaDevice>,
-    blas: CudaBlas,
-    stream: CudaStream,
-    buffer_pool: BufferPool,
-    cpu_fallback: CpuBackend,
+    pub(crate) device: Arc<CudaDevice>,
+    pub(crate) blas: CudaBlas,
+    pub(crate) stream: CudaStream,
+    pub(crate) buffer_pool: BufferPool,
+    pub(crate) cpu_fallback: CpuBackend,
 }
 
 /// Errors from CUDA backend initialization or operation.

@@ -6,7 +6,7 @@
 //! - Router and experts under `block_sparse_moe` prefix
 //! - Attention is identical to Llama
 
-use crate::config::{ModelArchitecture, ModelConfig};
+use crate::config::{FfnLayerType, ModelArchitecture, ModelConfig};
 
 pub struct MixtralArch {
     config: ModelConfig,
@@ -31,6 +31,13 @@ impl ModelArchitecture for MixtralArch {
 
     fn is_moe(&self) -> bool {
         true
+    }
+
+    fn ffn_type_for_layer(&self, _layer: usize) -> FfnLayerType {
+        FfnLayerType::MoE {
+            num_experts: self.config.num_experts.unwrap_or(8),
+            top_k: self.config.num_experts_per_token.unwrap_or(2),
+        }
     }
 
     fn num_experts(&self) -> usize {

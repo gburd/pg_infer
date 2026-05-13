@@ -8,7 +8,7 @@
 //! - Attention has biases, sinks, and uses GQA
 //! - YaRN RoPE scaling
 
-use crate::config::{ExpertFormat, ModelArchitecture, ModelConfig};
+use crate::config::{ExpertFormat, FfnLayerType, ModelArchitecture, ModelConfig};
 
 pub struct GptOssArch {
     config: ModelConfig,
@@ -55,6 +55,13 @@ impl ModelArchitecture for GptOssArch {
 
     fn is_moe(&self) -> bool {
         true
+    }
+
+    fn ffn_type_for_layer(&self, _layer: usize) -> FfnLayerType {
+        FfnLayerType::MoE {
+            num_experts: self.config.num_experts.unwrap_or(128),
+            top_k: self.config.num_experts_per_token.unwrap_or(4),
+        }
     }
 
     fn expert_format(&self) -> ExpertFormat {

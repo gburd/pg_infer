@@ -17,7 +17,23 @@ use super::{dot_proj, apply_norm};
 ///      → reshape to [seq, num_layers, ple_dim]
 ///      Combined: (stream1 + stream2) * 1/sqrt(2)
 ///
-/// Returns a Vec of [seq, ple_dim] arrays, one per layer. Empty vec if PLE is not used.
+/// Returns a Vec of `[seq, ple_dim]` arrays, one per layer. Empty vec if PLE is not used
+/// (i.e., the model architecture does not declare per-layer embeddings).
+///
+/// # Examples
+///
+/// ```ignore
+/// use infer_inference::forward::ple::precompute_per_layer_inputs;
+///
+/// // For models without PLE (Llama, Gemma 2/3), returns empty:
+/// let ple_inputs = precompute_per_layer_inputs(&weights, &embeddings, &token_ids);
+/// assert!(ple_inputs.is_empty());
+///
+/// // For PLE-enabled models (Gemma 4 E2B), returns one array per layer:
+/// let ple_inputs = precompute_per_layer_inputs(&weights, &embeddings, &token_ids);
+/// assert_eq!(ple_inputs.len(), weights.num_layers);
+/// assert_eq!(ple_inputs[0].shape(), &[token_ids.len(), ple_dim]);
+/// ```
 pub fn precompute_per_layer_inputs(
     weights: &ModelWeights,
     main_embeds: &Array2<f32>,

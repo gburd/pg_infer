@@ -37,6 +37,18 @@ pub enum FfnType {
     Standard,
 }
 
+/// Feed-forward network type for a given layer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FfnLayerType {
+    /// Standard dense FFN (gate + up -> activation -> down).
+    Dense,
+    /// Mixture of Experts with top-k routing.
+    MoE {
+        num_experts: usize,
+        top_k: usize,
+    },
+}
+
 /// How expert weights are stored in a MoE model.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ExpertFormat {
@@ -364,6 +376,14 @@ pub trait ModelArchitecture: Send + Sync {
     /// FFN type (gated vs standard).
     fn ffn_type(&self) -> FfnType {
         FfnType::Gated
+    }
+
+    /// Returns the FFN type for a given layer.
+    ///
+    /// Most models use dense FFN for all layers. MoE models like DeepSeek and
+    /// Mixtral have MoE layers (sometimes interspersed with dense).
+    fn ffn_type_for_layer(&self, _layer: usize) -> FfnLayerType {
+        FfnLayerType::Dense
     }
 
     /// Whether this model has separate pre/post norms around attention and FFN

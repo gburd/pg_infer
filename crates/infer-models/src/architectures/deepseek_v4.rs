@@ -17,7 +17,7 @@
 //! Currently scoped to **browse-tier extraction** — gate vectors + embeddings
 //! + down_meta. Inference (HCA forward pass) is out of scope for this impl.
 
-use crate::config::{ModelArchitecture, ModelConfig};
+use crate::config::{FfnLayerType, ModelArchitecture, ModelConfig};
 
 pub struct DeepSeekV4Arch {
     config: ModelConfig,
@@ -95,6 +95,19 @@ impl ModelArchitecture for DeepSeekV4Arch {
 
     fn is_moe(&self) -> bool {
         self.config.num_experts.unwrap_or(0) > 0
+    }
+
+    fn ffn_type_for_layer(&self, layer: usize) -> FfnLayerType {
+        // DeepSeek-V4: layer 0 is always dense, remaining layers are MoE.
+        let n_experts = self.config.num_experts.unwrap_or(0);
+        if layer == 0 || n_experts == 0 {
+            FfnLayerType::Dense
+        } else {
+            FfnLayerType::MoE {
+                num_experts: n_experts,
+                top_k: self.config.num_experts_per_token.unwrap_or(6),
+            }
+        }
     }
 
     fn num_experts(&self) -> usize {

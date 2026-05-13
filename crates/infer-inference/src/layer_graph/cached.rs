@@ -11,6 +11,26 @@ use super::{LayerGraph, LayerOutput, DenseLayerGraph, PerLayerGraph};
 ///
 /// Build by running a dense forward pass for a template, capturing residuals,
 /// then storing them. At inference, skip the computation entirely.
+///
+/// # Examples
+///
+/// ```
+/// use ndarray::Array2;
+/// use infer_inference::layer_graph::CachedLayerGraph;
+///
+/// // Build a cache from pre-computed residuals
+/// let residuals = vec![
+///     (0, Array2::<f32>::zeros((4, 128))),
+///     (1, Array2::<f32>::ones((4, 128))),
+///     (2, Array2::<f32>::zeros((4, 128))),
+/// ];
+/// let cache = CachedLayerGraph::from_residuals(residuals);
+///
+/// assert_eq!(cache.num_cached(), 3);
+/// assert!(cache.has_layer(0));
+/// assert!(cache.has_layer(1));
+/// assert!(!cache.has_layer(5));
+/// ```
 pub struct CachedLayerGraph {
     /// layer → cached residual [seq_len, hidden]. Keyed by layer index.
     cache: std::collections::HashMap<usize, Array2<f32>>,
@@ -42,8 +62,47 @@ impl CachedLayerGraph {
     }
 
     /// Build from an existing residual (e.g., from a previous forward pass).
+    ///
+    /// Each tuple is `(layer_index, residual_array)` where the array has shape
+    /// `[seq_len, hidden_size]`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ndarray::Array2;
+    /// use infer_inference::layer_graph::CachedLayerGraph;
+    ///
+    /// let residuals = vec![
+    ///     (0, Array2::<f32>::zeros((1, 64))),
+    ///     (3, Array2::<f32>::zeros((1, 64))),
+    /// ];
+    /// let cache = CachedLayerGraph::from_residuals(residuals);
+    /// assert!(cache.has_layer(0));
+    /// assert!(!cache.has_layer(1));
+    /// assert!(cache.has_layer(3));
+    /// ```
     pub fn from_residuals(residuals: Vec<(usize, Array2<f32>)>) -> Self {
         Self { cache: residuals.into_iter().collect() }
+    }
+
+    /// Build from a vindex residual cache for a given template.
+    /// Each cached entry is reshaped to [seq_len, hidden_size].
+    pub fn from_vindex_cache(
+        cache: &infer_vindex::storage::residual_cache::ResidualCache,
+        template_hash: u64,
+        layers: &[usize],
+    ) -> Self {
+        let hidden = cache.hidden_size;
+        let residuals: Vec<(usize, Array2<f32>)> = layers
+            .iter()
+            .filter_map(|&l| {
+                let data = cache.get(template_hash, l)?;
+                let seq_len = data.len() / hidden;
+                let arr = Array2::from_shape_vec((seq_len, hidden), data.to_vec()).ok()?;
+                Some((l, arr))
+            })
+            .collect();
+        Self::from_residuals(residuals)
     }
 
     pub fn has_layer(&self, layer: usize) -> bool {

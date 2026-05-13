@@ -39,6 +39,25 @@ pub use template::*;
 pub use predict::*;
 
 /// Output of a single layer's computation.
+///
+/// Contains the post-layer residual that feeds into the next layer, plus
+/// optional diagnostic captures (activations and attention weights) used
+/// for tracing and analysis.
+///
+/// # Examples
+///
+/// ```
+/// use ndarray::Array2;
+/// use infer_inference::layer_graph::LayerOutput;
+///
+/// let residual = Array2::<f32>::zeros((4, 128));
+/// let output = LayerOutput {
+///     residual,
+///     activation: None,
+///     attention: None,
+/// };
+/// assert_eq!(output.residual.shape(), &[4, 128]);
+/// ```
 pub struct LayerOutput {
     /// Post-layer residual (input to next layer).
     pub residual: Array2<f32>,
@@ -52,6 +71,32 @@ pub struct LayerOutput {
 ///
 /// Implementations control both attention and FFN computation.
 /// The residual is always the input. The mechanism changes.
+///
+/// # Implementations
+///
+/// - [`DenseLayerGraph`] — standard dense matmul (baseline)
+/// - [`WalkLayerGraph`] — dense attention + vindex walk FFN
+/// - [`CachedLayerGraph`] — precomputed residuals for template-determined layers
+/// - [`PipelinedLayerGraph`] — CPU attention + batched GPU Q4 FFN
+/// - [`PerLayerGraph`] — different backend per layer
+///
+/// # Examples
+///
+/// ```ignore
+/// use infer_inference::layer_graph::{LayerGraph, DenseLayerGraph};
+///
+/// // Build a dense graph with a FFN backend
+/// let graph = DenseLayerGraph {
+///     ffn: &weight_ffn,
+///     backend: None,
+///     capture_activation: false,
+///     capture_attention: false,
+/// };
+/// assert_eq!(graph.name(), "dense");
+///
+/// // Forward one layer
+/// let output = graph.forward_layer(&weights, &residual, 0);
+/// ```
 pub trait LayerGraph {
     /// Run one transformer layer: attention + FFN + residuals.
     fn forward_layer(

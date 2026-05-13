@@ -1,5 +1,18 @@
 use std::path::PathBuf;
 
+/// Errors that can occur during model loading, tokenization, or inference.
+///
+/// # Examples
+///
+/// ```
+/// use infer_inference::InferenceError;
+///
+/// let err = InferenceError::MissingTensor("lm_head.weight".to_string());
+/// assert!(err.to_string().contains("lm_head.weight"));
+///
+/// let err = InferenceError::Parse("unexpected EOF".to_string());
+/// assert!(format!("{err}").contains("parse error"));
+/// ```
 #[derive(Debug, thiserror::Error)]
 pub enum InferenceError {
     #[error("not a directory: {0}")]

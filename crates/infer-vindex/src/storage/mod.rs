@@ -10,10 +10,12 @@
 
 pub mod epoch;
 pub mod memit_store;
+pub mod residual_cache;
 pub mod status;
 pub mod engine;
 
 pub use engine::StorageEngine;
 pub use epoch::Epoch;
 pub use memit_store::{memit_solve, MemitCycle, MemitFact, MemitSolveResult, MemitStore};
+pub use residual_cache::{ResidualCache, ResidualCacheBuilder, ResidualEntry};
 pub use status::CompactStatus;
