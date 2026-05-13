@@ -66,7 +66,6 @@ impl ModelWeightsVariant {
         }
     }
 }
->>>>>>> theirs
 
 /// Synthetic test fixtures for unit tests that need a functional `ModelWeights`
 /// without loading from disk.
