@@ -116,13 +116,16 @@ pub fn encode_post_attn(
     }
 }
 
-/// Post-FFN residual + optional post-FFN RMS norm.
+/// Post-FFN residual + optional post-FFN RMS norm + optional FFN scalar.
 ///
 /// For every position:
 ///   - **Post-norm with post_ffn_norm weight**:
-///     `h_next = h_post_attn + norm(down_out, post_ffn_norm)`.
+///     `h_next = h_post_attn + scalar * norm(down_out, post_ffn_norm)`.
 ///   - **Pre-norm or post-norm without post_ffn_norm**:
-///     `h_next = h_post_attn + down_out`.
+///     `h_next = h_post_attn + scalar * down_out`.
+///
+/// When `scale_pipeline` is `None` or `ffn_scalar` is `0.0` or `1.0`, the
+/// scalar step is skipped (identity behavior).
 #[allow(clippy::too_many_arguments)]
 pub fn encode_post_ffn(
     enc: &ComputeCommandEncoderRef,
@@ -139,9 +142,25 @@ pub fn encode_post_ffn(
     norm_offset: f32,
     has_post_norms: bool,
     h_stride_bytes: u64,
+    scale_pipeline: Option<&ComputePipelineState>,
+    ffn_scalar: f32,
 ) {
     let hidden_val = hidden as u32;
     let tg_threads = 256.min(hidden as u64);
+    let needs_scale = scale_pipeline.is_some() && ffn_scalar != 0.0 && ffn_scalar != 1.0;
+
+    // For the pre-norm (plain residual) path, scale `down_out` in-place for
+    // all positions before entering the per-position loop.  This is safe
+    // because `down_out` is a transient per-layer buffer not reused after
+    // this function.  We do this outside the loop because
+    // `layer_scalar::encode` computes its own per-position offsets internally.
+    let pre_norm_path = !has_post_norms || post_ffn_norm_buf.is_none();
+    if pre_norm_path && needs_scale {
+        let scale_pipe = scale_pipeline.unwrap();
+        super::layer_scalar::encode(
+            enc, scale_pipe, down_out, seq_len, hidden, ffn_scalar,
+        );
+    }
 
     for pos in 0..seq_len {
         let h_off = pos as u64 * h_stride_bytes;
@@ -158,6 +177,14 @@ pub fn encode_post_ffn(
                 enc.set_bytes(5, 4, &norm_offset as *const f32 as *const c_void);
                 enc.dispatch_thread_groups(MTLSize::new(1, 1, 1), MTLSize::new(tg_threads, 1, 1));
 
+                // Apply scalar to normed FFN output before residual add.
+                if needs_scale {
+                    let scale_pipe = scale_pipeline.unwrap();
+                    super::layer_scalar::encode(
+                        enc, scale_pipe, &normed, 1, hidden, ffn_scalar,
+                    );
+                }
+
                 enc.set_compute_pipeline_state(residual_add_pipeline);
                 enc.set_buffer(0, Some(h_post_attn), h_off);
                 enc.set_buffer(1, Some(&normed), 0);
@@ -169,6 +196,7 @@ pub fn encode_post_ffn(
         }
 
         // Pre-norm or post-norm-without-post_ffn_norm: plain residual.
+        // (down_out already scaled above if needed.)
         enc.set_compute_pipeline_state(residual_add_pipeline);
         enc.set_buffer(0, Some(h_post_attn), h_off);
         enc.set_buffer(1, Some(down_out), h_off);

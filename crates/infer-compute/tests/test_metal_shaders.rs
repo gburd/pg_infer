@@ -2702,6 +2702,7 @@ fn stage_post_ffn_pre_norm_matches_cpu() {
         seq_len, hidden, 1e-6, 0.0,
         /*has_post_norms*/ false,
         (hidden * 4) as u64,
+        None, 0.0,
     );
     enc.end_encoding();
     cmd.commit();
@@ -2754,6 +2755,7 @@ fn stage_post_ffn_post_norm_matches_cpu() {
         seq_len, hidden, eps, offset,
         /*has_post_norms*/ true,
         (hidden * 4) as u64,
+        None, 0.0,
     );
     enc.end_encoding();
     cmd.commit();

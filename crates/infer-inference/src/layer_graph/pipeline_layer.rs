@@ -4,6 +4,7 @@
 //! from infer-models and wiring them into infer-compute's FullPipelineLayer.
 //! Both GPU and CPU paths use this — no duplicated param extraction.
 
+use std::collections::HashMap;
 use infer_compute::{QuantWeight, QuantFormat, FullPipelineLayer, MoeLayerWeights};
 use crate::model::ModelWeights;
 
@@ -248,5 +249,30 @@ pub fn build_pipeline_layers<'a>(
             .expect("No attention weights available for layer");
         let (gate, up, down) = resolve_ffn_weights(index, layer, q4_ffn_mmap, q4_ffn_per_matrix, ffn_format);
         build_arch_params(weights, layer, wq, wk, wv, wo, gate, up, down)
+    }).collect()
+}
+
+/// Build pipeline layers with optional cached residuals for template-fixed layers.
+/// When `residuals` contains data for a layer in `layer_range`, that layer's
+/// `cached_residual` field is set, causing the GPU backend to skip its computation.
+#[allow(clippy::too_many_arguments)]
+pub fn build_pipeline_layers_with_cache<'a>(
+    weights: &'a ModelWeights,
+    index: &'a infer_vindex::VectorIndex,
+    layer_range: std::ops::Range<usize>,
+    q4_ffn_mmap: &'a [u8],
+    q4_ffn_per_matrix: usize,
+    ffn_format: QuantFormat,
+    residuals: &'a HashMap<usize, Vec<f32>>,
+) -> Vec<FullPipelineLayer<'a>> {
+    layer_range.map(|layer| {
+        let (wq, wk, wv, wo) = resolve_attn_weights(index, layer)
+            .expect("No attention weights available for layer");
+        let (gate, up, down) = resolve_ffn_weights(index, layer, q4_ffn_mmap, q4_ffn_per_matrix, ffn_format);
+        let mut pl = build_arch_params(weights, layer, wq, wk, wv, wo, gate, up, down);
+        if let Some(cached) = residuals.get(&layer) {
+            pl.cached_residual = Some(cached.as_slice());
+        }
+        pl
     }).collect()
 }

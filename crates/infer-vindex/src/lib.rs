@@ -66,7 +66,7 @@ pub use describe::{DescribeEdge, LabelSource};
 // Extract
 pub use extract::{
     build_vindex, build_vindex_resume, build_vindex_from_vectors,
-    build_vindex_streaming, resolve_gate_dtype,
+    build_vindex_streaming, resolve_gate_dtype, extract_residual_cache,
     IndexBuildCallbacks, SilentBuildCallbacks,
 };
 

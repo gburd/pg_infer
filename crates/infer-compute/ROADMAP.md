@@ -22,9 +22,9 @@ Previous: 29.2ms / 34 tok/s (2.84x Ollama).
 **Status**: Complete (but negligible impact — Apple Silicon dispatch overhead is ~0ms)
 
 ### Wire cached layers into decode path
-**Impact**: ~4x speedup (compute 8 layers instead of 34)  
-**Effort**: Low  
-**Status**: Not started (infrastructure ready in infer-inference)
+**Impact**: ~4x speedup (compute 8 layers instead of 34)
+**Effort**: Low
+**Status**: ✅ Complete (2026-05) — GPU backends skip via cached_residual field, build_pipeline_layers_with_cache populates from HashMap
 
 L0-12 are template-fixed (0.999 cosine similarity). At 0.25ms/layer × 8 layers = 2ms → ~500 tok/s.
 
@@ -105,7 +105,7 @@ over all positions, then proceed to next layer. Requires restructuring
 
 ### Fix `dispatch_full_pipeline` layer_scalar
 **Effort**: Low
-**Status**: Not started — current models (Gemma 3 4B) not affected
+**Status**: Complete (2026-05) — scalar applied to FFN delta inside encode_post_ffn before residual add
 
 `dispatch_full_pipeline` applies `layer_scalar` to `h_bufs[l+1]`
 (full residual = `h_post_attn + ffn_delta`) instead of just the FFN

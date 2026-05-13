@@ -847,7 +847,7 @@ pub fn dispatch_full_pipeline(
             enc.end_encoding();
         }
 
-        // ── 10. Post-FFN: optional norm, then residual add → h for next layer. ──
+        // ── 10. Post-FFN: optional norm, scalar on FFN delta, then residual add → h for next layer. ──
         {
             let mut scratch = |bytes: u64| bufs.output(bytes);
             let enc = cmd.new_compute_command_encoder();
@@ -859,15 +859,8 @@ pub fn dispatch_full_pipeline(
                 seq_len, hidden, eps, norm_offset,
                 has_post_norms,
                 (hidden * 4) as u64,
-            );
-            enc.end_encoding();
-        }
-
-        // ── 11. Per-layer residual scalar (Gemma 4). ──
-        if let Some(scale_pipe) = scale_vector_pipeline {
-            let enc = cmd.new_compute_command_encoder();
-            crate::metal::stages::layer_scalar::encode(
-                enc, scale_pipe, &h_bufs[l + 1], seq_len, hidden, layers[l].layer_scalar,
+                scale_vector_pipeline,
+                layers[l].layer_scalar,
             );
             enc.end_encoding();
         }
