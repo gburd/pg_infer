@@ -21,14 +21,14 @@ Previous: 29.2ms / 34 tok/s (2.84x Ollama).
 ### ✅ Dispatch merging
 **Status**: Complete (but negligible impact — Apple Silicon dispatch overhead is ~0ms)
 
-### Wire cached layers into decode path
+### Wire cached layers into decode path — DONE
 **Impact**: ~4x speedup (compute 8 layers instead of 34)
 **Effort**: Low
 **Status**: ✅ Complete (2026-05) — GPU backends skip via cached_residual field, build_pipeline_layers_with_cache populates from HashMap
 
 L0-12 are template-fixed (0.999 cosine similarity). At 0.25ms/layer × 8 layers = 2ms → ~500 tok/s.
 
-### CUDA prefill pipeline with post-norm support
+### CUDA prefill pipeline with post-norm support — DONE
 **Impact**: GPU prefill on NVIDIA hardware (Linux)
 **Effort**: Medium
 **Status**: ✅ Complete (2026-05) — ports Metal prefill logic to cuBLAS, handles both pre-norm and post-norm
@@ -103,9 +103,9 @@ for each layer, dispatch GPU dense FFN over all positions, then CPU MoE
 over all positions, then proceed to next layer. Requires restructuring
 `dispatch_full_pipeline` to accept a per-layer CPU callback.
 
-### Fix `dispatch_full_pipeline` layer_scalar
+### Fix `dispatch_full_pipeline` layer_scalar — DONE
 **Effort**: Low
-**Status**: Complete (2026-05) — scalar applied to FFN delta inside encode_post_ffn before residual add
+**Status**: ✅ Complete (2026-05) — scalar applied to FFN delta inside encode_post_ffn before residual add
 
 `dispatch_full_pipeline` applies `layer_scalar` to `h_bufs[l+1]`
 (full residual = `h_post_attn + ffn_delta`) instead of just the FFN

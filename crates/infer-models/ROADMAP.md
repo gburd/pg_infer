@@ -11,9 +11,9 @@
 
 Architecture config is now authoritative. `attention/block.rs` uses `arch.v_shares_k(layer)` directly with a `debug_assert` validating tensor presence.
 
-### Validate PLE (per-layer embeddings) end-to-end
-**Impact**: Correct Gemma 4 E2B inference  
-**Effort**: Medium  
+### Validate PLE (per-layer embeddings) end-to-end — DONE
+**Impact**: Correct Gemma 4 E2B inference
+**Effort**: Medium
 **Status**: ✅ Complete (2026-05) — forward pass wired, E2E test validates precompute + gate + contribution
 
 PLE adds a gated embedding lookup per layer. Keys (`per_layer_embed_key`, `per_layer_input_gate_key`, `per_layer_projection_key`, `post_per_layer_input_norm_key`) are all implemented. Forward pass integration in `forward/ple.rs` with `precompute_per_layer_inputs` + `apply_per_layer_embedding`. E2E test at `infer-inference/tests/test_ple_e2e.rs`.

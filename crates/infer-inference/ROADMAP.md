@@ -42,7 +42,7 @@ Implemented in `engines/markov_residual/`. Stores per-layer pre-attention residu
 **Effort**: Low
 **Status**: ✅ Stale — no `ffn/experimental/` directory exists. Production backends only.
 
-### Example reorganization
+### Example reorganization — DONE
 **Effort**: Low
 **Status**: ✅ Complete (2026-05) — examples renamed with prefix convention
 

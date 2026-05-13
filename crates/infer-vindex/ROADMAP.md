@@ -10,7 +10,7 @@
 
 ## P0: Support Cached Layer Decode
 
-### Store pre-computed residuals for template-fixed layers (L0-12)
+### Store pre-computed residuals for template-fixed layers (L0-12) — DONE
 **Impact**: Enables 155+ tok/s decode (skip 13 of 21 layers)
 **Effort**: Medium
 **Status**: ✅ Complete (2026-05) — on-disk format + extraction function implemented
