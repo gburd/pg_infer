@@ -188,6 +188,89 @@ pub fn run_attention_block_decode_step(
     run_attention_block_decode_step_backend(weights, h_new, layer, kv_entry, abs_position, None)
 }
 
+/// Decode-step attention for a **KV-shared layer**. The layer reuses
+/// another layer's KV cache (already updated for this step) instead of
+/// computing its own K/V projections. Only Q is projected from this
+/// layer's weights, then attention runs against the provided full KV.
+///
+/// Returns `h_post_attn` only — no new KV to store (the source layer
+/// owns the cache).
+#[allow(clippy::too_many_arguments)]
+pub fn run_attention_block_decode_step_shared(
+    weights: &crate::model::ModelWeights,
+    h_new: &Array2<f32>,
+    layer: usize,
+    source_kv: &SharedKV,
+    abs_position: usize,
+    backend: Option<&dyn infer_compute::ComputeBackend>,
+) -> Option<Array2<f32>> {
+    use crate::forward::add_bias;
+    use crate::residual::rms_norm_heads;
+    use infer_compute::dot_proj_gpu;
+
+    let arch = &*weights.arch;
+    let head_dim = arch.head_dim_for_layer(layer);
+    let num_q = arch.num_q_heads_for_layer(layer);
+    let num_kv = arch.num_kv_heads_for_layer(layer);
+    let reps = num_q / num_kv;
+    let scale = if arch.attention_multiplier() != 1.0 {
+        arch.attention_multiplier() as f64
+    } else {
+        arch.attention_scale_for_layer(layer)
+    };
+    let norm_offset = arch.norm_weight_offset();
+
+    let h_norm = crate::forward::apply_norm(
+        weights, h_new, &arch.input_layernorm_key(layer), norm_offset,
+    );
+
+    // Only Q and O projections use this layer's weights.
+    let w_q = weights.tensors.get(&arch.attn_q_key(layer))?;
+    let w_o = weights.tensors.get(&arch.attn_o_key(layer))?;
+    let mut q_full = dot_proj_gpu(&h_norm, w_q, backend);
+    if let Some(bias) = arch.attn_q_bias_key(layer).and_then(|k| weights.vectors.get(&k)) {
+        add_bias(&mut q_full, bias);
+    }
+
+    let qk_offset = weights.arch.qk_norm_weight_offset();
+    let qk_norm_off = if qk_offset != 0.0 { qk_offset } else { norm_offset };
+    let q_normed = match arch.attn_q_norm_key(layer).and_then(|k| weights.vectors.get(&k)) {
+        Some(norm_w) => rms_norm_heads(&q_full, norm_w, num_q, head_dim, qk_norm_off),
+        None => q_full,
+    };
+    let layer_rope_base = arch.rope_base_for_layer(layer);
+    let rotary_frac = arch.rotary_fraction_for_layer(layer);
+    let q_rope = apply_rope_partial_at(&q_normed, num_q, head_dim, layer_rope_base, rotary_frac, abs_position);
+
+    // Use source layer's full KV (already includes the new token).
+    let (k_full, v_full) = source_kv;
+
+    let softcap = arch.attn_logit_softcapping();
+    let attn_out = gqa_attention_decode_step(
+        &q_rope, k_full, v_full,
+        num_q, head_dim, reps, scale, softcap,
+    );
+
+    let mut attn_projected = dot_proj_gpu(&attn_out, w_o, backend);
+    if let Some(bias) = arch.attn_o_bias_key(layer).and_then(|k| weights.vectors.get(&k)) {
+        add_bias(&mut attn_projected, bias);
+    }
+
+    let res_mult = arch.residual_multiplier();
+    let h_post_attn = if arch.has_post_norms() {
+        let normed = crate::forward::apply_norm(
+            weights, &attn_projected, &arch.post_attention_layernorm_key(layer), norm_offset,
+        );
+        if res_mult != 1.0 { h_new + &(&normed * res_mult) } else { h_new + &normed }
+    } else if res_mult != 1.0 {
+        h_new + &(&attn_projected * res_mult)
+    } else {
+        h_new + &attn_projected
+    };
+
+    Some(h_post_attn)
+}
+
 /// Decode-step attention with optional GPU-accelerated projections
 /// (Q/K/V/O matmuls route through `ComputeBackend::matmul_transb` when
 /// `backend` is `Some`). GQA softmax + weighted-V stays on CPU —

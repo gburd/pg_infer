@@ -24,7 +24,8 @@
 use ndarray::Array2;
 
 use crate::attention::{
-    run_attention_block_decode_step_backend, run_attention_with_kv_backend, KvCache,
+    run_attention_block_decode_step_backend, run_attention_block_decode_step_shared,
+    run_attention_with_kv_backend, KvCache,
 };
 use crate::ffn::FfnBackend;
 use crate::forward::{embed_tokens_pub, logits_to_predictions_pub, run_ffn};
@@ -123,18 +124,40 @@ fn generate_cached_bounded(
 
     let mut h = embed_tokens_pub(weights, prompt_ids);
     for layer in 0..num_layers {
-        let (h_post_attn, k_rope, v) =
-            match run_attention_with_kv_backend(weights, &h, layer, backend) {
-                Some(t) => t,
-                None => return Vec::new(),
-            };
-        cache.layers[layer] = Some((k_rope, v));
-        // Apply the window bound immediately — if prompt is longer
-        // than the window, attention during later decode steps only
-        // sees the last W positions of the prompt.
-        cache.clip_layer(layer);
-        let (h_out, _) = run_ffn(weights, &h_post_attn, layer, ffn, false);
-        h = h_out;
+        // Shared layers reuse source layer's K/V (already computed).
+        if weights.arch.kv_shared_source_layer(layer).is_some() {
+            // Source's KV is already in the cache; use it for attention
+            // but don't store a separate entry for this layer.
+            let (h_post_attn, _k, _v) =
+                match run_attention_with_kv_backend(weights, &h, layer, backend) {
+                    Some(t) => t,
+                    None => {
+                        // K/V weights may not exist for shared layers —
+                        // fall back to source layer's cached KV for the
+                        // decode phase (prefill attention already ran
+                        // via predict_with_ffn in the standard path).
+                        let (h_out, _) = run_ffn(weights, &h, layer, ffn, false);
+                        h = h_out;
+                        continue;
+                    }
+                };
+            // Don't cache — decode loop will read from source.
+            let (h_out, _) = run_ffn(weights, &h_post_attn, layer, ffn, false);
+            h = h_out;
+        } else {
+            let (h_post_attn, k_rope, v) =
+                match run_attention_with_kv_backend(weights, &h, layer, backend) {
+                    Some(t) => t,
+                    None => return Vec::new(),
+                };
+            cache.layers[layer] = Some((k_rope, v));
+            // Apply the window bound immediately — if prompt is longer
+            // than the window, attention during later decode steps only
+            // sees the last W positions of the prompt.
+            cache.clip_layer(layer);
+            let (h_out, _) = run_ffn(weights, &h_post_attn, layer, ffn, false);
+            h = h_out;
+        }
     }
     // After prefill, the "next" absolute position is prompt_len.
     // Clipping shortens the cache rows but does NOT change the next
@@ -167,17 +190,32 @@ fn generate_cached_bounded(
         let abs_position = cache.next_position;
         let mut h_step = h_new;
         for layer in 0..num_layers {
-            let kv_entry = cache.layers[layer].as_ref();
-            let (h_post_attn, new_kv) = match run_attention_block_decode_step_backend(
-                weights, &h_step, layer, kv_entry, abs_position, backend,
-            ) {
-                Some(t) => t,
-                None => return generated,
+            // KV-shared layers reuse the source layer's cache (already
+            // updated earlier this step) instead of computing new K/V.
+            let h_post_attn = if let Some(src) = weights.arch.kv_shared_source_layer(layer) {
+                let source_kv = match cache.layers[src].as_ref() {
+                    Some(kv) => kv,
+                    None => return generated,
+                };
+                match run_attention_block_decode_step_shared(
+                    weights, &h_step, layer, source_kv, abs_position, backend,
+                ) {
+                    Some(h) => h,
+                    None => return generated,
+                }
+            } else {
+                let kv_entry = cache.layers[layer].as_ref();
+                let (h_post, new_kv) = match run_attention_block_decode_step_backend(
+                    weights, &h_step, layer, kv_entry, abs_position, backend,
+                ) {
+                    Some(t) => t,
+                    None => return generated,
+                };
+                cache.layers[layer] = Some(new_kv);
+                // Sliding window — evict oldest rows if over max_window.
+                cache.clip_layer(layer);
+                h_post
             };
-            cache.layers[layer] = Some(new_kv);
-            // Sliding window — evict the oldest row(s) if we've
-            // exceeded `max_window`. No-op when unbounded.
-            cache.clip_layer(layer);
             let (h_out, _) = run_ffn(weights, &h_post_attn, layer, ffn, false);
             h_step = h_out;
         }

@@ -18,10 +18,14 @@ Architecture config is now authoritative. `attention/block.rs` uses `arch.v_shar
 
 PLE adds a gated embedding lookup per layer. Keys (`per_layer_embed_key`, `per_layer_input_gate_key`, `per_layer_projection_key`, `post_per_layer_input_norm_key`) are all implemented. Forward pass integration in `forward/ple.rs` with `precompute_per_layer_inputs` + `apply_per_layer_embedding`. E2E test at `infer-inference/tests/test_ple_e2e.rs`.
 
-### KV layer sharing in inference
-**Impact**: Memory savings for Gemma 4 (20 shared layers = 20 fewer KV caches)  
-**Effort**: Medium  
-**Status**: `kv_shared_source_layer()` returns correct sources, KV cache not yet shared
+### KV layer sharing in inference — DONE
+**Impact**: Memory savings for Gemma 4 (20 shared layers = 20 fewer KV caches)
+**Effort**: Medium
+**Status**: ✅ Complete (2026-05) — decode loop uses source layer's cache for shared layers
+
+`run_attention_block_decode_step_shared` computes only Q + attention against source layer's
+KV cache. Decode loop in `kv_generate.rs` skips K/V projection and cache storage for shared
+layers. Prefill skips cache storage for shared layers. Saves ~60% KV memory on Gemma 4.
 
 ## P1: Architecture Coverage
 
@@ -111,3 +115,4 @@ Current sliding window is boolean per layer. Future models may have more complex
 | Clippy clean (zero warnings) | 2026-04-07 | lib + examples + tests all pass `-D warnings` |
 | Documentation suite | 2026-04-07 | README, ROADMAP, PERFORMANCE, 3 docs, 6 ADRs |
 | Example suite (3 demos) | 2026-04-07 | architecture_demo (all 12), demo_tensor_keys (all 12), demo_loading |
+| KV layer sharing in decode | 2026-05 | Shared layers skip K/V projection, reuse source cache |
