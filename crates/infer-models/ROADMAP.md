@@ -69,7 +69,7 @@ Apple MLX models sometimes use `.npz` format. Add npz parsing alongside safetens
 
 ## P3: Trait Evolution
 
-### Per-layer FFN type
+### Per-layer FFN type — DONE
 **Effort**: Low
 **Status**: ✅ Complete (2026-05)
 
