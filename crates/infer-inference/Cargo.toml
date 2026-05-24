@@ -31,7 +31,7 @@ ndarray = { version = "0.16", features = ["blas"] }
 rayon = "1.10"
 
 # Tokenizer
-tokenizers = "0.21"
+tokenizers = "0.23"
 
 # Remote FFN backend (RemoteWalkBackend -> POST /v1/walk-ffn)
 reqwest = { version = "0.12", features = ["blocking", "json"] }
