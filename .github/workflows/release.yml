@@ -43,7 +43,7 @@ jobs:
           tar czf "${ARTIFACT}.tar.gz" "${ARTIFACT}"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pg_infer-pg${{ matrix.pg_version }}-x86_64-linux
           path: pg_infer-*.tar.gz
