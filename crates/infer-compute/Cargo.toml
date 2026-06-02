@@ -13,7 +13,7 @@ categories = ["science"]
 ndarray = { version = "0.16", features = ["blas"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-blas-src = { version = "0.10", features = ["openblas"], default-features = false }
+blas-src = { version = "0.14", features = ["openblas"], default-features = false }
 openblas-src = { version = "0.10", features = ["system"] }
 
 # Metal GPU (macOS only, optional)
