@@ -39,7 +39,7 @@ cc = "1.0"
 libc = "0.2"
 
 [dev-dependencies]
-criterion = "0.5"
+criterion = "0.8"
 serde_json = "1"
 memmap2 = "0.9"
 infer-models = { path = "../infer-models" }
