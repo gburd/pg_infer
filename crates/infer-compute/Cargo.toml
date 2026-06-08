@@ -10,7 +10,7 @@ categories = ["science"]
 
 [dependencies]
 # Matrix types
-ndarray = { version = "0.16", features = ["blas"] }
+ndarray = { version = "0.17", features = ["blas"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 blas-src = { version = "0.10", features = ["openblas"], default-features = false }

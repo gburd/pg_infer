@@ -16,7 +16,7 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 
 # Matrix types (all compute via infer-compute)
-ndarray = "0.16"
+ndarray = "0.17"
 
 # Parallelism for the direct-Q4K matmul kernel (feature walk).
 rayon = "1.10"

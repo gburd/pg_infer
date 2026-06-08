@@ -9,7 +9,7 @@ keywords = ["transformer", "model-config", "llm", "architecture"]
 categories = ["data-structures"]
 
 [dependencies]
-ndarray = "0.16"
+ndarray = "0.17"
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
