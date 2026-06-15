@@ -46,8 +46,8 @@ pub use tokenizers;
 // Config
 pub use config::dtype::StorageDtype;
 pub use config::types::{
-    DownMetaRecord, DownMetaTopK, ExtractLevel, LayerBands, MoeConfig, QuantFormat,
-    VindexConfig, VindexLayerInfo, VindexModelConfig, VindexSource,
+    BitnetLayout, BitnetTensorEntry, DownMetaRecord, DownMetaTopK, ExtractLevel, LayerBands,
+    MoeConfig, QuantFormat, VindexConfig, VindexLayerInfo, VindexModelConfig, VindexSource,
 };
 
 // Error
@@ -67,6 +67,7 @@ pub use describe::{DescribeEdge, LabelSource};
 pub use extract::{
     build_vindex, build_vindex_resume, build_vindex_from_vectors,
     build_vindex_streaming, resolve_gate_dtype, extract_residual_cache,
+    load_bitnet_weights, write_bitnet_artifacts, BitnetArchMeta, BitnetWeights,
     IndexBuildCallbacks, SilentBuildCallbacks,
 };
 

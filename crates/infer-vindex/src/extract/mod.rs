@@ -5,6 +5,8 @@ use std::path::Path;
 use crate::error::VindexError;
 use crate::storage::residual_cache::ResidualCacheBuilder;
 
+pub mod bitnet_loader;
+pub mod bitnet_writer;
 pub mod build;
 pub mod build_from_vectors;
 pub mod build_helpers;
@@ -13,6 +15,8 @@ pub mod callbacks;
 pub mod moe_svd;
 pub mod streaming;
 
+pub use bitnet_loader::{load_bitnet_weights, BitnetWeights};
+pub use bitnet_writer::{write_bitnet_artifacts, BitnetArchMeta};
 pub use build::build_vindex;
 pub use build::build_vindex_resume;
 pub use build::resolve_gate_dtype;

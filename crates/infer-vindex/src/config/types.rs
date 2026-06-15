@@ -54,6 +54,66 @@ pub struct VindexConfig {
     /// Model config for architecture reconstruction.
     #[serde(default)]
     pub model_config: Option<VindexModelConfig>,
+    /// BitNet b1.58 native-ternary layout. `Some` only for vindexes
+    /// built with `--keep-quant` from an I2_S GGUF; describes the
+    /// `bitnet/` subdirectory the ternary loader reads back.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bitnet_layout: Option<BitnetLayout>,
+}
+
+/// On-disk layout of a BitNet b1.58 vindex's native-ternary weights.
+///
+/// Each BitLinear projection is stored as raw I2_S bytes under
+/// `bitnet/<tensor_name>.i2s`; the per-channel f32 scales for every
+/// tensor are concatenated into a single `bitnet/scales.f32`. This
+/// struct records the slicing so the loader can reconstruct typed
+/// `BitLinearWeight` containers with a single mmap + slice.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct BitnetLayout {
+    /// Per-tensor entries. Order is meaningful (it determines the
+    /// scale-offset packing) but loaders look up by name.
+    pub tensors: Vec<BitnetTensorEntry>,
+    /// Total number of f32 entries in `bitnet/scales.f32`. Used to
+    /// validate the file size at load time.
+    pub total_scale_count: usize,
+    /// RMSnorm epsilon for the model (used by the ternary FFN and
+    /// attention sub-norms). Read from the source GGUF at convert time.
+    #[serde(default = "default_rms_eps")]
+    pub rms_eps: f32,
+    /// Dimension of one attention head.
+    #[serde(default)]
+    pub head_dim: usize,
+    /// Number of query heads.
+    #[serde(default)]
+    pub n_q_heads: usize,
+    /// Number of key/value heads (GQA).
+    #[serde(default)]
+    pub n_kv_heads: usize,
+    /// RoPE theta (base).
+    #[serde(default = "default_rope_base")]
+    pub rope_base: f64,
+}
+
+fn default_rms_eps() -> f32 {
+    1e-5
+}
+
+fn default_rope_base() -> f64 {
+    10000.0
+}
+
+/// One BitLinear tensor's entry in a [`BitnetLayout`].
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct BitnetTensorEntry {
+    /// GGUF tensor name (e.g. `blk.0.ffn_down.weight`).
+    pub name: String,
+    /// Output dimension (number of rows in the matvec sense).
+    pub rows: usize,
+    /// Input dimension (must be a multiple of 4 for the I2_S packing).
+    pub cols: usize,
+    /// Byte offset into `bitnet/scales.f32` where this tensor's
+    /// per-row scale vector starts. Length is `rows` f32s.
+    pub scale_offset: usize,
 }
 
 /// Provenance: which model checkpoint this vindex was built from.
