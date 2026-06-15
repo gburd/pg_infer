@@ -243,7 +243,7 @@ pub fn quantize_q4_k_gguf(data: &[f32]) -> Vec<u8> {
 /// or if `n_elements` is not a multiple of 256.
 pub fn dequantize_q4_k_gguf(data: &[u8], n_elements: usize) -> Vec<f32> {
     assert!(
-        n_elements % 256 == 0,
+        n_elements.is_multiple_of(256),
         "n_elements must be a multiple of 256, got {n_elements}"
     );
     let block_size = 144;

@@ -481,6 +481,7 @@ fn make_config(model: &str, layers: usize, hidden: usize, intermediate: usize,
         quant: infer_vindex::QuantFormat::None,
         layer_bands: None, layers: layer_infos, down_top_k: 1,
         has_model_weights: false, model_config: None,
+        bitnet_layout: None,
     }
 }
 

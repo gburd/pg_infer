@@ -57,7 +57,7 @@ impl ResidualCache {
         let data = &mmap[..];
 
         // Parse header
-        if &data[0..4] != MAGIC {
+        if data[0..4] != MAGIC {
             return Err(VindexError::Parse("bad residual cache magic".into()));
         }
         let version = u32::from_le_bytes(data[4..8].try_into().unwrap());

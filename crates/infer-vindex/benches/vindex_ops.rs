@@ -217,6 +217,7 @@ fn bench_save_load(c: &mut Criterion) {
         down_top_k: 5,
         has_model_weights: false,
         model_config: None,
+        bitnet_layout: None,
     };
     VectorIndex::save_config(&config, &load_dir).unwrap();
     let tok_json = r#"{"version":"1.0","model":{"type":"BPE","vocab":{},"merges":[]},"added_tokens":[]}"#;

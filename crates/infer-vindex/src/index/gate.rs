@@ -1107,9 +1107,9 @@ mod ternary_gate_tests {
         // Feature 2: +1 at dim 0, -1 at dim 1
         // Feature 3: all zeros
         let mut vals = vec![0i8; num_features * hidden];
-        vals[0 * hidden + 0] = 1;
-        vals[1 * hidden + 0] = -1;
-        vals[2 * hidden + 0] = 1;
+        vals[0] = 1;
+        vals[hidden] = -1;
+        vals[2 * hidden] = 1;
         vals[2 * hidden + 1] = -1;
         let packed = dtype::encode_ternary(&vals);
         anon[..per_layer_bytes].copy_from_slice(&packed);
