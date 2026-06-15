@@ -11,6 +11,7 @@ pub mod layer_graph;
 pub mod model;
 pub mod prompt;
 pub mod residual;
+pub mod ternary;
 pub mod tokenizer;
 pub mod trace;
 pub mod trie;

@@ -6,6 +6,7 @@
   - [Local (mmap)](deployment/local.md)
   - [Remote (larql-server)](deployment/remote.md)
   - [Grid (larql-router)](deployment/grid.md)
+  - [Serving BitNet](deployment/bitnet.md)
   - [Docker](deployment/docker.md)
 - [Operations](operations/tuning.md)
   - [Tuning](operations/tuning.md)

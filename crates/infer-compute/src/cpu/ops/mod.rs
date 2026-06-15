@@ -15,6 +15,7 @@ pub mod q6k_matvec;
 pub mod q6k_matvec_avx2;
 pub mod q8_matvec;
 pub mod ternary_matvec;
+pub mod bitlinear_matvec;
 pub mod vector;
 pub mod attention;
 pub mod geglu;

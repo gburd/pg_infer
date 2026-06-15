@@ -41,6 +41,9 @@ pub enum GgufQuantFormat {
     Q4_K,
     Q5_K,
     Q6_K,
+    TQ1_0,
+    TQ2_0,
+    I2_S,
 }
 
 impl GgufQuantFormat {
@@ -60,6 +63,9 @@ impl GgufQuantFormat {
             ggml::TYPE_Q4_K => Some(Self::Q4_K),
             ggml::TYPE_Q5_K => Some(Self::Q5_K),
             ggml::TYPE_Q6_K => Some(Self::Q6_K),
+            ggml::TYPE_TQ1_0 => Some(Self::TQ1_0),
+            ggml::TYPE_TQ2_0 => Some(Self::TQ2_0),
+            ggml::TYPE_I2_S => Some(Self::I2_S),
             _ => None,
         }
     }
@@ -89,6 +95,9 @@ impl GgufQuantFormat {
             Self::Q4_K => ggml::TYPE_Q4_K,
             Self::Q5_K => ggml::TYPE_Q5_K,
             Self::Q6_K => ggml::TYPE_Q6_K,
+            Self::TQ1_0 => ggml::TYPE_TQ1_0,
+            Self::TQ2_0 => ggml::TYPE_TQ2_0,
+            Self::I2_S => ggml::TYPE_I2_S,
         }
     }
 }
@@ -451,6 +460,9 @@ mod tests {
             (GgufQuantFormat::Q4_K, ggml::TYPE_Q4_K),
             (GgufQuantFormat::Q6_K, ggml::TYPE_Q6_K),
             (GgufQuantFormat::Q8_0, ggml::TYPE_Q8_0),
+            (GgufQuantFormat::TQ1_0, ggml::TYPE_TQ1_0),
+            (GgufQuantFormat::TQ2_0, ggml::TYPE_TQ2_0),
+            (GgufQuantFormat::I2_S, ggml::TYPE_I2_S),
         ];
         for (fmt, expected_type) in formats {
             assert_eq!(fmt.as_ggml_type(), expected_type);

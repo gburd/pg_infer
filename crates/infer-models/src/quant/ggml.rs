@@ -10,7 +10,7 @@
 //! with shared scale factors.
 
 use crate::detect::ModelError;
-use super::half::f16_to_f32;
+use super::half::{f16_to_f32, f32_to_f16};
 
 // GGML tensor type IDs
 pub const TYPE_F32: u32 = 0;
@@ -26,6 +26,19 @@ pub const TYPE_Q4_K: u32 = 12;
 pub const TYPE_Q5_K: u32 = 13;
 pub const TYPE_Q6_K: u32 = 14;
 pub const TYPE_BF16: u32 = 30;
+pub const TYPE_TQ1_0: u32 = 34;
+pub const TYPE_TQ2_0: u32 = 35;
+pub const TYPE_I2_S: u32 = 36;
+
+/// Canonical GGML super-block element count (TQ1_0/TQ2_0 share it).
+const K_QUANT_BLOCK_ELEMS: usize = 256;
+/// TQ2_0: 64 packed bytes (4 trits each) + f16 scale.
+const TQ2_0_BLOCK_BYTES: usize = 66;
+/// TQ1_0: 48 base-3 bytes + 4 qh bytes + f16 scale.
+const TQ1_0_BLOCK_BYTES: usize = 54;
+/// I2_S: pure 2-bit packing, 4 weights per byte, no per-block scale.
+const I2_S_BLOCK_BYTES: usize = 1;
+const I2_S_BLOCK_ELEMS: usize = 4;
 
 /// Validate that `data` is large enough to hold `n_elements / block_elems`
 /// blocks of `block_size` bytes, and that `n_elements` is block-aligned.
@@ -80,6 +93,9 @@ pub fn tensor_data_size(tensor_type: u32, n_elements: usize) -> Result<usize, Mo
         TYPE_Q2_K => Ok(n_elements / 256 * 84),
         TYPE_Q3_K => Ok(n_elements / 256 * 110),
         TYPE_Q5_K => Ok(n_elements / 256 * 176),
+        TYPE_TQ1_0 => Ok(n_elements / K_QUANT_BLOCK_ELEMS * TQ1_0_BLOCK_BYTES),
+        TYPE_TQ2_0 => Ok(n_elements / K_QUANT_BLOCK_ELEMS * TQ2_0_BLOCK_BYTES),
+        TYPE_I2_S => Ok(n_elements.div_ceil(I2_S_BLOCK_ELEMS) * I2_S_BLOCK_BYTES),
         other => Err(ModelError::UnsupportedDtype(format!("GGML type {other}"))),
     }
 }
@@ -100,6 +116,9 @@ pub fn type_name(tensor_type: u32) -> &'static str {
         TYPE_Q5_K => "Q5_K",
         TYPE_Q6_K => "Q6_K",
         TYPE_BF16 => "BF16",
+        TYPE_TQ1_0 => "TQ1_0",
+        TYPE_TQ2_0 => "TQ2_0",
+        TYPE_I2_S => "I2_S",
         _ => "unknown",
     }
 }
@@ -134,6 +153,9 @@ pub fn dequantize(data: &[u8], tensor_type: u32, n_elements: usize) -> Result<Ve
         TYPE_Q5_1 => dequantize_q5_1(data, n_elements),
         TYPE_Q4_K => dequantize_q4_k(data, n_elements),
         TYPE_Q6_K => dequantize_q6_k(data, n_elements),
+        TYPE_TQ1_0 => dequantize_tq1_0(data, n_elements),
+        TYPE_TQ2_0 => dequantize_tq2_0(data, n_elements),
+        TYPE_I2_S => dequantize_i2_s(data, n_elements),
         other => Err(ModelError::UnsupportedDtype(format!("GGML type {other}"))),
     }
 }
@@ -850,6 +872,255 @@ pub fn quantize_q8_0(data: &[f32]) -> Vec<u8> {
 }
 
 
+// BitNet 1.58 ternary quantization: TQ1_0, TQ2_0 (canonical llama.cpp) and
+// I2_S (Microsoft bitnet.cpp fork). TQ1_0/TQ2_0 encode ternary {-1,0,+1}
+// plus a per-block f16 scale against the 256-element super-block; I2_S is a
+// pure 2-bit packing whose scale lives in an adjacent F32 sub-norm tensor.
+// Both stored values are biased by +1, so decode is (stored - 1) * d.
+// Wire format mirrors ggml-quants.c in upstream llama.cpp.
+
+const TQ1_QS_BYTES: usize = 48;
+const TQ1_QH_BYTES: usize = 4;
+const TQ1_POW3: [u8; 5] = [1, 3, 9, 27, 81];
+
+#[inline]
+fn f16_le_to_f32(b0: u8, b1: u8) -> f32 {
+    f16_to_f32(u16::from_le_bytes([b0, b1]))
+}
+
+#[inline]
+fn f32_to_f16_le(v: f32) -> [u8; 2] {
+    f32_to_f16(v).to_le_bytes()
+}
+
+/// Decode TQ2_0 bytes to f32. Each block holds 256 ternary values plus an
+/// f16 scale; `qs[64]` packs 4 elements per byte at 2 bits each. Decode order
+/// matches llama.cpp: 2 halves × 4 bit-pairs × 32 elements = 256 per block.
+///
+/// # Errors
+/// Returns `ModelError::Parse` on truncated input or an `n_elements` that
+/// isn't a multiple of 256.
+pub fn dequantize_tq2_0(data: &[u8], n_elements: usize) -> Result<Vec<f32>, ModelError> {
+    let n_blocks =
+        check_block_input("TQ2_0", data, n_elements, K_QUANT_BLOCK_ELEMS, TQ2_0_BLOCK_BYTES)?;
+    let mut out = Vec::with_capacity(n_elements);
+
+    for block in 0..n_blocks {
+        let base = block * TQ2_0_BLOCK_BYTES;
+        let qs = &data[base..base + 64];
+        let d = f16_le_to_f32(data[base + 64], data[base + 65]);
+
+        for j_half in 0..2 {
+            let j = j_half * 32;
+            for shift in 0..4 {
+                for m in 0..32 {
+                    let q = (qs[j + m] >> (2 * shift)) & 0b11;
+                    out.push((q as i32 - 1) as f32 * d);
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Encode an f32 slice into TQ2_0 blocks. Values round to the nearest of
+/// `{-d, 0, +d}` where `d = max(|x|)` per block. Test/extract helper, not on
+/// the hot decode path.
+pub fn quantize_tq2_0(values: &[f32]) -> Result<Vec<u8>, ModelError> {
+    if !values.len().is_multiple_of(K_QUANT_BLOCK_ELEMS) {
+        return Err(ModelError::Parse(format!(
+            "TQ2_0 quantize: input length {} is not a multiple of {}",
+            values.len(),
+            K_QUANT_BLOCK_ELEMS
+        )));
+    }
+
+    let n_blocks = values.len() / K_QUANT_BLOCK_ELEMS;
+    let mut out = vec![0u8; n_blocks * TQ2_0_BLOCK_BYTES];
+
+    for block in 0..n_blocks {
+        let in_base = block * K_QUANT_BLOCK_ELEMS;
+        let block_in = &values[in_base..in_base + K_QUANT_BLOCK_ELEMS];
+        let scale = block_in.iter().copied().fold(0.0f32, |acc, v| acc.max(v.abs()));
+        let inv = if scale > 0.0 { 1.0 / scale } else { 0.0 };
+
+        let trits: Vec<u8> = block_in
+            .iter()
+            .map(|&v| {
+                let t = (v * inv).round().clamp(-1.0, 1.0) as i32;
+                (t + 1) as u8
+            })
+            .collect();
+
+        let out_base = block * TQ2_0_BLOCK_BYTES;
+        for j_half in 0..2 {
+            let j = j_half * 32;
+            for shift in 0..4 {
+                for m in 0..32 {
+                    let elem_idx = j_half * 128 + shift * 32 + m;
+                    out[out_base + j + m] |= trits[elem_idx] << (2 * shift);
+                }
+            }
+        }
+        let d_bytes = f32_to_f16_le(scale);
+        out[out_base + 64] = d_bytes[0];
+        out[out_base + 65] = d_bytes[1];
+    }
+    Ok(out)
+}
+
+/// Decode TQ1_0 bytes to f32. 240 elements are stored 5-per-byte as base-3 in
+/// `qs[48]`, 16 trailing elements 4-per-byte as base-3 in `qh[4]`, plus an f16
+/// scale. Digit `l` is extracted via `((q * pow3[l]) * 3) >> 8`, matching
+/// llama.cpp's pre-multiplied fast path.
+pub fn dequantize_tq1_0(data: &[u8], n_elements: usize) -> Result<Vec<f32>, ModelError> {
+    let n_blocks =
+        check_block_input("TQ1_0", data, n_elements, K_QUANT_BLOCK_ELEMS, TQ1_0_BLOCK_BYTES)?;
+    let mut out = Vec::with_capacity(n_elements);
+
+    for block in 0..n_blocks {
+        let base = block * TQ1_0_BLOCK_BYTES;
+        let qs = &data[base..base + TQ1_QS_BYTES];
+        let qh = &data[base + TQ1_QS_BYTES..base + TQ1_QS_BYTES + TQ1_QH_BYTES];
+        let d = f16_le_to_f32(
+            data[base + TQ1_QS_BYTES + TQ1_QH_BYTES],
+            data[base + TQ1_QS_BYTES + TQ1_QH_BYTES + 1],
+        );
+
+        let mut j = 0usize;
+        while j < TQ1_QS_BYTES {
+            let chunk_len = (TQ1_QS_BYTES - j).min(32);
+            for &p3 in &TQ1_POW3 {
+                for m in 0..chunk_len {
+                    let q = qs[j + m].wrapping_mul(p3) as u16;
+                    let xi = ((q * 3) >> 8) as i32;
+                    out.push((xi - 1) as f32 * d);
+                }
+            }
+            j += 32;
+        }
+
+        for &p3 in &TQ1_POW3[..4] {
+            for &qh_byte in &qh[..TQ1_QH_BYTES] {
+                let q = qh_byte.wrapping_mul(p3) as u16;
+                let xi = ((q * 3) >> 8) as i32;
+                out.push((xi - 1) as f32 * d);
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Encode an f32 slice into TQ1_0 blocks. Test/extract helper, not on the hot
+/// decode path.
+pub fn quantize_tq1_0(values: &[f32]) -> Result<Vec<u8>, ModelError> {
+    if !values.len().is_multiple_of(K_QUANT_BLOCK_ELEMS) {
+        return Err(ModelError::Parse(format!(
+            "TQ1_0 quantize: input length {} is not a multiple of {}",
+            values.len(),
+            K_QUANT_BLOCK_ELEMS
+        )));
+    }
+
+    let n_blocks = values.len() / K_QUANT_BLOCK_ELEMS;
+    let mut out = vec![0u8; n_blocks * TQ1_0_BLOCK_BYTES];
+
+    for block in 0..n_blocks {
+        let in_base = block * K_QUANT_BLOCK_ELEMS;
+        let block_in = &values[in_base..in_base + K_QUANT_BLOCK_ELEMS];
+        let scale = block_in.iter().copied().fold(0.0f32, |acc, v| acc.max(v.abs()));
+        let inv = if scale > 0.0 { 1.0 / scale } else { 0.0 };
+
+        let trits: Vec<u8> = block_in
+            .iter()
+            .map(|&v| {
+                let t = (v * inv).round().clamp(-1.0, 1.0) as i32;
+                (t + 1) as u8
+            })
+            .collect();
+
+        let out_base = block * TQ1_0_BLOCK_BYTES;
+        let mut elem_off = 0usize;
+        let mut j = 0usize;
+        while j < TQ1_QS_BYTES {
+            let chunk_len = (TQ1_QS_BYTES - j).min(32);
+            for m in 0..chunk_len {
+                let mut q: u8 = 0;
+                for n in 0..5 {
+                    q = q.wrapping_mul(3).wrapping_add(trits[elem_off + n * chunk_len + m]);
+                }
+                out[out_base + j + m] = q;
+            }
+            elem_off += 5 * chunk_len;
+            j += 32;
+        }
+
+        for m in 0..TQ1_QH_BYTES {
+            let mut q: u8 = 0;
+            for n in 0..4 {
+                q = q.wrapping_mul(3).wrapping_add(trits[elem_off + n * TQ1_QH_BYTES + m]);
+            }
+            q = q.wrapping_mul(3); // 256 / 81 == 3 in integer division.
+            out[out_base + TQ1_QS_BYTES + m] = q;
+        }
+
+        let d_bytes = f32_to_f16_le(scale);
+        out[out_base + TQ1_QS_BYTES + TQ1_QH_BYTES] = d_bytes[0];
+        out[out_base + TQ1_QS_BYTES + TQ1_QH_BYTES + 1] = d_bytes[1];
+    }
+    Ok(out)
+}
+
+/// Decode I2_S bytes to f32 trits at unit scale. Per-channel scale lives in
+/// the adjacent `*_sub_norm.weight` F32 tensor and is applied at inference
+/// time. Bit pattern → trit: 0b00→0, 0b01→+1, 0b10→-1, 0b11→0 (reserved).
+pub fn dequantize_i2_s(data: &[u8], n_elements: usize) -> Result<Vec<f32>, ModelError> {
+    let n_blocks =
+        check_block_input("I2_S", data, n_elements, I2_S_BLOCK_ELEMS, I2_S_BLOCK_BYTES)?;
+    let mut out = Vec::with_capacity(n_elements);
+    for &b in &data[..n_blocks] {
+        for slot in 0..4 {
+            let bits = (b >> (2 * slot)) & 0b11;
+            out.push(match bits {
+                0b01 => 1.0,
+                0b10 => -1.0,
+                _ => 0.0,
+            });
+        }
+    }
+    Ok(out)
+}
+
+/// Encode an f32 slice into I2_S bytes. Quantises each value to its nearest of
+/// `{-1, 0, +1}` after dividing by the absmax of the slice. Test helper.
+pub fn quantize_i2_s(values: &[f32]) -> Result<Vec<u8>, ModelError> {
+    if !values.len().is_multiple_of(I2_S_BLOCK_ELEMS) {
+        return Err(ModelError::Parse(format!(
+            "I2_S quantize: input length {} is not a multiple of 4",
+            values.len()
+        )));
+    }
+
+    let scale = values.iter().copied().fold(0.0f32, |a, v| a.max(v.abs()));
+    let inv = if scale > 0.0 { 1.0 / scale } else { 0.0 };
+
+    let mut out = vec![0u8; values.len() / I2_S_BLOCK_ELEMS];
+    for (i, chunk) in values.chunks_exact(4).enumerate() {
+        let mut byte: u8 = 0;
+        for (slot, &v) in chunk.iter().enumerate() {
+            let t = (v * inv).round().clamp(-1.0, 1.0) as i32;
+            let bits: u8 = match t {
+                1 => 0b01,
+                -1 => 0b10,
+                _ => 0b00,
+            };
+            byte |= bits << (2 * slot);
+        }
+        out[i] = byte;
+    }
+    Ok(out)
+}
+
 // Compute operations (matvec, vecmat, NEON kernels) moved to infer-compute.
 // See: crates/infer-compute/src/cpu/ops/
 
@@ -1348,5 +1619,125 @@ mod tests {
             (gold - dispatched).abs() < tol,
             "gold={gold} dispatched={dispatched} tol={tol}"
         );
+    }
+
+    fn make_ternary_block(scale: f32) -> Vec<f32> {
+        (0..K_QUANT_BLOCK_ELEMS)
+            .map(|i| match i % 3 {
+                0 => -scale,
+                1 => 0.0,
+                _ => scale,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn tq2_0_round_trip_unit_scale() {
+        let input = make_ternary_block(1.0);
+        let bytes = quantize_tq2_0(&input).unwrap();
+        assert_eq!(bytes.len(), TQ2_0_BLOCK_BYTES);
+        let decoded = dequantize_tq2_0(&bytes, K_QUANT_BLOCK_ELEMS).unwrap();
+        assert_eq!(decoded.len(), input.len());
+        for (i, (&a, &b)) in input.iter().zip(decoded.iter()).enumerate() {
+            assert!((a - b).abs() < 1e-6, "elem {i}: {a} vs {b}");
+        }
+    }
+
+    #[test]
+    fn tq2_0_round_trip_scaled() {
+        let input = make_ternary_block(0.5);
+        let bytes = quantize_tq2_0(&input).unwrap();
+        let decoded = dequantize_tq2_0(&bytes, K_QUANT_BLOCK_ELEMS).unwrap();
+        for (i, (&a, &b)) in input.iter().zip(decoded.iter()).enumerate() {
+            assert!((a - b).abs() < 1e-6, "elem {i}: {a} vs {b}");
+        }
+    }
+
+    #[test]
+    fn tq2_0_two_blocks_independent_scales() {
+        let mut input = make_ternary_block(0.25);
+        input.extend(make_ternary_block(2.0));
+        let bytes = quantize_tq2_0(&input).unwrap();
+        assert_eq!(bytes.len(), 2 * TQ2_0_BLOCK_BYTES);
+        let decoded = dequantize_tq2_0(&bytes, 2 * K_QUANT_BLOCK_ELEMS).unwrap();
+        for (i, (&a, &b)) in input.iter().zip(decoded.iter()).enumerate() {
+            assert!((a - b).abs() < 1e-6, "elem {i}: {a} vs {b}");
+        }
+    }
+
+    #[test]
+    fn tq2_0_truncated_input_errors() {
+        let buf = vec![0u8; TQ2_0_BLOCK_BYTES - 1];
+        assert!(dequantize_tq2_0(&buf, K_QUANT_BLOCK_ELEMS).is_err());
+    }
+
+    #[test]
+    fn tq1_0_zero_block_is_zero() {
+        let input = vec![0.0f32; K_QUANT_BLOCK_ELEMS];
+        let bytes = quantize_tq1_0(&input).unwrap();
+        let decoded = dequantize_tq1_0(&bytes, K_QUANT_BLOCK_ELEMS).unwrap();
+        assert!(decoded.iter().all(|&v| v == 0.0));
+    }
+
+    #[test]
+    fn tq1_0_truncated_input_errors() {
+        let buf = vec![0u8; TQ1_0_BLOCK_BYTES - 1];
+        assert!(dequantize_tq1_0(&buf, K_QUANT_BLOCK_ELEMS).is_err());
+    }
+
+    #[test]
+    fn ternary_dispatch_and_type_name() {
+        let bytes = vec![0u8; TQ2_0_BLOCK_BYTES];
+        let result = dequantize(&bytes, TYPE_TQ2_0, K_QUANT_BLOCK_ELEMS).unwrap();
+        assert!(result.iter().all(|&v| v == 0.0));
+
+        let bytes = vec![0u8; TQ1_0_BLOCK_BYTES];
+        let result = dequantize(&bytes, TYPE_TQ1_0, K_QUANT_BLOCK_ELEMS).unwrap();
+        assert!(result.iter().all(|&v| v == 0.0));
+
+        assert_eq!(type_name(TYPE_TQ1_0), "TQ1_0");
+        assert_eq!(type_name(TYPE_TQ2_0), "TQ2_0");
+        assert_eq!(type_name(TYPE_I2_S), "I2_S");
+    }
+
+    #[test]
+    fn i2_s_round_trip_basic() {
+        let input: Vec<f32> = vec![-1.0, 0.0, 1.0, 0.0, 1.0, -1.0, 0.0, 1.0];
+        let bytes = quantize_i2_s(&input).unwrap();
+        assert_eq!(bytes.len(), 2);
+        let decoded = dequantize_i2_s(&bytes, input.len()).unwrap();
+        assert_eq!(decoded, input);
+    }
+
+    #[test]
+    fn i2_s_bit_pattern_3_decodes_as_zero() {
+        let decoded = dequantize_i2_s(&[0xFF], 4).unwrap();
+        assert_eq!(decoded, vec![0.0, 0.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn i2_s_dispatch_via_dequantize() {
+        let bytes = vec![0b01_10_00_01u8];
+        let result = dequantize(&bytes, TYPE_I2_S, 4).unwrap();
+        assert_eq!(result, vec![1.0, 0.0, -1.0, 1.0]);
+    }
+
+    #[test]
+    fn i2_s_non_multiple_of_4_errors() {
+        assert!(dequantize_i2_s(&[0u8; 1], 3).is_err());
+        assert!(quantize_i2_s(&[1.0, 0.0, -1.0]).is_err());
+    }
+
+    #[test]
+    fn i2_s_tensor_data_size_matches_bitnet_b158_2b4t() {
+        // blk.0.ffn_down.weight in microsoft/bitnet-b1.58-2B-4T-gguf is
+        // 6912 x 2560 = 17,694,720 weights → ceil(n/4) = 4,423,680 bytes.
+        assert_eq!(tensor_data_size(TYPE_I2_S, 17_694_720).unwrap(), 4_423_680);
+    }
+
+    #[test]
+    fn tensor_data_size_ternary() {
+        assert_eq!(tensor_data_size(TYPE_TQ2_0, 256).unwrap(), TQ2_0_BLOCK_BYTES);
+        assert_eq!(tensor_data_size(TYPE_TQ1_0, 512).unwrap(), TQ1_0_BLOCK_BYTES * 2);
     }
 }
