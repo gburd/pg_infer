@@ -210,6 +210,21 @@ fn unsupported<T>(op: &str) -> Result<T, PgInferError> {
     })
 }
 
+/// Build the JSON body for a `POST /v1/infer` request.
+///
+/// Always sets `mode: "dense"`.  larql-server defaults to walk-mode
+/// when `mode` is omitted, which on a dense-only BitNet vindex
+/// (`--keep-quant --dense-only`) has no gate vectors and returns
+/// nothing useful.  Dense mode runs the native-ternary forward pass
+/// — the next-token prediction pg_infer wants.
+fn infer_request_body(prompt: &str, top_k: usize) -> serde_json::Value {
+    serde_json::json!({
+        "prompt": prompt,
+        "top": top_k,
+        "mode": "dense",
+    })
+}
+
 impl Backend for RemoteBackend {
     fn is_local(&self) -> bool {
         false
@@ -444,10 +459,7 @@ impl Backend for RemoteBackend {
     }
 
     fn infer(&self, prompt: &str, top_k: usize) -> Result<Vec<Prediction>, PgInferError> {
-        let body = serde_json::json!({
-            "prompt": prompt,
-            "top": top_k,
-        });
+        let body = infer_request_body(prompt, top_k);
         let resp: infer_client::InferResponse = self.post_json("/v1/infer", body)?;
 
         Ok(resp
@@ -634,5 +646,16 @@ mod tests {
         assert_eq!(b.band_for(18), "knowledge");
         assert_eq!(b.band_for(30), "output");
         assert_eq!(b.band_for(99), "");
+    }
+
+    #[test]
+    fn infer_request_always_sends_dense_mode() {
+        // Regression: /v1/infer must carry mode:"dense".  Omitting it
+        // lets larql-server default to walk-mode, which returns
+        // nothing useful on a dense-only BitNet vindex.
+        let body = infer_request_body("the capital of France is", 5);
+        assert_eq!(body["prompt"], "the capital of France is");
+        assert_eq!(body["top"], 5);
+        assert_eq!(body["mode"], "dense");
     }
 }
