@@ -23,7 +23,7 @@ blas-src = { version = "0.10", features = ["accelerate"] }
 
 
 [dependencies.cudarc]
-version = "0.12"
+version = "0.19"
 optional = true
 features = ["cublas", "nvrtc"]
 
