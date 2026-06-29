@@ -38,7 +38,7 @@ reqwest = { version = "0.12", features = ["blocking", "json"] }
 
 # WASM expert registry
 wasmtime = { version = "29", default-features = false, features = ["cranelift", "runtime"] }
-wasmtime-wasi = "29"
+wasmtime-wasi = "46"
 anyhow = "1"
 
 
