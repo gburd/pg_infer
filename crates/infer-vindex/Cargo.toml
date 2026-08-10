@@ -31,7 +31,7 @@ rand = "0.8"
 sha2 = "0.10"
 
 # base64 encoding for the HF preupload file-sample field.
-base64 = "0.22"
+base64 = "0.23"
 
 # Model weights (for safetensors loading during extract)
 safetensors = "0.5"
