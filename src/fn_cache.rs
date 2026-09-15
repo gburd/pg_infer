@@ -38,22 +38,63 @@ fn infer_stats() -> Result<
     )]))
 }
 
-/// Pre-warm the server's activation cache for a list of entities.
+/// Pre-warm a remote server: prefetch layer pages and load inference
+/// weights so the first query does not pay for them.
 ///
-/// Returns a status message with the count of warmed and already-cached
-/// entities.  Against a local backend or an old server without `/v1/warmup`,
-/// returns "(0 warmed, 0 cached)" without error.
+/// `layers` selects specific layers; `NULL` (the default) warms every
+/// layer the server owns. Returns the server's own counters. Against a
+/// local backend, or a server without `/v1/warmup`, returns a message
+/// saying so rather than fabricating zeros.
+///
+/// The previous signature took `entities text[]` and reported
+/// "N warmed, M already cached". larql-server has no per-entity
+/// activation cache: `/v1/warmup` prefetches *layers* and loads weights,
+/// and ignored the `entities` body entirely. The old counts were always
+/// zero — not "nothing to do", but "those fields do not exist in the
+/// response". Reporting the real fields is the only honest option, and
+/// it changes the signature, so this is a breaking change.
 ///
 /// ```sql
-/// SELECT infer_warmup('my_model', ARRAY['Paris', 'France', 'Berlin']);
+/// SELECT infer_warmup('my_model');                  -- all layers
+/// SELECT infer_warmup('my_model', ARRAY[0,1,2,3]);  -- selected layers
 /// ```
 #[pg_extern]
 fn infer_warmup(
     model_name: &str,
-    entities: Vec<String>,
+    layers: default!(Option<Vec<i32>>, "NULL"),
 ) -> Result<String, Box<dyn std::error::Error>> {
-    let (warmed, cached) = registry::with_backend(model_name, |b| b.warmup(&entities))?;
-    Ok(format!("{} warmed, {} already cached", warmed, cached))
+    // pgrx hands us i32 (SQL integer); the wire wants usize. Negative
+    // layer numbers are a caller error, not something to silently clamp.
+    let layers: Option<Vec<usize>> = match layers {
+        Some(l) => {
+            let mut out = Vec::with_capacity(l.len());
+            for n in l {
+                let Ok(n) = usize::try_from(n) else {
+                    return Err(format!("layer index must be >= 0, got {n}").into());
+                };
+                out.push(n);
+            }
+            Some(out)
+        }
+        None => None,
+    };
+    let resp = registry::with_backend(model_name, |b| b.warmup(layers.as_deref()))?;
+    let Some(r) = resp else {
+        return Ok("warmup unsupported by this backend (no /v1/warmup)".to_string());
+    };
+    Ok(format!(
+        "{} layers prefetched in {} ms, {} experts in {} ms, \
+         weights_loaded={} ({} ms), hnsw_built={} ({} ms), total {} ms",
+        r.layers_prefetched,
+        r.prefetch_ms,
+        r.experts_prefetched,
+        r.expert_prefetch_ms,
+        r.weights_loaded,
+        r.weights_load_ms,
+        r.hnsw_built,
+        r.hnsw_warmup_ms,
+        r.total_ms,
+    ))
 }
 
 /// Return server-side cache statistics as a single row.

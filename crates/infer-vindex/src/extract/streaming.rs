@@ -475,6 +475,10 @@ pub fn build_vindex_streaming(
     // ── 5. Config ──
     let family = arch.family().to_string();
     let config = VindexConfig {
+        // pg_infer's extractors emit neither layout; see validate_supported.
+        fp4: None,
+        bitnet_layout: None,
+        ffn_layout: None,
         version: 2,
         model: model_name.to_string(),
         family: family.clone(),

@@ -42,6 +42,9 @@ impl VectorIndex {
         let config_text = std::fs::read_to_string(&config_path)?;
         let config: VindexConfig = serde_json::from_str(&config_text)
             .map_err(|e| VindexError::Parse(e.to_string()))?;
+        // Refuse a container this build would misread, before touching any
+        // weight bytes. See `VindexConfig::validate_supported`.
+        config.validate_supported()?;
 
         let num_layers = config.num_layers;
         let hidden_size = config.hidden_size;
@@ -321,6 +324,7 @@ pub fn load_vindex_embeddings(dir: &Path) -> Result<(Array2<f32>, f32), VindexEr
     let config_text = std::fs::read_to_string(dir.join("index.json"))?;
     let config: VindexConfig = serde_json::from_str(&config_text)
         .map_err(|e| VindexError::Parse(e.to_string()))?;
+    config.validate_supported()?;
 
     let embed_file = std::fs::File::open(dir.join("embeddings.bin"))?;
     let embed_mmap = unsafe { memmap2::Mmap::map(&embed_file)? };
@@ -347,9 +351,18 @@ pub fn load_vindex_tokenizer(dir: &Path) -> Result<tokenizers::Tokenizer, Vindex
 }
 
 /// Load the vindex config.
+/// Load and validate a vindex's `index.json`.
+///
+/// Validates rather than just parsing: callers use the returned config to
+/// decide how to decode weight bytes (see `test_q4k_remote_parity`,
+/// `demo_moe_grid`), so an unsupported container has to be refused here
+/// too, not only on the `VectorIndex::load_vindex` path.
 pub fn load_vindex_config(dir: &Path) -> Result<VindexConfig, VindexError> {
     let text = std::fs::read_to_string(dir.join("index.json"))?;
-    serde_json::from_str(&text).map_err(|e| VindexError::Parse(e.to_string()))
+    let config: VindexConfig =
+        serde_json::from_str(&text).map_err(|e| VindexError::Parse(e.to_string()))?;
+    config.validate_supported()?;
+    Ok(config)
 }
 
 /// Load feature labels from down_meta.jsonl — fast hash lookup, no vocab projection.

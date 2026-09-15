@@ -46,4 +46,4 @@ pg_infer supports three deployment topologies, selectable per model:
 
 ## See Also
 
-- [SECURITY.md](https://codeberg.org/gregburd/larql/src/branch/main/SECURITY.md) -- Security policy (project root)
+- [SECURITY.md](https://codeberg.org/gregburd/pg_infer/src/branch/main/SECURITY.md) -- Security policy (project root)

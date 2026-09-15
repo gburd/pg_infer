@@ -1,0 +1,5160 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "larql-server",
+    "description": "HTTP API for vindex knowledge queries, inference, and remote MoE expert shards.",
+    "license": {
+      "name": "Apache-2.0",
+      "identifier": "Apache-2.0"
+    },
+    "version": "0.2.0"
+  },
+  "paths": {
+    "/v1/capabilities": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "handle_capabilities",
+        "responses": {
+          "200": {
+            "description": "What this server will and will not do",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CapabilitiesResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/chat/completions": {
+      "post": {
+        "tags": [
+          "openai"
+        ],
+        "operationId": "handle_chat_completions",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpenAiChatRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "SSE stream when `stream: true`. Each event is `data: <ChatCompletionChunk JSON>\\n\\n`, terminated by `data: [DONE]`.",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/completions": {
+      "post": {
+        "tags": [
+          "openai"
+        ],
+        "operationId": "handle_completions",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpenAiCompletionsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "SSE stream when `stream: true`. Each event is `data: <CompletionsChunk JSON>\\n\\n`, terminated by `data: [DONE]`.",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/describe": {
+      "get": {
+        "tags": [
+          "browse"
+        ],
+        "operationId": "handle_describe",
+        "parameters": [
+          {
+            "name": "entity",
+            "in": "query",
+            "description": "Entity to describe, e.g. `France`.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "band",
+            "in": "query",
+            "description": "Layer band to scan: `knowledge` (default), `syntax`, `output`, or `all`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "verbose",
+            "in": "query",
+            "description": "Include low-score edges in the response.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum number of edges to return.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "min_score",
+            "in": "query",
+            "description": "Minimum gate score to include an edge.",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "format": "float"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Edges for the queried entity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DescribeResponse"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Not modified (ETag match)"
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/embed": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "`POST /v1/embed`",
+        "description": "JSON request: `{\"token_ids\": [...]}`.\nBinary request (`Content-Type: application/x-larql-ffn`):\n  - 4 bytes: num_tokens (u32 LE)\n  - num_tokens × 4 bytes: token_ids (u32 LE)\n\nJSON response: `{\"residual\": [[f32, ...], ...], \"seq_len\": N, ...}`.\nBinary response: seq_len×hidden_size f32 LE, prefixed by two u32 headers.",
+        "operationId": "handle_embed",
+        "requestBody": {
+          "description": "JSON `{token_ids: [u32]}` OR binary `application/x-larql-ffn`: `[num_tokens u32 LE][token_ids u32 LE...]`.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmbedRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Binary response when the request used `Content-Type: application/x-larql-ffn`: `[seq_len u32][hidden u32][seq_len × hidden f32 LE]`.",
+            "content": {
+              "application/x-larql-ffn": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "format": "int32",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/embed/{token_id}": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "`GET /v1/embed/{token_id}`",
+        "description": "Returns the scaled f32 embedding vector for a single token ID.\nThe key (token_id) is a 32-bit integer; the value is a deterministic\nfunction of the model weights — so the response is immutably cacheable:\n\n  Cache-Control: public, max-age=31536000, immutable\n\nCDN-friendly: a reverse proxy or browser can cache the embedding for\nany token permanently, eliminating repeated lookups for high-frequency\ntokens (the, a, in, …) on the decode path.\n\nResponse (binary, 10 KB for hidden=2560):\n  [f32 × hidden_size] — LE bytes, pre-scaled\n\nResponse (JSON, if Accept: application/json):\n  {\"token_id\": N, \"embedding\": [f32, ...], \"hidden_size\": N}",
+        "operationId": "handle_embed_single",
+        "parameters": [
+          {
+            "name": "token_id",
+            "in": "path",
+            "description": "Vocabulary token id.",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "JSON response when `Accept: application/json`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmbedSingleJsonResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/embeddings": {
+      "post": {
+        "tags": [
+          "openai"
+        ],
+        "operationId": "handle_embeddings",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpenAiEmbeddingsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Mean-pooled embeddings (not contrastively trained — use at your own risk).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAiEmbeddingsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/expert/batch": {
+      "post": {
+        "tags": [
+          "expert"
+        ],
+        "operationId": "handle_expert_batch",
+        "requestBody": {
+          "description": "JSON `{requests:[{layer, expert_id, residual}]}` OR binary `application/x-larql-expert` wire (see docs/server-spec.md).",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchExpertRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Per-item expert outputs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchExpertResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/expert/topology": {
+      "get": {
+        "tags": [
+          "browse"
+        ],
+        "operationId": "handle_topology",
+        "responses": {
+          "200": {
+            "description": "Expert ownership range for this shard",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TopologyResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Server was not launched with --experts"
+          }
+        }
+      }
+    },
+    "/v1/expert/{layer}/{expert_id}": {
+      "post": {
+        "tags": [
+          "expert"
+        ],
+        "operationId": "handle_expert",
+        "parameters": [
+          {
+            "name": "layer",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "expert_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SingleExpertRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Expert output vector",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SingleExpertResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/experts/layer-batch": {
+      "post": {
+        "tags": [
+          "expert"
+        ],
+        "operationId": "handle_experts_layer_batch",
+        "requestBody": {
+          "description": "Binary wire: one pre-norm residual + K (expert_id, weight) pairs for a single layer. Router-weighted sum is returned as f32. See `docs/server-spec.md` for the exact packed layout.",
+          "content": {
+            "application/octet-stream": {}
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Weighted-sum f32 output",
+            "content": {
+              "application/x-larql-ffn": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "format": "int32",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/experts/layer-batch-f16": {
+      "post": {
+        "tags": [
+          "expert"
+        ],
+        "operationId": "handle_experts_layer_batch_f16",
+        "requestBody": {
+          "description": "Same shape as `/v1/experts/layer-batch` but residual is f16 to cut upload bandwidth by 2×.",
+          "content": {
+            "application/octet-stream": {}
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Weighted-sum f32 output",
+            "content": {
+              "application/x-larql-ffn": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "format": "int32",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/experts/multi-layer-batch": {
+      "post": {
+        "tags": [
+          "expert"
+        ],
+        "operationId": "handle_experts_multi_layer_batch",
+        "requestBody": {
+          "description": "N packed layer tasks — each `(layer, residual, expert_ids, weights)`. Server runs every task in parallel via rayon and returns N per-layer f32 outputs in one response.",
+          "content": {
+            "application/octet-stream": {}
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "N per-layer f32 outputs, one per task",
+            "content": {
+              "application/x-larql-ffn-multi": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "format": "int32",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/experts/multi-layer-batch-q8k": {
+      "post": {
+        "tags": [
+          "expert"
+        ],
+        "summary": "Q8K-prenormed variant: client pre-quantises h_norm, server skips\n`pre_experts_norm` and `quantize_h_norm_for_q4k` — just the matvec.\n4× smaller upload; response is standard f32.",
+        "operationId": "handle_experts_multi_layer_batch_q8k",
+        "requestBody": {
+          "description": "Same shape as `/v1/experts/multi-layer-batch` but the client has already applied `pre_experts_norm` and quantised `h_norm` to Q8K, saving ~4× upload bandwidth. Response is standard f32.",
+          "content": {
+            "application/octet-stream": {}
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "N per-layer f32 outputs, one per task",
+            "content": {
+              "application/x-larql-ffn-multi": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "format": "int32",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/explain-infer": {
+      "post": {
+        "tags": [
+          "inference"
+        ],
+        "operationId": "handle_explain",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExplainRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Predictions with per-layer feature traces",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExplainResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/health": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "handle_health",
+        "responses": {
+          "200": {
+            "description": "Server is alive",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/infer": {
+      "post": {
+        "tags": [
+          "inference"
+        ],
+        "operationId": "handle_infer",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InferRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Next-token predictions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InferResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Inference weights unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/insert": {
+      "post": {
+        "tags": [
+          "inference"
+        ],
+        "operationId": "handle_insert",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InsertRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Constellation insert result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InsertResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/logits": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "`POST /v1/logits`",
+        "description": "Accepts JSON (`{\"residual\": [...], \"top_k\": 5, \"temperature\": 1.0}`) or\nbinary (`Content-Type: application/x-larql-ffn`, raw hidden_size f32 LE\nbytes). Returns JSON top-k tokens.",
+        "operationId": "handle_logits",
+        "requestBody": {
+          "description": "JSON `{residual: [f32; hidden_size], top_k, temperature}` OR binary `application/x-larql-ffn` with raw hidden_size f32 LE bytes.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LogitsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Top-K tokens from lm_head",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LogitsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/models": {
+      "get": {
+        "tags": [
+          "browse"
+        ],
+        "operationId": "handle_models",
+        "responses": {
+          "200": {
+            "description": "OpenAI-compatible list of loaded models",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelsListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/models/{model}": {
+      "get": {
+        "tags": [
+          "browse"
+        ],
+        "operationId": "handle_model_retrieve",
+        "parameters": [
+          {
+            "name": "model",
+            "in": "path",
+            "description": "Model id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OpenAI-compatible single-model entry",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelEntry"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/patches": {
+      "get": {
+        "tags": [
+          "patches"
+        ],
+        "operationId": "handle_list_patches",
+        "responses": {
+          "200": {
+            "description": "Active patches for the current session or global state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListPatchesResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/patches/apply": {
+      "post": {
+        "tags": [
+          "patches"
+        ],
+        "operationId": "handle_apply_patch",
+        "requestBody": {
+          "description": "Provide either a `url` (path / http(s):// / hf://) or an inline `patch` object. Use the `X-Session-Id` header to scope the apply to a session.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApplyPatchBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Patch applied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplyPatchResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/patches/{name}": {
+      "delete": {
+        "tags": [
+          "patches"
+        ],
+        "operationId": "handle_remove_patch",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "description": "Patch description/name (or `inline-patch` if it was inlined without one).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Patch removed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemovePatchResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/plan": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "handle_plan",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlanRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The architecture-support verdict, plus what staging read to reach it",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "No sources, too many, or a source that cannot be read or planned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "This serving profile will not plan that source form — see GET /v1/capabilities",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Too many plans already in flight",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/relations": {
+      "get": {
+        "tags": [
+          "browse"
+        ],
+        "operationId": "handle_relations",
+        "parameters": [
+          {
+            "name": "source",
+            "in": "query",
+            "description": "Filter by label source (future use).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Known relation types across the knowledge band",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RelationsResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/responses": {
+      "post": {
+        "tags": [
+          "openai"
+        ],
+        "operationId": "handle_responses",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpenAiResponsesRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "SSE stream when `stream: true`: typed events (`response.created` … `response.output_text.delta` … `response.completed`), terminated by `data: [DONE]`.",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/responses/{response_id}": {
+      "get": {
+        "tags": [
+          "openai"
+        ],
+        "operationId": "handle_get_response",
+        "parameters": [
+          {
+            "name": "response_id",
+            "in": "path",
+            "description": "Stored response id (`resp_…`)",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The stored response envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAiResponsesResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "openai"
+        ],
+        "operationId": "handle_delete_response",
+        "parameters": [
+          {
+            "name": "response_id",
+            "in": "path",
+            "description": "Stored response id (`resp_…`)",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deletion receipt.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/runtime": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "handle_runtime",
+        "responses": {
+          "200": {
+            "description": "Server + model + backend + memory + performance snapshot",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuntimeResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/runtime/model": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "handle_load_model",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoadModelRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Loaded (or already bound to the same path) — runtime snapshot",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuntimeResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The path does not produce a loadable model",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A load/unload is already in progress, a different model is already bound, or this server's topology does not support dynamic lifecycle",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "handle_unload_model",
+        "responses": {
+          "200": {
+            "description": "Unloaded (or already idle) — runtime snapshot",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuntimeResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A load/unload is already in progress, generation is still active past the drain timeout, or this server's topology does not support dynamic lifecycle",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/select": {
+      "post": {
+        "tags": [
+          "inference"
+        ],
+        "operationId": "handle_select",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SelectRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Selected edges",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SelectResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions": {
+      "get": {
+        "tags": [
+          "sessions"
+        ],
+        "operationId": "handle_list_sessions",
+        "responses": {
+          "200": {
+            "description": "Live sessions, most recently used first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions/{session_id}": {
+      "get": {
+        "tags": [
+          "sessions"
+        ],
+        "operationId": "handle_get_session",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "description": "Value of the `X-Session-Id` header.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "sessions"
+        ],
+        "operationId": "handle_delete_session",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "description": "Value of the `X-Session-Id` header.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deletion receipt. Idempotent: deleting an absent session reports `deleted: false` rather than 404.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionDeletedResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/stats": {
+      "get": {
+        "tags": [
+          "browse"
+        ],
+        "operationId": "handle_stats",
+        "responses": {
+          "200": {
+            "description": "Model + vindex statistics",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatsResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/stream": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "handle_stream",
+        "responses": {
+          "101": {
+            "description": "WebSocket upgrade. After upgrade:\n\n**Client → server** (text frames, JSON):\n- `{\"type\":\"describe\", \"entity\":\"France\", \"band\":\"all\"}` — streams layer-by-layer describe.\n- `{\"type\":\"infer\", \"prompt\":\"The capital of France is\", \"top\":5, \"mode\":\"walk\"}` — streams top-K predictions one at a time.\n\n**Server → client** (text frames, JSON):\n- `{\"type\":\"layer\", \"layer\":N, \"edges\":[...]}` — per-layer describe output.\n- `{\"type\":\"done\", \"entity\":..., \"total_edges\":N, \"latency_ms\":M}` — describe finished.\n- `{\"type\":\"prediction\", \"rank\":I, \"token\":..., \"probability\":P}` — inference result.\n- `{\"type\":\"infer_done\", \"prompt\":..., \"mode\":..., \"predictions\":N, \"latency_ms\":M}` — inference finished.\n- `{\"type\":\"error\", \"message\":...}` — protocol or runtime error.\n"
+          }
+        }
+      }
+    },
+    "/v1/token/decode": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "`GET /v1/token/decode?ids=9515,235,1234`",
+        "operationId": "handle_token_decode",
+        "parameters": [
+          {
+            "name": "ids",
+            "in": "query",
+            "description": "Comma-separated token IDs, e.g. `9515,235,1234`.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Decoded text",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenDecodeResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/token/encode": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "`GET /v1/token/encode?text=Paris`",
+        "operationId": "handle_token_encode",
+        "parameters": [
+          {
+            "name": "text",
+            "in": "query",
+            "description": "Text to tokenize.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Token IDs for the text",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenEncodeResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/walk": {
+      "get": {
+        "tags": [
+          "browse"
+        ],
+        "operationId": "handle_walk",
+        "parameters": [
+          {
+            "name": "prompt",
+            "in": "query",
+            "description": "Prompt text to scan for features.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "top",
+            "in": "query",
+            "description": "Top-K features per layer.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "layers",
+            "in": "query",
+            "description": "Restrict scan to these layers — either a range (`\"24-33\"`) or a comma list (`\"14,26,27\"`).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Top feature hits for the prompt",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WalkResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/walk-ffn": {
+      "post": {
+        "tags": [
+          "expert"
+        ],
+        "operationId": "handle_walk_ffn",
+        "requestBody": {
+          "description": "Dense-FFN walk. Accepts JSON `WalkFfnRequest` (Content-Type `application/json`) OR the packed binary wire (requires `full_output = true`): Content-Type `application/x-larql-ffn[-f16|-i8]` declares the INBOUND residual encoding, independently of the `Accept`-negotiated response format. See `docs/server-spec.md` for the full wire layout.",
+          "content": {
+            "application/x-larql-ffn": {}
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Binary packed output when the request was `application/x-larql-ffn`",
+            "content": {
+              "application/x-larql-ffn": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "format": "int32",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/walk-ffn-q8k": {
+      "post": {
+        "tags": [
+          "expert"
+        ],
+        "operationId": "handle_walk_ffn_q8k",
+        "requestBody": {
+          "description": "Q8K-prenormed dense-FFN batch: client has applied FFN input norm + Q8 quantisation. 404 if the vindex lacks interleaved Q4K data.",
+          "content": {
+            "application/x-larql-ffn-q8k-batch": {}
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Per-layer FFN delta as f32",
+            "content": {
+              "application/x-larql-ffn-q8k-batch": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "format": "int32",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/warmup": {
+      "post": {
+        "tags": [
+          "inference"
+        ],
+        "operationId": "handle_warmup",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WarmupRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Warmup completed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WarmupResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/{model_id}/describe": {
+      "get": {
+        "tags": [
+          "browse"
+        ],
+        "operationId": "handle_describe_multi",
+        "parameters": [
+          {
+            "name": "model_id",
+            "in": "path",
+            "description": "Id of a loaded vindex.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "entity",
+            "in": "query",
+            "description": "Entity to describe, e.g. `France`.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "band",
+            "in": "query",
+            "description": "Layer band to scan: `knowledge` (default), `syntax`, `output`, or `all`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "verbose",
+            "in": "query",
+            "description": "Include low-score edges in the response.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum number of edges to return.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "min_score",
+            "in": "query",
+            "description": "Minimum gate score to include an edge.",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "format": "float"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DescribeResponse"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": ""
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/{model_id}/embed": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "handle_embed_multi",
+        "parameters": [
+          {
+            "name": "model_id",
+            "in": "path",
+            "description": "Id of a loaded vindex.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "JSON or binary `application/x-larql-ffn`.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmbedRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/x-larql-ffn": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "format": "int32",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/{model_id}/embed/{token_id}": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "handle_embed_single_multi",
+        "parameters": [
+          {
+            "name": "model_id",
+            "in": "path",
+            "description": "Id of a loaded vindex.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "token_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmbedSingleJsonResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/{model_id}/explain-infer": {
+      "post": {
+        "tags": [
+          "inference"
+        ],
+        "operationId": "handle_explain_multi",
+        "parameters": [
+          {
+            "name": "model_id",
+            "in": "path",
+            "description": "Id of a loaded vindex.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExplainRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExplainResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/{model_id}/infer": {
+      "post": {
+        "tags": [
+          "inference"
+        ],
+        "operationId": "handle_infer_multi",
+        "parameters": [
+          {
+            "name": "model_id",
+            "in": "path",
+            "description": "Id of a loaded vindex.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InferRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InferResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/{model_id}/insert": {
+      "post": {
+        "tags": [
+          "inference"
+        ],
+        "operationId": "handle_insert_multi",
+        "parameters": [
+          {
+            "name": "model_id",
+            "in": "path",
+            "description": "Id of a loaded vindex.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InsertRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InsertResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/{model_id}/logits": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "handle_logits_multi",
+        "parameters": [
+          {
+            "name": "model_id",
+            "in": "path",
+            "description": "Id of a loaded vindex.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LogitsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LogitsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/{model_id}/patches": {
+      "get": {
+        "tags": [
+          "patches"
+        ],
+        "operationId": "handle_list_patches_multi",
+        "parameters": [
+          {
+            "name": "model_id",
+            "in": "path",
+            "description": "Id of a loaded vindex.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListPatchesResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/{model_id}/patches/apply": {
+      "post": {
+        "tags": [
+          "patches"
+        ],
+        "operationId": "handle_apply_patch_multi",
+        "parameters": [
+          {
+            "name": "model_id",
+            "in": "path",
+            "description": "Id of a loaded vindex.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApplyPatchBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplyPatchResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/{model_id}/patches/{name}": {
+      "delete": {
+        "tags": [
+          "patches"
+        ],
+        "operationId": "handle_remove_patch_multi",
+        "parameters": [
+          {
+            "name": "model_id",
+            "in": "path",
+            "description": "Id of a loaded vindex.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "description": "Patch description/name.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemovePatchResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/{model_id}/relations": {
+      "get": {
+        "tags": [
+          "browse"
+        ],
+        "operationId": "handle_relations_multi",
+        "parameters": [
+          {
+            "name": "model_id",
+            "in": "path",
+            "description": "Id of a loaded vindex.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "source",
+            "in": "query",
+            "description": "Filter by label source (future use).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RelationsResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/{model_id}/select": {
+      "post": {
+        "tags": [
+          "inference"
+        ],
+        "operationId": "handle_select_multi",
+        "parameters": [
+          {
+            "name": "model_id",
+            "in": "path",
+            "description": "Id of a loaded vindex.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SelectRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SelectResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/{model_id}/stats": {
+      "get": {
+        "tags": [
+          "browse"
+        ],
+        "operationId": "handle_stats_multi",
+        "parameters": [
+          {
+            "name": "model_id",
+            "in": "path",
+            "description": "Id of a loaded vindex.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatsResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/{model_id}/token/decode": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "handle_token_decode_multi",
+        "parameters": [
+          {
+            "name": "model_id",
+            "in": "path",
+            "description": "Id of a loaded vindex.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ids",
+            "in": "query",
+            "description": "Comma-separated token IDs.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenDecodeResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/{model_id}/token/encode": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "handle_token_encode_multi",
+        "parameters": [
+          {
+            "name": "model_id",
+            "in": "path",
+            "description": "Id of a loaded vindex.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "text",
+            "in": "query",
+            "description": "Text to tokenize.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenEncodeResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/{model_id}/walk": {
+      "get": {
+        "tags": [
+          "browse"
+        ],
+        "operationId": "handle_walk_multi",
+        "parameters": [
+          {
+            "name": "model_id",
+            "in": "path",
+            "description": "Id of a loaded vindex.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "prompt",
+            "in": "query",
+            "description": "Prompt text to scan for features.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "top",
+            "in": "query",
+            "description": "Top-K features per layer.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "layers",
+            "in": "query",
+            "description": "Restrict scan to these layers — either a range (`\"24-33\"`) or a comma list (`\"14,26,27\"`).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WalkResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ApplyPatchBody": {
+        "type": "object",
+        "description": "Request body for `POST /v1/patches/apply`. Provide either a `url`\npointing at a `.vlp` file (local path or `hf://` URL) or an\ninline `patch` object. One of the two is required.",
+        "properties": {
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Local path, `http(s)://`, or `hf://` URL to a `.vlp` patch file."
+          },
+          "patch": {
+            "description": "Inline patch payload. See VindexPatch docs for schema; includes\n`description`, `base_model`, and `operations` (INSERT / DELETE)."
+          }
+        }
+      },
+      "ApplyPatchResponse": {
+        "type": "object",
+        "required": [
+          "applied",
+          "operations",
+          "active_patches"
+        ],
+        "properties": {
+          "applied": {
+            "type": "string"
+          },
+          "operations": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "active_patches": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "session": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "BatchExpertItem": {
+        "type": "object",
+        "required": [
+          "layer",
+          "expert_id",
+          "residual"
+        ],
+        "properties": {
+          "layer": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "expert_id": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "residual": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "float"
+            }
+          }
+        }
+      },
+      "BatchExpertRequest": {
+        "type": "object",
+        "required": [
+          "requests"
+        ],
+        "properties": {
+          "requests": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BatchExpertItem"
+            }
+          }
+        }
+      },
+      "BatchExpertResponse": {
+        "type": "object",
+        "required": [
+          "results",
+          "latency_ms"
+        ],
+        "properties": {
+          "results": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BatchExpertResult"
+            }
+          },
+          "latency_ms": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
+      "BatchExpertResult": {
+        "type": "object",
+        "required": [
+          "layer",
+          "expert_id",
+          "output"
+        ],
+        "properties": {
+          "layer": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "expert_id": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "output": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "float"
+            }
+          }
+        }
+      },
+      "CapabilitiesResponse": {
+        "type": "object",
+        "description": "`GET /v1/capabilities`. The `sources` / `explorer` /\n`runtime` blocks are generated from\n`crate::capabilities::ROUTE_CAPABILITIES` and the mounted-route\nledger, so this schema documents the *shape*; the authority for\nwhich keys appear is that table, not this struct.",
+        "required": [
+          "object",
+          "schema",
+          "profile",
+          "sources",
+          "explorer",
+          "runtime",
+          "routes"
+        ],
+        "properties": {
+          "object": {
+            "type": "string",
+            "description": "Always `\"capabilities\"`."
+          },
+          "schema": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Report schema version. A client that does not recognise it\nmust refuse the document rather than read the keys it knows.",
+            "minimum": 0
+          },
+          "profile": {
+            "type": "string",
+            "description": "`\"public_explorer\"` | `\"single_model\"` | `\"multi_model\"`."
+          },
+          "sources": {
+            "description": "Which source reference forms each source-taking verb accepts."
+          },
+          "explorer": {
+            "description": "The read surface over a bound container."
+          },
+          "runtime": {
+            "description": "What this process will do with the bound model, and on what."
+          },
+          "routes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Every path this server mounted, sorted."
+          }
+        }
+      },
+      "DescribeEdge": {
+        "type": "object",
+        "description": "One knowledge edge returned from `/v1/describe`.",
+        "required": [
+          "target",
+          "gate_score",
+          "layer",
+          "feature"
+        ],
+        "properties": {
+          "target": {
+            "type": "string",
+            "description": "Top token at this feature (trimmed)."
+          },
+          "gate_score": {
+            "type": "number",
+            "format": "float",
+            "description": "Gate activation score (rounded to 0.1)."
+          },
+          "layer": {
+            "type": "integer",
+            "description": "Layer the feature lives on.",
+            "minimum": 0
+          },
+          "feature": {
+            "type": "integer",
+            "description": "Feature index within the layer.",
+            "minimum": 0
+          },
+          "relation": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Relation label (present when a probe-confirmed label exists)."
+          }
+        }
+      },
+      "DescribeResponse": {
+        "type": "object",
+        "required": [
+          "entity",
+          "model",
+          "edges",
+          "latency_ms"
+        ],
+        "properties": {
+          "entity": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "edges": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DescribeEdge"
+            }
+          },
+          "latency_ms": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
+      "EmbedRequest": {
+        "type": "object",
+        "required": [
+          "token_ids"
+        ],
+        "properties": {
+          "token_ids": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        }
+      },
+      "EmbedResponse": {
+        "type": "object",
+        "required": [
+          "residual",
+          "seq_len",
+          "hidden_size",
+          "latency_ms"
+        ],
+        "properties": {
+          "residual": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "format": "float"
+              }
+            },
+            "description": "Row-major: seq_len × hidden_size f32 values."
+          },
+          "seq_len": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "hidden_size": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "latency_ms": {
+            "type": "number",
+            "format": "float"
+          }
+        }
+      },
+      "EmbedSingleJsonResponse": {
+        "type": "object",
+        "required": [
+          "token_id",
+          "embedding",
+          "hidden_size"
+        ],
+        "properties": {
+          "token_id": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "embedding": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "float"
+            }
+          },
+          "hidden_size": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "ErrorBody": {
+        "type": "object",
+        "description": "JSON body returned for every error response.",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "string",
+            "description": "Human-readable error message."
+          }
+        }
+      },
+      "ExplainLayerEntry": {
+        "type": "object",
+        "required": [
+          "layer",
+          "top_features",
+          "top_tokens"
+        ],
+        "properties": {
+          "layer": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "top_features": {
+            "type": "array",
+            "items": {}
+          },
+          "top_tokens": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": false,
+              "prefixItems": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "number",
+                  "format": "double"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "ExplainRequest": {
+        "type": "object",
+        "required": [
+          "prompt"
+        ],
+        "properties": {
+          "prompt": {
+            "type": "string"
+          },
+          "top": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "per_layer": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "band": {
+            "type": "string"
+          },
+          "relations_only": {
+            "type": "boolean"
+          },
+          "with_attention": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ExplainResponse": {
+        "type": "object",
+        "required": [
+          "prompt",
+          "predictions",
+          "layers",
+          "latency_ms"
+        ],
+        "properties": {
+          "prompt": {
+            "type": "string"
+          },
+          "predictions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Prediction"
+            }
+          },
+          "layers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExplainLayerEntry"
+            }
+          },
+          "latency_ms": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
+      "HealthResponse": {
+        "type": "object",
+        "required": [
+          "status",
+          "uptime_seconds",
+          "requests_served"
+        ],
+        "properties": {
+          "status": {
+            "type": "string"
+          },
+          "uptime_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "requests_served": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "InferRequest": {
+        "type": "object",
+        "required": [
+          "prompt"
+        ],
+        "properties": {
+          "prompt": {
+            "type": "string",
+            "description": "Prompt to run inference on."
+          },
+          "top": {
+            "type": "integer",
+            "description": "Top-K next-token predictions to return.",
+            "minimum": 0
+          },
+          "mode": {
+            "type": "string",
+            "description": "Inference mode: `walk` (default), `dense`, or `compare`."
+          }
+        }
+      },
+      "InferResponse": {
+        "type": "object",
+        "required": [
+          "prompt",
+          "mode",
+          "latency_ms"
+        ],
+        "properties": {
+          "prompt": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "predictions": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/Prediction"
+            },
+            "description": "Single-mode (`walk` or `dense`)."
+          },
+          "walk": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/Prediction"
+            },
+            "description": "Populated in `compare` mode."
+          },
+          "dense": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/Prediction"
+            }
+          },
+          "walk_ms": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "dense_ms": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "latency_ms": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
+      "InsertRequest": {
+        "type": "object",
+        "required": [
+          "entity",
+          "relation",
+          "target"
+        ],
+        "properties": {
+          "entity": {
+            "type": "string"
+          },
+          "relation": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          },
+          "layer": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "alpha": {
+            "type": "number",
+            "format": "float"
+          },
+          "confidence": {
+            "type": "number",
+            "format": "float"
+          }
+        }
+      },
+      "InsertResponse": {
+        "type": "object",
+        "required": [
+          "success",
+          "entity",
+          "relation",
+          "target",
+          "layers_written",
+          "latency_ms"
+        ],
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "entity": {
+            "type": "string"
+          },
+          "relation": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          },
+          "layers_written": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "latency_ms": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
+      "LayerBands": {
+        "type": "object",
+        "required": [
+          "syntax",
+          "knowledge",
+          "output"
+        ],
+        "properties": {
+          "syntax": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "knowledge": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "output": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      },
+      "ListPatchesResponse": {
+        "type": "object",
+        "required": [
+          "patches"
+        ],
+        "properties": {
+          "patches": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PatchEntry"
+            }
+          },
+          "session": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "LoadModelRequest": {
+        "type": "object",
+        "required": [
+          "path"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Filesystem path to a VINDEX2 or VINDEX3 container — the same\npath `--vindex-path` already accepts. No registry/name\nresolution yet (`docs/runtime-lifecycle-design.md`'s explicit\nnon-goals for this rung)."
+          }
+        }
+      },
+      "LoadedCapabilities": {
+        "type": "object",
+        "required": [
+          "browse",
+          "inference",
+          "ffn_service",
+          "embed_service"
+        ],
+        "properties": {
+          "browse": {
+            "type": "boolean"
+          },
+          "inference": {
+            "type": "boolean"
+          },
+          "ffn_service": {
+            "type": "boolean"
+          },
+          "embed_service": {
+            "type": "boolean"
+          }
+        }
+      },
+      "LogitsRequest": {
+        "type": "object",
+        "required": [
+          "residual"
+        ],
+        "properties": {
+          "residual": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "float"
+            },
+            "description": "Flat f32 residual of length hidden_size (one position, post-all-layers)."
+          },
+          "top_k": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "temperature": {
+            "type": "number",
+            "format": "float"
+          }
+        }
+      },
+      "LogitsResponse": {
+        "type": "object",
+        "required": [
+          "top_k",
+          "latency_ms"
+        ],
+        "properties": {
+          "top_k": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TokenProb"
+            }
+          },
+          "latency_ms": {
+            "type": "number",
+            "format": "float"
+          }
+        }
+      },
+      "ModelEntry": {
+        "type": "object",
+        "description": "One entry in the OpenAI-compatible `/v1/models` list.",
+        "required": [
+          "id",
+          "object",
+          "created",
+          "owned_by",
+          "path",
+          "features",
+          "loaded"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "object": {
+            "type": "string"
+          },
+          "created": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "owned_by": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string",
+            "description": "Route prefix for this model. `/v1/{id}` in multi-model mode, `/v1` otherwise."
+          },
+          "features": {
+            "type": "integer",
+            "description": "Total features across all layers.",
+            "minimum": 0
+          },
+          "loaded": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ModelsListResponse": {
+        "type": "object",
+        "required": [
+          "object",
+          "data"
+        ],
+        "properties": {
+          "object": {
+            "type": "string"
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ModelEntry"
+            }
+          }
+        }
+      },
+      "OpenAIErrorBody": {
+        "type": "object",
+        "description": "Top-level OpenAI error envelope: `{\"error\": {message, type, param, code}}`.",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/OpenAIErrorPayload"
+          }
+        }
+      },
+      "OpenAIErrorPayload": {
+        "type": "object",
+        "description": "Wire shape for the `error` field. Always includes `param` and `code`\neven when null — some SDKs hard-key on those keys.\n\nPublic so the OpenAPI schema for 4xx/5xx responses on the OpenAI\nendpoints can reference it.",
+        "required": [
+          "message",
+          "type"
+        ],
+        "properties": {
+          "message": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "param": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "OpenAiChatRequest": {
+        "type": "object",
+        "description": "OpenAI `POST /v1/chat/completions` request. `messages` is an array\nof `{role: \"system\"|\"user\"|\"assistant\"|\"tool\", content, ...}`; tools\nand structured output are open JSON (see OpenAI docs).",
+        "required": [
+          "messages"
+        ],
+        "properties": {
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "messages": {
+            "type": "array",
+            "items": {}
+          },
+          "max_tokens": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "temperature": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "float"
+          },
+          "top_p": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "float"
+          },
+          "stream": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "n": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "stop": {},
+          "logprobs": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "top_logprobs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "seed": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "user": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "frequency_penalty": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "float"
+          },
+          "presence_penalty": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "float"
+          },
+          "response_format": {},
+          "tools": {},
+          "tool_choice": {}
+        }
+      },
+      "OpenAiChatResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "object",
+          "created",
+          "model",
+          "choices"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "object": {
+            "type": "string"
+          },
+          "created": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "model": {
+            "type": "string"
+          },
+          "choices": {
+            "type": "array",
+            "items": {}
+          },
+          "usage": {}
+        }
+      },
+      "OpenAiCompletionsRequest": {
+        "type": "object",
+        "description": "OpenAI `POST /v1/completions` request.",
+        "required": [
+          "prompt"
+        ],
+        "properties": {
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "prompt": {
+            "description": "Prompt — string or string[]."
+          },
+          "max_tokens": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "temperature": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "float"
+          },
+          "top_p": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "float"
+          },
+          "stream": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "n": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "stop": {},
+          "echo": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "logprobs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "seed": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "user": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "frequency_penalty": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "float"
+          },
+          "presence_penalty": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "float"
+          }
+        }
+      },
+      "OpenAiCompletionsResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "object",
+          "created",
+          "model",
+          "choices"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "object": {
+            "type": "string"
+          },
+          "created": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "model": {
+            "type": "string"
+          },
+          "choices": {
+            "type": "array",
+            "items": {}
+          },
+          "usage": {}
+        }
+      },
+      "OpenAiEmbeddingObject": {
+        "type": "object",
+        "required": [
+          "object",
+          "index",
+          "embedding"
+        ],
+        "properties": {
+          "object": {
+            "type": "string"
+          },
+          "index": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "embedding": {
+            "description": "`[f32]` when `encoding_format = \"float\"`, or a base64 string otherwise."
+          }
+        }
+      },
+      "OpenAiEmbeddingsRequest": {
+        "type": "object",
+        "description": "Subset of the OpenAI `POST /v1/embeddings` request body.",
+        "required": [
+          "input"
+        ],
+        "properties": {
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Model id. Required in multi-model mode; ignored otherwise."
+          },
+          "input": {
+            "description": "String, string[], int[] (single sequence), or int[][] (batch of sequences)."
+          },
+          "encoding_format": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`\"float\"` (default) or `\"base64\"`."
+          },
+          "dimensions": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Requested output dimensionality (ignored; returns native hidden size).",
+            "minimum": 0
+          },
+          "user": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "OpenAiEmbeddingsResponse": {
+        "type": "object",
+        "required": [
+          "object",
+          "data",
+          "model",
+          "usage"
+        ],
+        "properties": {
+          "object": {
+            "type": "string"
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OpenAiEmbeddingObject"
+            }
+          },
+          "model": {
+            "type": "string"
+          },
+          "usage": {}
+        }
+      },
+      "OpenAiResponsesRequest": {
+        "type": "object",
+        "description": "OpenAI `POST /v1/responses` request. `input` is a string or an\narray of input items (`message`, `function_call`,\n`function_call_output`); tools use the flattened Responses shape.",
+        "required": [
+          "input"
+        ],
+        "properties": {
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "input": {
+            "description": "String, or array of input items."
+          },
+          "instructions": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "max_output_tokens": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "temperature": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "float"
+          },
+          "top_p": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "float"
+          },
+          "stream": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "store": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Persist for `previous_response_id` chaining (default true;\nin-memory and bounded)."
+          },
+          "previous_response_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tools": {
+            "description": "Function tools, Responses shape: `[{type, name, description, parameters}]`."
+          },
+          "tool_choice": {},
+          "text": {
+            "description": "`{format: {type: \"text\" | \"json_object\" | \"json_schema\", ...}}`."
+          },
+          "metadata": {},
+          "user": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "OpenAiResponsesResponse": {
+        "type": "object",
+        "description": "OpenAI Responses envelope (`object: \"response\"`).",
+        "required": [
+          "id",
+          "object",
+          "created_at",
+          "status",
+          "model",
+          "output"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "object": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "status": {
+            "type": "string",
+            "description": "`completed` | `incomplete` | `failed`."
+          },
+          "model": {
+            "type": "string"
+          },
+          "output": {
+            "type": "array",
+            "items": {},
+            "description": "Output items: `message` (with `output_text` content parts)\nand `function_call`."
+          },
+          "previous_response_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "usage": {}
+        }
+      },
+      "PatchEntry": {
+        "type": "object",
+        "required": [
+          "name",
+          "operations"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "operations": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "base_model": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "PlanRequest": {
+        "type": "object",
+        "required": [
+          "sources"
+        ],
+        "properties": {
+          "sources": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The artifacts to plan, as `hf://owner/repo[@revision]` or —\nwhere the profile permits it — local checkpoint paths.\n\nA list, not a string, because a VINDEX3 plan is a *system*\nplan: several artifacts can compose into one model, and their\ninterfaces are part of the verdict. One source is the ordinary\ncase and is written `[\"hf://owner/repo\"]`. There is deliberately\nno singular `source` alias — two spellings of one request is a\nsecond thing to keep in agreement."
+          }
+        }
+      },
+      "Prediction": {
+        "type": "object",
+        "required": [
+          "token",
+          "probability"
+        ],
+        "properties": {
+          "token": {
+            "type": "string"
+          },
+          "probability": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
+      "RelationEntry": {
+        "type": "object",
+        "required": [
+          "name",
+          "count",
+          "max_score",
+          "min_layer",
+          "max_layer",
+          "examples"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "max_score": {
+            "type": "number",
+            "format": "float"
+          },
+          "min_layer": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "max_layer": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "examples": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "RelationsResponse": {
+        "type": "object",
+        "required": [
+          "relations",
+          "total",
+          "latency_ms"
+        ],
+        "properties": {
+          "relations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RelationEntry"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "latency_ms": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
+      "RemovePatchResponse": {
+        "type": "object",
+        "required": [
+          "removed",
+          "active_patches"
+        ],
+        "properties": {
+          "removed": {
+            "type": "string"
+          },
+          "active_patches": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "session": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "RuntimeBackend": {
+        "type": "object",
+        "required": [
+          "metal_compiled"
+        ],
+        "properties": {
+          "metal_compiled": {
+            "type": "boolean",
+            "description": "Whether this binary was compiled with Metal-accelerated MoE\nexpert dispatch — a compile-time fact, not a claim that\nMetal is driving the current request."
+          }
+        }
+      },
+      "RuntimeGeneration": {
+        "type": "object",
+        "required": [
+          "active",
+          "active_requests"
+        ],
+        "properties": {
+          "active": {
+            "type": "boolean"
+          },
+          "active_requests": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "RuntimeMemory": {
+        "type": "object",
+        "properties": {
+          "resident_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Peak resident-set size of this process (`getrusage`), in\nbytes. `None` on a non-Unix target or a syscall failure.",
+            "minimum": 0
+          },
+          "model_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Estimated resident footprint of the bound model's weights.\n`None` when no model is bound, or on a VINDEX3 container\n(no estimator exists yet).",
+            "minimum": 0
+          }
+        }
+      },
+      "RuntimeModel": {
+        "type": "object",
+        "required": [
+          "id",
+          "architecture",
+          "format"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "architecture": {
+            "type": "string"
+          },
+          "format": {
+            "type": "string",
+            "description": "`\"vindex2\"` | `\"vindex3\"`."
+          },
+          "quantization": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`None` for a VINDEX3 container — it carries no single\ntop-level quant tag the way a VINDEX2 `index.json` does."
+          }
+        }
+      },
+      "RuntimePerformance": {
+        "type": "object",
+        "properties": {
+          "prefill_tokens_per_second": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "`None` until at least one generation has completed."
+          },
+          "decode_tokens_per_second": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "last_request_latency_ms": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          }
+        }
+      },
+      "RuntimeResponse": {
+        "type": "object",
+        "description": "`GET /v1/runtime` — server + model + backend + memory +\nperformance snapshot. Never constructed at runtime (the handler\nbuilds `serde_json::Value` directly); this exists purely so the\nOpenAPI spec documents the shape.",
+        "required": [
+          "status",
+          "version",
+          "uptime_ms",
+          "backend",
+          "memory",
+          "performance",
+          "generation"
+        ],
+        "properties": {
+          "status": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "uptime_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "model": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RuntimeModel"
+              }
+            ]
+          },
+          "backend": {
+            "$ref": "#/components/schemas/RuntimeBackend"
+          },
+          "memory": {
+            "$ref": "#/components/schemas/RuntimeMemory"
+          },
+          "performance": {
+            "$ref": "#/components/schemas/RuntimePerformance"
+          },
+          "generation": {
+            "$ref": "#/components/schemas/RuntimeGeneration"
+          }
+        }
+      },
+      "SelectRequest": {
+        "type": "object",
+        "properties": {
+          "entity": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "relation": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Filter by probe-confirmed relation label."
+          },
+          "layer": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "min_confidence": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "float"
+          },
+          "order_by": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "order": {
+            "type": "string"
+          }
+        }
+      },
+      "SelectResponse": {
+        "type": "object",
+        "required": [
+          "rows",
+          "total",
+          "latency_ms"
+        ],
+        "properties": {
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SelectRow"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "latency_ms": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
+      "SelectRow": {
+        "type": "object",
+        "required": [
+          "layer",
+          "feature",
+          "target",
+          "confidence"
+        ],
+        "properties": {
+          "layer": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "feature": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "target": {
+            "type": "string"
+          },
+          "confidence": {
+            "type": "number",
+            "format": "float"
+          },
+          "relation": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "SessionContinuation": {
+        "type": "object",
+        "required": [
+          "available",
+          "input_tokens",
+          "resumptions",
+          "reused_tokens_total"
+        ],
+        "properties": {
+          "available": {
+            "type": "boolean",
+            "description": "Whether a resident KV state owned by this session can be\nresumed from."
+          },
+          "input_tokens": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Prompt tokens already absorbed into the resident state(s).",
+            "minimum": 0
+          },
+          "resumptions": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Generations on this session where resumption engaged.",
+            "minimum": 0
+          },
+          "reused_tokens_total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Prompt tokens served from resumed KV, cumulative.",
+            "minimum": 0
+          }
+        }
+      },
+      "SessionDeletedResponse": {
+        "type": "object",
+        "required": [
+          "object",
+          "id",
+          "deleted",
+          "patches_freed",
+          "continuations_freed"
+        ],
+        "properties": {
+          "object": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "deleted": {
+            "type": "boolean",
+            "description": "False when the session was already gone — deletion is\nidempotent, not an error."
+          },
+          "patches_freed": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "continuations_freed": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "SessionListResponse": {
+        "type": "object",
+        "required": [
+          "object",
+          "data"
+        ],
+        "properties": {
+          "object": {
+            "type": "string"
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SessionResponse"
+            },
+            "description": "Live sessions, most recently used first."
+          }
+        }
+      },
+      "SessionPatches": {
+        "type": "object",
+        "required": [
+          "active",
+          "ids"
+        ],
+        "properties": {
+          "active": {
+            "type": "integer",
+            "description": "How many patches are applied to this session.",
+            "minimum": 0
+          },
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Patch identities, in application order. Contents are not\nexposed here — `/v1/patches` is the authority for those."
+          }
+        }
+      },
+      "SessionResponse": {
+        "type": "object",
+        "required": [
+          "object",
+          "id",
+          "model",
+          "created_at",
+          "last_used_at",
+          "expires_at",
+          "state",
+          "patches",
+          "continuation"
+        ],
+        "properties": {
+          "object": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "description": "The `X-Session-Id` value the client uses."
+          },
+          "model": {
+            "type": "string",
+            "description": "Runtime binding the session was created against."
+          },
+          "created_at": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "last_used_at": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "expires_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When the session expires if left idle from `last_used_at`.",
+            "minimum": 0
+          },
+          "state": {
+            "type": "string",
+            "description": "Lifecycle state; `active` is the only observable value —\nexpired sessions are absent, not listed."
+          },
+          "patches": {
+            "$ref": "#/components/schemas/SessionPatches"
+          },
+          "continuation": {
+            "$ref": "#/components/schemas/SessionContinuation"
+          }
+        }
+      },
+      "SingleExpertRequest": {
+        "type": "object",
+        "required": [
+          "residual"
+        ],
+        "properties": {
+          "residual": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "float"
+            }
+          }
+        }
+      },
+      "SingleExpertResponse": {
+        "type": "object",
+        "required": [
+          "output",
+          "latency_ms"
+        ],
+        "properties": {
+          "output": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "float"
+            }
+          },
+          "latency_ms": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
+      "StatsResponse": {
+        "type": "object",
+        "required": [
+          "model",
+          "family",
+          "layers",
+          "features",
+          "features_per_layer",
+          "hidden_size",
+          "vocab_size",
+          "extract_level",
+          "dtype",
+          "loaded"
+        ],
+        "properties": {
+          "model": {
+            "type": "string"
+          },
+          "family": {
+            "type": "string"
+          },
+          "layers": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "features": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "features_per_layer": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "hidden_size": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "vocab_size": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "extract_level": {
+            "type": "string"
+          },
+          "dtype": {
+            "type": "string"
+          },
+          "mode": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "layer_bands": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/LayerBands"
+              }
+            ]
+          },
+          "loaded": {
+            "$ref": "#/components/schemas/LoadedCapabilities"
+          },
+          "server": {
+            "description": "Server-level counters: uptime, request count, and the\nbounded per-client stores (patch sessions, stored\nresponses, V3 KV continuation cache with hit/miss counts)."
+          }
+        }
+      },
+      "TokenDecodeResponse": {
+        "type": "object",
+        "required": [
+          "text",
+          "token_ids"
+        ],
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "token_ids": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        }
+      },
+      "TokenEncodeResponse": {
+        "type": "object",
+        "required": [
+          "token_ids",
+          "text"
+        ],
+        "properties": {
+          "token_ids": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          "text": {
+            "type": "string"
+          }
+        }
+      },
+      "TokenProb": {
+        "type": "object",
+        "required": [
+          "token_id",
+          "token",
+          "prob"
+        ],
+        "properties": {
+          "token_id": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "token": {
+            "type": "string"
+          },
+          "prob": {
+            "type": "number",
+            "format": "float"
+          }
+        }
+      },
+      "TopologyResponse": {
+        "type": "object",
+        "required": [
+          "model_id",
+          "num_experts",
+          "num_layers",
+          "owned_start",
+          "owned_end"
+        ],
+        "properties": {
+          "model_id": {
+            "type": "string",
+            "description": "Model identifier (e.g. `\"google/gemma-4-26B-A4B-it\"`)."
+          },
+          "num_experts": {
+            "type": "integer",
+            "description": "Total number of experts in the model (0 for non-MoE models).",
+            "minimum": 0
+          },
+          "num_layers": {
+            "type": "integer",
+            "description": "Number of transformer layers.",
+            "minimum": 0
+          },
+          "owned_start": {
+            "type": "integer",
+            "description": "First expert ID owned by this shard (inclusive).",
+            "minimum": 0
+          },
+          "owned_end": {
+            "type": "integer",
+            "description": "Last expert ID owned by this shard (inclusive).",
+            "minimum": 0
+          }
+        }
+      },
+      "WalkHit": {
+        "type": "object",
+        "description": "One walk hit returned from `/v1/walk`.",
+        "required": [
+          "layer",
+          "feature",
+          "gate_score",
+          "target"
+        ],
+        "properties": {
+          "layer": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "feature": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "gate_score": {
+            "type": "number",
+            "format": "float"
+          },
+          "target": {
+            "type": "string"
+          },
+          "relation": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "WalkResponse": {
+        "type": "object",
+        "required": [
+          "prompt",
+          "hits",
+          "latency_ms"
+        ],
+        "properties": {
+          "prompt": {
+            "type": "string"
+          },
+          "hits": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WalkHit"
+            }
+          },
+          "latency_ms": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
+      "WarmupRequest": {
+        "type": "object",
+        "properties": {
+          "layers": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "description": "Specific layers to prefetch (`madvise WILLNEED`). Defaults to\nevery owned layer when omitted — the typical case for boot\nwarmup."
+          },
+          "skip_weights": {
+            "type": "boolean",
+            "description": "Skip the inference-weight load. Use when the server was started\nwith `--no-infer` and you only want mmap prefetch, not\n`lm_head` / `norms` / gate-f32 expansion."
+          },
+          "warmup_hnsw": {
+            "type": "boolean",
+            "description": "Eager-build HNSW for every owned layer (mirrors the existing\n`--warmup-hnsw` boot flag, exposed here so operators can warm\na running server without restarting). Requires HNSW already\nenabled via `--hnsw`."
+          }
+        }
+      },
+      "WarmupResponse": {
+        "type": "object",
+        "required": [
+          "model",
+          "weights_loaded",
+          "weights_load_ms",
+          "layers_prefetched",
+          "prefetch_ms",
+          "experts_prefetched",
+          "expert_prefetch_ms",
+          "hnsw_built",
+          "hnsw_warmup_ms",
+          "total_ms"
+        ],
+        "properties": {
+          "model": {
+            "type": "string"
+          },
+          "weights_loaded": {
+            "type": "boolean"
+          },
+          "weights_load_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "layers_prefetched": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "prefetch_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "experts_prefetched": {
+            "type": "integer",
+            "description": "Number of (layer, expert) pairs whose pages were read into the page cache.\nZero for non-MoE models or when `skip_weights = true`.",
+            "minimum": 0
+          },
+          "expert_prefetch_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "hnsw_built": {
+            "type": "boolean"
+          },
+          "hnsw_warmup_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "total_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "browse",
+      "description": "Knowledge graph browse (no weights required)"
+    },
+    {
+      "name": "inference",
+      "description": "Forward passes, explain, insert, warmup"
+    },
+    {
+      "name": "openai",
+      "description": "OpenAI-compatible endpoints"
+    },
+    {
+      "name": "expert",
+      "description": "Remote MoE shard endpoints (binary wire)"
+    },
+    {
+      "name": "patches",
+      "description": "Runtime patch overlay"
+    },
+    {
+      "name": "sessions",
+      "description": "Session observability and eviction"
+    },
+    {
+      "name": "admin",
+      "description": "Health, models, embed, tokens, WebSocket"
+    }
+  ]
+}

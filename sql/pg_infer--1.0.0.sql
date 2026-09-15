@@ -109,7 +109,12 @@ CREATE TABLE IF NOT EXISTS infer.models (
 --   infer_stats(model text DEFAULT NULL)
 --       RETURNS TABLE(stat_name text, stat_value text)
 --
---   infer_warmup(model_name text, entities text[]) RETURNS text
+--   infer_warmup(model_name text, layers integer[] DEFAULT NULL) RETURNS text
+--       Prefetches layer pages + loads inference weights on a remote
+--       server. NULL layers = every layer the server owns.
+--       BREAKING (was: entities text[]) -- larql-server's /v1/warmup has
+--       no per-entity activation cache; it ignored the entities body and
+--       the reported counts were always zero.
 --
 --   infer_server_stats(model_name text)
 --       RETURNS TABLE(stat_name text, stat_value text)

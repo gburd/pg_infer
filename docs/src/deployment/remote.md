@@ -32,7 +32,7 @@ network hop (sub-millisecond over UDS). Feature-level enumeration
 cargo pgrx install --release                  # pg_infer.so -> $PG_LIBDIR
 
 # Build larql-server from the upstream larql repository:
-# git clone https://codeberg.org/gregburd/larql && cd larql
+# git clone https://github.com/chrishayuk/larql && cd larql
 # cargo build --release -p larql-server
 # cp target/release/larql-server /usr/local/bin/
 ```

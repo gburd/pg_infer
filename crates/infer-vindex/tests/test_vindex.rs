@@ -383,6 +383,9 @@ fn save_and_load_down_meta_round_trip() {
     assert_eq!(count, 5); // 3 + 2 (one None skipped)
 
     let config = VindexConfig {
+        fp4: None,
+        bitnet_layout: None,
+        ffn_layout: None,
         version: 2,
         model: "test".into(),
         family: "test".into(),
@@ -462,6 +465,9 @@ fn save_config_round_trip() {
     std::fs::create_dir_all(&dir).unwrap();
 
     let config = VindexConfig {
+        fp4: None,
+        bitnet_layout: None,
+        ffn_layout: None,
         version: 2,
         model: "test-model".into(),
         family: "test".into(),
@@ -721,6 +727,9 @@ fn v2_config_full_round_trip() {
     let checksums = infer_vindex::checksums::compute_checksums(&dir).ok();
 
     let config = VindexConfig {
+        fp4: None,
+        bitnet_layout: None,
+        ffn_layout: None,
         version: 2,
         model: "google/gemma-3-4b-it".into(),
         family: "gemma3".into(),
@@ -804,6 +813,9 @@ fn v2_config_with_moe() {
     std::fs::create_dir_all(&dir).unwrap();
 
     let config = VindexConfig {
+        fp4: None,
+        bitnet_layout: None,
+        ffn_layout: None,
         version: 2,
         model: "mistralai/Mixtral-8x7B".into(),
         family: "mixtral".into(),
@@ -921,6 +933,9 @@ fn moe_layer_info_round_trip() {
     std::fs::create_dir_all(&dir).unwrap();
 
     let config = VindexConfig {
+        fp4: None,
+        bitnet_layout: None,
+        ffn_layout: None,
         version: 2,
         model: "test-moe".into(),
         family: "mixtral".into(),
@@ -994,6 +1009,9 @@ fn layer_bands_config_round_trip() {
     std::fs::create_dir_all(&dir).unwrap();
 
     let config = VindexConfig {
+        fp4: None,
+        bitnet_layout: None,
+        ffn_layout: None,
         version: 2,
         model: "test-bands".into(),
         family: "test".into(),
@@ -1141,6 +1159,9 @@ fn source_provenance_round_trip() {
     std::fs::create_dir_all(&dir).unwrap();
 
     let config = VindexConfig {
+        fp4: None,
+        bitnet_layout: None,
+        ffn_layout: None,
         version: 2,
         model: "test/provenance".into(),
         family: "test".into(),
@@ -1406,6 +1427,9 @@ fn weight_manifest_round_trip() {
 
     // Write a minimal index.json first (write_model_weights reads it)
     let config = VindexConfig {
+        fp4: None,
+        bitnet_layout: None,
+        ffn_layout: None,
         version: 2,
         model: "test".into(),
         family: "test".into(),
@@ -1445,6 +1469,9 @@ fn dtype_config_f16_round_trip() {
     std::fs::create_dir_all(&dir).unwrap();
 
     let config = VindexConfig {
+        fp4: None,
+        bitnet_layout: None,
+        ffn_layout: None,
         version: 2,
         model: "test-f16".into(),
         family: "test".into(),
@@ -1646,6 +1673,9 @@ fn full_lifecycle_build_query_mutate_save_reload() {
     idx.save_down_meta(&dir).unwrap();
 
     let config = VindexConfig {
+        fp4: None,
+        bitnet_layout: None,
+        ffn_layout: None,
         version: 2,
         model: "lifecycle-test".into(),
         family: "test".into(),
@@ -2186,6 +2216,9 @@ fn vindexfile_parse_and_build() {
 
     let index = test_index();
     let mut config = VindexConfig {
+        fp4: None,
+        bitnet_layout: None,
+        ffn_layout: None,
         version: 2,
         model: "test/vindexfile".into(),
         family: "llama".into(),

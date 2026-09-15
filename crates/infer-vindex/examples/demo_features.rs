@@ -466,6 +466,9 @@ fn build_moe_index() -> VectorIndex {
 fn make_config(model: &str, layers: usize, hidden: usize, intermediate: usize,
     layer_infos: Vec<infer_vindex::VindexLayerInfo>, dtype: infer_vindex::StorageDtype) -> VindexConfig {
     VindexConfig {
+        fp4: None,
+        bitnet_layout: None,
+        ffn_layout: None,
         version: 2, model: model.into(), family: "demo".into(),
         source: Some(infer_vindex::VindexSource {
             huggingface_repo: Some(format!("demo/{model}")),

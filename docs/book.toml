@@ -11,4 +11,7 @@ build-dir = "book"
 [output.html]
 default-theme = "rust"
 preferred-dark-theme = "coal"
-git-repository-url = "https://codeberg.org/gregburd/larql"
+# This book documents pg_infer, so the "edit this page" link belongs on
+# pg_infer's own repository. It previously pointed at the larql fork,
+# which sent every doc-fix contributor to the wrong project.
+git-repository-url = "https://codeberg.org/gregburd/pg_infer"

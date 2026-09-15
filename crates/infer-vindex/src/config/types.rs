@@ -41,6 +41,30 @@ pub struct VindexConfig {
     /// don't have to sniff filenames.
     #[serde(default)]
     pub quant: QuantFormat,
+    /// FP4/MXFP4 block geometry, when the container declares one.
+    ///
+    /// Captured as an opaque value: this build does not decode FP4, and the
+    /// point of reading the field is to *refuse* such a container rather
+    /// than ignore the declaration and misread the weight bytes under the
+    /// wrong block geometry. See [`VindexConfig::validate_supported`].
+    ///
+    /// `skip_serializing_if` keeps it out of the `index.json` files
+    /// pg_infer writes: this is a field we only ever read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fp4: Option<serde_json::Value>,
+    /// BitNet 1.58 ternary layout (`bitnet/` artifacts), when present.
+    ///
+    /// Same rationale as [`Self::fp4`]: it carries `rms_eps`, `head_dim`,
+    /// `n_q_heads` and the scale packing order, all of which change how the
+    /// bytes decode. Note that upstream larql's `--keep-quant` extract
+    /// writes this, so it is a container shape you can actually produce.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bitnet_layout: Option<serde_json::Value>,
+    /// FFN weight grouping. Only `"per_layer"` exists upstream today, and
+    /// it matches what this build assumes, so it is recorded rather than
+    /// enforced.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ffn_layout: Option<String>,
     /// Model-specific layer band boundaries for DESCRIBE and label matching.
     #[serde(default)]
     pub layer_bands: Option<LayerBands>,
@@ -54,6 +78,51 @@ pub struct VindexConfig {
     /// Model config for architecture reconstruction.
     #[serde(default)]
     pub model_config: Option<VindexModelConfig>,
+}
+
+/// Lowest `index.json` schema this build reads.
+pub const MIN_FORMAT_VERSION: u32 = 1;
+/// Highest `index.json` schema this build reads.
+///
+/// VINDEX2 is schemas 1–2. Schema 3+ is the VINDEX3 container generation:
+/// a different index shape, physical layout and contract stack, not a
+/// newer revision of this one.
+pub const MAX_FORMAT_VERSION: u32 = 2;
+
+impl VindexConfig {
+    /// Reject containers this build cannot read *correctly*.
+    ///
+    /// Called from the loader before any weight bytes are touched. Every
+    /// check here guards against silent misinterpretation rather than a
+    /// missing feature:
+    ///
+    /// * a newer format version would deserialize into this struct with
+    ///   every unshared field defaulted, then be read as a malformed
+    ///   VINDEX2;
+    /// * `fp4` / `bitnet_layout` declare the block geometry and scale
+    ///   dtypes that decide how weight bytes decode, and nothing here sets
+    ///   `deny_unknown_fields`, so without this they are ignored and the
+    ///   bytes are decoded under the wrong geometry.
+    ///
+    /// A wrong answer that looks right is worse than a refusal.
+    pub fn validate_supported(&self) -> Result<(), crate::VindexError> {
+        if self.version < MIN_FORMAT_VERSION || self.version > MAX_FORMAT_VERSION {
+            return Err(crate::VindexError::UnsupportedFormatVersion {
+                found: self.version,
+                min: MIN_FORMAT_VERSION,
+                max: MAX_FORMAT_VERSION,
+            });
+        }
+        if self.fp4.is_some() {
+            return Err(crate::VindexError::UnsupportedQuantLayout { field: "fp4" });
+        }
+        if self.bitnet_layout.is_some() {
+            return Err(crate::VindexError::UnsupportedQuantLayout {
+                field: "bitnet_layout",
+            });
+        }
+        Ok(())
+    }
 }
 
 /// Provenance: which model checkpoint this vindex was built from.
@@ -145,6 +214,13 @@ impl std::fmt::Display for ExtractLevel {
 pub enum QuantFormat {
     #[default]
     None,
+    /// Q4_K / Q6_K family. Serialises as `"q4k"`.
+    ///
+    /// `kquant` is accepted on deserialize because upstream larql writes
+    /// that tag (`QuantFormat::Q4K` carries the same alias); a vindex
+    /// extracted by a current larql would otherwise fail to load here
+    /// with an opaque "unknown variant" error.
+    #[serde(alias = "kquant")]
     Q4k,
 }
 
@@ -375,4 +451,114 @@ pub struct DownMetaTopK {
     pub token_id: u32,
     #[serde(rename = "s")]
     pub logit: f32,
+}
+
+#[cfg(test)]
+mod validate_supported_tests {
+    //! `validate_supported` is the only thing standing between an
+    //! unreadable container and a confidently wrong answer, so it gets a
+    //! test per refusal reason plus one for the accepted case.
+
+    use super::*;
+    use crate::config::dtype::StorageDtype;
+
+    fn v2_config() -> VindexConfig {
+        VindexConfig {
+            version: 2,
+            model: "m".into(),
+            family: "demo".into(),
+            source: None,
+            checksums: None,
+            num_layers: 1,
+            hidden_size: 8,
+            intermediate_size: 16,
+            vocab_size: 32,
+            embed_scale: 1.0,
+            extract_level: ExtractLevel::Browse,
+            dtype: StorageDtype::F32,
+            quant: QuantFormat::None,
+            fp4: None,
+            bitnet_layout: None,
+            ffn_layout: None,
+            layer_bands: None,
+            layers: vec![],
+            down_top_k: 1,
+            has_model_weights: false,
+            model_config: None,
+        }
+    }
+
+    #[test]
+    fn accepts_vindex2_schemas() {
+        for v in [MIN_FORMAT_VERSION, MAX_FORMAT_VERSION] {
+            let mut c = v2_config();
+            c.version = v;
+            assert!(
+                c.validate_supported().is_ok(),
+                "schema {v} is VINDEX2 and must load"
+            );
+        }
+    }
+
+    #[test]
+    fn refuses_vindex3_generation() {
+        let mut c = v2_config();
+        c.version = 3;
+        let err = c
+            .validate_supported()
+            .expect_err("schema 3 is VINDEX3 and must be refused, not read as a V2");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("VINDEX3"),
+            "the error must say which generation it found: {msg}"
+        );
+    }
+
+    #[test]
+    fn refuses_fp4_rather_than_ignoring_it() {
+        // The failure this guards against is silent: without the check the
+        // field deserializes, nothing reads it, and the FP4 weight bytes
+        // are then decoded under the default (non-FP4) block geometry.
+        let mut c = v2_config();
+        c.fp4 = Some(serde_json::json!({ "block_elements": 256 }));
+        let err = c.validate_supported().expect_err("fp4 must be refused");
+        assert!(err.to_string().contains("fp4"), "{err}");
+    }
+
+    #[test]
+    fn refuses_bitnet_layout_rather_than_ignoring_it() {
+        // Reachable in practice: upstream larql's `--keep-quant` extract
+        // writes bitnet_layout.
+        let mut c = v2_config();
+        c.bitnet_layout = Some(serde_json::json!({ "rms_eps": 1e-5 }));
+        let err = c
+            .validate_supported()
+            .expect_err("bitnet_layout must be refused");
+        assert!(err.to_string().contains("bitnet_layout"), "{err}");
+    }
+
+    #[test]
+    fn read_only_fields_are_not_written_back() {
+        // These three exist so we can refuse a container, not so we can
+        // describe one: they must never appear in an index.json pg_infer
+        // writes, or a vindex we produced would refuse to load.
+        let json = serde_json::to_string(&v2_config()).expect("config serializes");
+        for f in ["fp4", "bitnet_layout", "ffn_layout"] {
+            assert!(
+                !json.contains(f),
+                "`{f}` leaked into a written index.json: {json}"
+            );
+        }
+    }
+
+    #[test]
+    fn kquant_alias_loads() {
+        // Upstream writes `kquant` for the Q4_K/Q6_K family; without the
+        // alias a current larql vindex fails with "unknown variant".
+        let q: QuantFormat =
+            serde_json::from_str("\"kquant\"").expect("upstream's `kquant` tag must deserialize");
+        assert_eq!(q, QuantFormat::Q4k);
+        let q: QuantFormat = serde_json::from_str("\"q4k\"").expect("our own tag still works");
+        assert_eq!(q, QuantFormat::Q4k);
+    }
 }

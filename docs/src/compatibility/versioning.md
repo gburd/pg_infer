@@ -21,32 +21,54 @@ protocol version. Any larql-server that speaks the `/v1` JSON API is compatible.
 
 ### Wire Protocol: /v1
 
-The `/v1` protocol is a JSON-over-HTTP API with these endpoints:
+The `/v1` protocol is a JSON-over-HTTP API. The endpoints pg_infer calls,
+with the shapes the server actually sends (verified against its own
+OpenAPI document -- see [Testing Compatibility](upstream.md#testing-compatibility)):
 
-| Endpoint | Request | Response | Since |
-|----------|---------|----------|-------|
-| `GET /v1/health` | -- | `{"status":"ok"}` | Initial |
-| `GET /v1/stats` | -- | Model metadata JSON | Initial |
-| `GET /v1/describe` | `?entity=...` | `{"edges":[...]}` | Initial |
-| `GET /v1/walk` | `?prompt=...&top_k=N` | `{"hits":[...]}` | Initial |
-| `GET /v1/infer` | `?prompt=...&top_k=N` | `{"predictions":[...]}` | Initial |
-| `GET /v1/models` | -- | `{"models":[...]}` | Grid support |
+| Endpoint | Request | Response |
+|----------|---------|----------|
+| `GET /v1/health` | -- | `{"status":"ok"}` |
+| `GET /v1/stats` | -- | Model metadata + `server` counters block |
+| `GET /v1/describe` | `?entity=...&limit=N&min_score=F` | `{"entity","edges":[...],"latency_ms"}` |
+| `GET /v1/walk` | `?prompt=...&top=N[&layers=...]` | `{"prompt","hits":[...],"latency_ms"}` |
+| `GET /v1/relations` | -- | `{"relations":[{"name","count","min_layer","max_layer",...}],"total"}` |
+| `POST /v1/infer` | `{prompt, top, mode}` | `{"prompt","mode","predictions":[...],"latency_ms"}` |
+| `POST /v1/warmup` | `{layers?, skip_weights?}` | `{"layers_prefetched","prefetch_ms","total_ms",...}` |
+| `GET /v1/models` | -- | `{"object":"list","data":[...]}` (OpenAI shape) |
 
-pg_infer's `infer-client` crate validates responses against expected shapes.
-Unknown fields are ignored (forward-compatible). Missing required fields cause
-a parse error surfaced as a SQL `ERROR`.
+Three of these were documented incorrectly here until the 23a56db1 sync,
+and pg_infer's client matched the documentation rather than the server:
+
+- `/v1/relations` entries are keyed `name`, not `token`, and report the
+  layer span as `min_layer`/`max_layer` rather than a `layers` list;
+- `/v1/models` is the OpenAI list envelope (`{object, data}`), never
+  `{"models": [...]}`;
+- `/v1/infer` is a `POST` with a JSON body, not a `GET` with query params;
+- `/v1/warmup` takes `{layers, skip_weights}` and reports prefetch
+  counters -- it has no notion of "entities" or a per-entity cache.
+
+pg_infer's `infer-client` crate validates responses against the committed
+OpenAPI fixture. Unknown fields are ignored (forward-compatible). Missing
+required fields cause a parse error surfaced as a SQL `ERROR`.
 
 ## Supported Configurations
 
 | pg_infer | PostgreSQL | larql-server | Vindex Format | Rust Toolchain |
 |----------|------------|--------------|---------------|----------------|
-| 1.0.0 | 18+ | c880fb7+ (2026-05-12) | v1 (Q4_K/Q6_K) | 1.80+ |
+| 1.0.0 | 18+ | 23a56db1+ (2026-09-13) | VINDEX2 schema 1--2 (Q4_K/Q6_K) | 1.80+ |
 
 ### Vindex Format Versions
 
-- **v1**: Gate vectors in f16, Q4_K, or Q6_K quantization. Feature metadata as
-  JSON. FFN weights as raw binary slices. This is the only format pg_infer 1.0
-  supports.
+- **VINDEX2, `index.json` schema 1--2**: gate vectors in f16, Q4_K or Q6_K.
+  Feature metadata as JSON. FFN weights as raw binary slices. The only
+  generation pg_infer reads.
+- **VINDEX3, schema 3+**: refused by `VindexConfig::validate_supported()`
+  with an explicit error, not attempted. It is a different container
+  generation, and reading it as a V2 would silently misinterpret it. See
+  [Vindex generations](upstream.md#vindex-generations).
+- Containers declaring `fp4` or `bitnet_layout` are likewise refused: those
+  fields change how the weight bytes decode, and ignoring them yields
+  plausible-looking wrong numbers.
 
 ## Upgrade Procedure
 
@@ -59,7 +81,7 @@ a parse error surfaced as a SQL `ERROR`.
 
 ### Upgrading larql-server
 
-1. Build new version from upstream: `cd larql && git pull && cargo build --release -p larql-server`
+1. Build new version from upstream: `cd ~/ws/larql && git fetch upstream && git merge upstream/main && cargo build --release -p larql-server`
 2. Stop the running larql-server
 3. Replace the binary: `cp target/release/larql-server /usr/local/bin/`
 4. Start the new server with the same arguments

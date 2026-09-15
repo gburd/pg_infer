@@ -113,7 +113,7 @@ SELECT infer_create_model_grid('model', 'http://router:9090');
 ```dockerfile
 FROM rust:1.80-slim AS builder
 WORKDIR /src
-RUN git clone https://codeberg.org/gregburd/larql .
+RUN git clone https://github.com/chrishayuk/larql .
 RUN cargo build --release -p larql-server
 
 FROM debian:bookworm-slim

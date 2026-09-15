@@ -150,18 +150,33 @@ impl RemoteBackend {
             .map_err(map_err)
     }
 
-    /// Pre-warm the server's activation cache for the given entities.
+    /// Pre-warm the server: prefetch layer pages and load inference
+    /// weights before the first query pays for it.
     ///
-    /// Returns (warmed, already_cached).  If the server doesn't support
-    /// `/v1/warmup` (404), returns (0, 0) gracefully.
-    pub fn warmup(&self, entities: &[String]) -> Result<(usize, usize), PgInferError> {
-        let body = serde_json::json!({ "entities": entities });
+    /// Returns the server's own [`WarmupResponse`]. If the server does
+    /// not serve `/v1/warmup` (404), returns `None`.
+    ///
+    /// This used to take an `entities: &[String]` and post
+    /// `{"entities": [...]}`, which the server ignores entirely — warmup
+    /// prefetches *layers*, and has no per-entity cache to populate. The
+    /// old return of `(warmed, already_cached)` was always `(0, 0)`
+    /// because neither field exists in the response.
+    pub fn warmup(
+        &self,
+        layers: Option<&[usize]>,
+    ) -> Result<Option<infer_client::WarmupResponse>, PgInferError> {
+        // Omit `layers` entirely to warm every owned layer, which is the
+        // server's default and the case callers want at registration.
+        let body = match layers {
+            Some(l) => serde_json::json!({ "layers": l }),
+            None => serde_json::json!({}),
+        };
         match self.post_json::<infer_client::WarmupResponse>("/v1/warmup", body) {
-            Ok(resp) => Ok((resp.warmed, resp.already_cached)),
+            Ok(resp) => Ok(Some(resp)),
             Err(PgInferError::Remote(ref msg))
                 if msg.contains("404") || msg.contains("Not Found") =>
             {
-                Ok((0, 0))
+                Ok(None)
             }
             Err(e) => Err(e),
         }
@@ -555,8 +570,11 @@ impl Backend for RemoteBackend {
         unsupported("embed (not wired yet)")
     }
 
-    fn warmup(&self, entities: &[String]) -> Result<(usize, usize), PgInferError> {
-        RemoteBackend::warmup(self, entities)
+    fn warmup(
+        &self,
+        layers: Option<&[usize]>,
+    ) -> Result<Option<infer_client::WarmupResponse>, PgInferError> {
+        RemoteBackend::warmup(self, layers)
     }
 
     fn cache_stats(&self) -> Result<Option<super::CacheStats>, PgInferError> {

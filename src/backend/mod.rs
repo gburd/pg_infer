@@ -219,10 +219,20 @@ pub trait Backend: Send + Sync {
         })
     }
 
-    /// Pre-warm entities in the server-side activation cache.
-    /// Only remote/grid backends implement this; local returns (0, 0).
-    fn warmup(&self, _entities: &[String]) -> Result<(usize, usize), PgInferError> {
-        Ok((0, 0))
+    /// Pre-warm the server: prefetch layer pages, load inference weights.
+    ///
+    /// `layers = None` warms every layer the server owns (its default).
+    /// Returns `None` for local backends and for servers that do not
+    /// serve `/v1/warmup`.
+    ///
+    /// Reports the server's own counters rather than a synthesized
+    /// `(warmed, already_cached)` pair: warmup prefetches layers, and
+    /// larql-server has no per-entity activation cache to warm.
+    fn warmup(
+        &self,
+        _layers: Option<&[usize]>,
+    ) -> Result<Option<infer_client::WarmupResponse>, PgInferError> {
+        Ok(None)
     }
 
     /// Fetch server-side cache stats.  Local backends return `None`.

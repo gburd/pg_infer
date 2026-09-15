@@ -16,7 +16,7 @@ topologies: local, remote, and grid.
 larql project, not from this repository. Build it separately:
 
 ```sh
-git clone https://codeberg.org/gregburd/larql && cd larql
+git clone https://github.com/chrishayuk/larql && cd larql
 cargo build --release -p larql-server
 cp target/release/larql-server /usr/local/bin/
 ```

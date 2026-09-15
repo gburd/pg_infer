@@ -53,13 +53,31 @@ struct ServerEntry {
     backend: RemoteBackend,
 }
 
-/// Response shape for `GET /v1/models` from a larql-router or server.
+/// Response shape for `GET /v1/models`.
+///
+/// larql-server and larql-router both answer in the **OpenAI list**
+/// shape, `{"object": "list", "data": [...]}`. This struct previously
+/// read `{"models": [...]}`, which neither has ever sent; with
+/// `#[serde(default)]` that produced an empty list rather than a parse
+/// error, so grid registration failed with the misleading "grid has no
+/// servers for model X" instead of a wire-format complaint.
+///
+/// `models` is still accepted as an alias so a future or third-party
+/// discovery endpoint using that key keeps working.
 #[derive(Debug, serde::Deserialize)]
 struct ModelsResponse {
-    #[serde(default)]
-    models: Vec<ModelEntry>,
+    #[serde(default, alias = "models")]
+    data: Vec<ModelEntry>,
 }
 
+/// One entry from `/v1/models`.
+///
+/// Note what is *not* here: a per-model server URL. larql-router's
+/// `/v1/models` reports only `{id, object, created, owned_by}` — it is a
+/// proxy that fans `/v1/walk-ffn` out across shards itself, not a shard
+/// directory. So `url`/`server` are read opportunistically (a seed
+/// `larql-server` or a third-party registry may supply them) and the
+/// grid falls back to the discovery URL itself when they are absent.
 #[derive(Debug, serde::Deserialize)]
 struct ModelEntry {
     #[serde(default)]
@@ -227,28 +245,27 @@ fn discover_servers(
         .get_json("/v1/models", &cancel)
         .map_err(|e| PgInferError::Remote(format!("grid /v1/models: {e}")))?;
 
-    // Filter for entries that match our model_id and have a reachable URL.
+    // Filter for entries that match our model_id, then resolve a URL.
+    //
+    // Discovery does not necessarily carry URLs: larql-router lists model
+    // ids only (it proxies rather than directing), so an entry that names
+    // our model with no URL means "this endpoint serves it" — fall back
+    // to the discovery URL itself.
     let servers: Vec<String> = resp
-        .models
+        .data
         .into_iter()
         .filter(|entry| {
             entry.model == model_id
                 || entry.id == model_id
-                || entry.model.is_empty() // Single-model servers list without model field
+                || entry.model.is_empty() && entry.id.is_empty()
         })
-        .filter_map(|entry| {
-            let url = if !entry.url.is_empty() {
+        .map(|entry| {
+            if !entry.url.is_empty() {
                 entry.url
             } else if !entry.server.is_empty() {
                 entry.server
             } else {
-                // Single-model server: use the grid_url itself.
                 grid_url.to_string()
-            };
-            if url.is_empty() {
-                None
-            } else {
-                Some(url)
             }
         })
         .collect();
@@ -399,8 +416,11 @@ impl Backend for GridBackend {
         self.with_server(|s| s.rank(candidates, query, limit))
     }
 
-    fn warmup(&self, entities: &[String]) -> Result<(usize, usize), PgInferError> {
-        self.with_server(|s| s.warmup(entities))
+    fn warmup(
+        &self,
+        layers: Option<&[usize]>,
+    ) -> Result<Option<infer_client::WarmupResponse>, PgInferError> {
+        self.with_server(|s| s.warmup(layers))
     }
 
     fn cache_stats(&self) -> Result<Option<CacheStats>, PgInferError> {

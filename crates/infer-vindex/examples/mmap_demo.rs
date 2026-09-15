@@ -45,6 +45,9 @@ fn main() {
     std::fs::write(dir.join("tokenizer.json"), tok_json).unwrap();
 
     let config = VindexConfig {
+        fp4: None,
+        bitnet_layout: None,
+        ffn_layout: None,
         version: 2,
         model: "mmap-demo".into(),
         family: "demo".into(),

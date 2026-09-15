@@ -199,6 +199,9 @@ fn bench_save_load(c: &mut Criterion) {
     let layer_infos = index.save_gate_vectors(&load_dir).unwrap();
     index.save_down_meta(&load_dir).unwrap();
     let config = VindexConfig {
+        fp4: None,
+        bitnet_layout: None,
+        ffn_layout: None,
         version: 2,
         model: "bench-load".into(),
         family: "bench".into(),

@@ -275,6 +275,10 @@ use crate::config::{
 
         // ── 7. Write index.json ──
         let config = VindexConfig {
+            // pg_infer's extractors emit neither layout; see validate_supported.
+            fp4: None,
+            bitnet_layout: None,
+            ffn_layout: None,
             version: 1,
             model: model_name,
             family: family.to_string(),

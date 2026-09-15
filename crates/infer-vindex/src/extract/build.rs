@@ -452,6 +452,10 @@ impl<'a> BuildContext<'a> {
     ) -> Result<(), VindexError> {
         let family = self.weights.arch.family().to_string();
         let mut config = VindexConfig {
+            // pg_infer's extractors emit neither layout; see validate_supported.
+            fp4: None,
+            bitnet_layout: None,
+            ffn_layout: None,
             version: 2,
             model: model_name.to_string(),
             family: family.clone(),
@@ -738,6 +742,10 @@ pub fn build_vindex_resume(
     let down_top_k = 10; // default
     let family = weights.arch.family().to_string();
     let mut config = VindexConfig {
+        // pg_infer's extractors emit neither layout; see validate_supported.
+        fp4: None,
+        bitnet_layout: None,
+        ffn_layout: None,
         version: 2,
         model: model_name.to_string(),
         family: family.clone(),
