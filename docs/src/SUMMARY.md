@@ -11,6 +11,7 @@
   - [Tuning](operations/tuning.md)
   - [Monitoring](operations/monitoring.md)
   - [Troubleshooting](operations/troubleshooting.md)
+  - [BitNet Qualification](operations/bitnet-qualification.md)
 - [Compatibility](compatibility/versioning.md)
   - [Versioning](compatibility/versioning.md)
   - [Upstream Relationship](compatibility/upstream.md)
