@@ -96,7 +96,7 @@ A refusal is cheap; a confident wrong answer is not.
 
 | pg_infer version | larql commit | Server API | Vindex format |
 |-----------------|--------------|------------|---------------|
-| 1.0.0 | 23a56db1+ | /v1 JSON | VINDEX2 (schema 1--2, Q4_K/Q6_K) |
+| 0.1.2-alpha | 23a56db1+ | /v1 JSON | VINDEX2 (schema 1--2, Q4_K/Q6_K) |
 
 ## Sync Procedure
 

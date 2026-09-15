@@ -12,7 +12,7 @@ pg_infer uses [semantic versioning](https://semver.org/) (major.minor.patch):
 - **Minor**: New SQL functions, new GUCs, new backend capabilities
 - **Patch**: Bug fixes, performance improvements, internal refactors
 
-Current version: **1.0.0**
+Current version: **0.1.2-alpha**
 
 ## larql Server Compatibility
 
@@ -55,7 +55,7 @@ required fields cause a parse error surfaced as a SQL `ERROR`.
 
 | pg_infer | PostgreSQL | larql-server | Vindex Format | Rust Toolchain |
 |----------|------------|--------------|---------------|----------------|
-| 1.0.0 | 18+ | 23a56db1+ (2026-09-13) | VINDEX2 schema 1--2 (Q4_K/Q6_K) | 1.80+ |
+| 0.1.2-alpha | 18+ | 23a56db1+ (2026-09-13) | VINDEX2 schema 1--2 (Q4_K/Q6_K) | 1.80+ |
 
 ### Vindex Format Versions
 
@@ -74,10 +74,23 @@ required fields cause a parse error surfaced as a SQL `ERROR`.
 
 ### Upgrading pg_infer (Extension Only)
 
-1. Stop active queries (or schedule during maintenance window)
-2. Build new version: `cargo pgrx install --release`
-3. In PostgreSQL: `ALTER EXTENSION pg_infer UPDATE;`
-4. Verify: `SELECT * FROM infer_show_models();`
+No `pg_infer--<old>--<new>.sql` upgrade scripts ship yet, so
+`ALTER EXTENSION pg_infer UPDATE` has nothing to apply and PostgreSQL
+will refuse it ("extension has no update path"). During the alpha the
+supported path is drop and recreate:
+
+1. Stop active queries (or schedule during a maintenance window)
+2. Build and install: `cargo pgrx install --release`
+3. Restart PostgreSQL so the new `.so` is loaded
+4. In PostgreSQL: `DROP EXTENSION pg_infer; CREATE EXTENSION pg_infer;`
+5. Re-register models (registrations do not survive a drop):
+   `SELECT infer_create_model_remote(...)`
+6. Verify: `SELECT * FROM infer_show_models();`
+
+This loses registered models and any index built on them, which is the
+reason it is documented as an alpha limitation rather than presented as a
+procedure. Upgrade scripts land with the first non-alpha release; until
+then a version bump is a reinstall.
 
 ### Upgrading larql-server
 
