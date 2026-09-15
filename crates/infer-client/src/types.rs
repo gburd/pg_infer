@@ -21,6 +21,10 @@ pub struct StatsResponse {
     pub extract_level: String,
     #[serde(default)]
     pub layer_bands: Option<LayerBands>,
+    /// Server-level counters. Present on current larql-servers; absent on
+    /// older ones.
+    #[serde(default)]
+    pub server: Option<ServerStats>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -247,4 +251,127 @@ pub struct CacheStatsResponse {
     pub eviction_count: u64,
     #[serde(default)]
     pub memory_bytes: usize,
+}
+
+/// The `server` block on `GET /v1/stats`.
+///
+/// This is where real larql-servers report cache behaviour. pg_infer's
+/// `/v1/cache/stats` has never existed upstream, so before this the only
+/// answer `infer_server_stats()` could give against a real server was an
+/// empty set.
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct ServerStats {
+    #[serde(default)]
+    pub uptime_secs: u64,
+    #[serde(default)]
+    pub requests_served: u64,
+    /// VINDEX3 KV continuation cache. Absent when the server has V3 KV
+    /// disabled, hence `Option`.
+    #[serde(default)]
+    pub v3_kv: Option<V3KvStats>,
+}
+
+/// `server.v3_kv` — the bounded KV continuation cache.
+///
+/// `hits` counts resident states found; `resumptions` counts the subset
+/// that also passed the exact ids-prefix check and so skipped prefill.
+/// The gap between them is real information (prefix instability under
+/// live request construction), so both are carried rather than collapsed.
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct V3KvStats {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub entries: usize,
+    #[serde(default)]
+    pub capacity: usize,
+    #[serde(default)]
+    pub hits: u64,
+    #[serde(default)]
+    pub misses: u64,
+    #[serde(default)]
+    pub resumptions: u64,
+    #[serde(default)]
+    pub reused_tokens_total: u64,
+}
+
+// ── /v1/capabilities ─────────────────────────────────────────────────────────
+
+/// Response from `GET /v1/capabilities`.
+///
+/// Lets a client ask what a server does instead of discovering it by
+/// probing for 404s. larql-server derives `routes` from the ledger it
+/// records *while building its router*, so an advertised route cannot
+/// drift from a mounted one.
+///
+/// Only the fields pg_infer acts on are modelled. The `sources` /
+/// `explorer` / `runtime` blocks are generated server-side from a
+/// capability table and are deliberately not mirrored here: `routes` is
+/// the authority for "can I call this", and duplicating the derived
+/// booleans would be a second list to keep in sync.
+#[derive(Debug, Clone, Deserialize)]
+pub struct CapabilitiesResponse {
+    /// Report schema version.
+    ///
+    /// The server's own contract: *"A client that does not recognise it
+    /// must refuse the document rather than read the keys it knows."*
+    /// See [`Self::is_schema_understood`].
+    #[serde(default)]
+    pub schema: u32,
+    /// `"public_explorer"` | `"single_model"` | `"multi_model"`.
+    #[serde(default)]
+    pub profile: String,
+    /// Every path this server mounted, sorted.
+    #[serde(default)]
+    pub routes: Vec<String>,
+}
+
+/// The `/v1/capabilities` report schema pg_infer knows how to read.
+pub const CAPABILITIES_SCHEMA: u32 = 1;
+
+impl CapabilitiesResponse {
+    /// Whether this report's schema is one we can interpret.
+    ///
+    /// A newer schema may reorganize what `routes` means, so an
+    /// unrecognized version is treated as "no information" and the
+    /// caller falls back to probing — which still works, just less
+    /// efficiently.
+    pub fn is_schema_understood(&self) -> bool {
+        self.schema == CAPABILITIES_SCHEMA
+    }
+
+    /// Whether the server mounted `path`.
+    ///
+    /// Exact match against the server's own route table. Parameterized
+    /// routes appear in their template form (`/v1/{model_id}/describe`),
+    /// so callers should ask about the concrete path they intend to
+    /// call and accept that a templated equivalent reads as absent —
+    /// pg_infer only calls unparameterized paths.
+    pub fn serves(&self, path: &str) -> bool {
+        self.routes.iter().any(|r| r == path)
+    }
+}
+
+// ── /v1/embed, /v1/token/encode ──────────────────────────────────────────────
+
+/// Response from `POST /v1/embed`.
+///
+/// `residual` is row-major `seq_len × hidden_size`. The server has already
+/// applied the model's `embed_scale`, so these rows match what a local
+/// vindex load produces for the same token ids.
+#[derive(Debug, Clone, Deserialize)]
+pub struct EmbedResponse {
+    #[serde(default)]
+    pub residual: Vec<Vec<f32>>,
+    #[serde(default)]
+    pub seq_len: usize,
+    #[serde(default)]
+    pub hidden_size: usize,
+}
+
+/// Response from `POST /v1/token/encode`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct TokenEncodeResponse {
+    #[serde(default)]
+    pub token_ids: Vec<u32>,
 }

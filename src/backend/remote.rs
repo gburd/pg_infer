@@ -64,6 +64,13 @@ pub struct RemoteBackend {
     /// Layer-band classification from `/v1/stats`; used to label
     /// `show_layers` rows.  Empty when the server didn't report bands.
     pub layer_bands: Option<LayerBandsCached>,
+    /// What the server said it serves, fetched once at connect.
+    ///
+    /// `None` when the server has no `/v1/capabilities` (predates it, or
+    /// reports a schema we don't understand). Callers must then fall
+    /// back to calling the endpoint and interpreting a 404 — see
+    /// [`Self::serves`].
+    capabilities: Option<infer_client::CapabilitiesResponse>,
     /// HTTP client.  One dedicated runtime thread per client.
     client: CancellableClient,
 }
@@ -109,13 +116,50 @@ impl RemoteBackend {
             output: (b.output[0], b.output[1]),
         });
 
+        // Ask the server what it serves, once, here — rather than
+        // discovering it per-call from 404s. Entirely optional: a server
+        // without the endpoint, or with a schema we don't recognise,
+        // leaves this `None` and every caller keeps its probe path.
+        //
+        // Errors are swallowed on purpose. This is an optimisation and a
+        // source of better diagnostics; it must never be the reason a
+        // model fails to register.
+        let capabilities = client
+            .get_json::<infer_client::CapabilitiesResponse>("/v1/capabilities", &cancel)
+            .ok()
+            .filter(infer_client::CapabilitiesResponse::is_schema_understood);
+
         Ok(Self {
             server_url: server_url.to_string(),
             num_layers: stats.layers,
             hidden_size: stats.hidden_size,
             layer_bands,
+            capabilities,
             client,
         })
+    }
+
+    /// Whether the server is known to serve `path`.
+    ///
+    /// Three-valued on purpose:
+    ///
+    /// * `Some(true)`  — it said it mounts this route;
+    /// * `Some(false)` — it said it does not, so skip the call entirely;
+    /// * `None`        — it did not say (no `/v1/capabilities`, or an
+    ///   unrecognised report schema); the caller must try the call and
+    ///   interpret the result.
+    ///
+    /// Collapsing the last two into `false` would silently disable
+    /// features against any older server, which is the opposite of what
+    /// a capability check is for.
+    pub fn serves(&self, path: &str) -> Option<bool> {
+        self.capabilities.as_ref().map(|c| c.serves(path))
+    }
+
+    /// The server's profile (`single_model`, `multi_model`,
+    /// `public_explorer`), when it reported one.
+    pub fn profile(&self) -> Option<&str> {
+        self.capabilities.as_ref().map(|c| c.profile.as_str())
     }
 
     fn cancel_for_current_call(&self) -> CancelToken {
@@ -127,10 +171,7 @@ impl RemoteBackend {
 
     /// Shorthand for issuing a GET to the server, with PG interrupt
     /// polling wired into the wait loop.
-    fn get_json<T: serde::de::DeserializeOwned>(
-        &self,
-        path: &str,
-    ) -> Result<T, PgInferError> {
+    fn get_json<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T, PgInferError> {
         let cancel = self.cancel_for_current_call();
         self.client
             .get_json_with_tick(path, &cancel, crate::interrupt::pg_interrupt_tick)
@@ -153,8 +194,8 @@ impl RemoteBackend {
     /// Pre-warm the server: prefetch layer pages and load inference
     /// weights before the first query pays for it.
     ///
-    /// Returns the server's own [`WarmupResponse`]. If the server does
-    /// not serve `/v1/warmup` (404), returns `None`.
+    /// Returns the server's own [`WarmupResponse`]. Returns `None` when
+    /// the server does not serve `/v1/warmup`.
     ///
     /// This used to take an `entities: &[String]` and post
     /// `{"entities": [...]}`, which the server ignores entirely — warmup
@@ -165,42 +206,89 @@ impl RemoteBackend {
         &self,
         layers: Option<&[usize]>,
     ) -> Result<Option<infer_client::WarmupResponse>, PgInferError> {
+        if self.serves("/v1/warmup") == Some(false) {
+            return Ok(None);
+        }
         // Omit `layers` entirely to warm every owned layer, which is the
         // server's default and the case callers want at registration.
         let body = match layers {
             Some(l) => serde_json::json!({ "layers": l }),
             None => serde_json::json!({}),
         };
-        match self.post_json::<infer_client::WarmupResponse>("/v1/warmup", body) {
-            Ok(resp) => Ok(Some(resp)),
-            Err(PgInferError::Remote(ref msg))
-                if msg.contains("404") || msg.contains("Not Found") =>
-            {
-                Ok(None)
-            }
-            Err(e) => Err(e),
-        }
+        optional_endpoint(self.post_json::<infer_client::WarmupResponse>("/v1/warmup", body))
     }
 
     /// Fetch server-side cache statistics.
     ///
-    /// Returns `None` if the server doesn't support `/v1/cache/stats` (404).
+    /// Tries `/v1/cache/stats` first, then falls back to the `server`
+    /// block on `/v1/stats`. The fallback is the path that actually runs:
+    /// `/v1/cache/stats` is a pg_infer-local invention no released
+    /// larql-server has ever served (see
+    /// `docs/src/compatibility/upstream.md`), so before the fallback
+    /// existed `infer_server_stats()` returned an empty set against every
+    /// real server.
+    ///
+    /// Returns `None` only when neither source reports anything.
     pub fn cache_stats(&self) -> Result<Option<CacheStats>, PgInferError> {
-        match self.get_json::<infer_client::CacheStatsResponse>("/v1/cache/stats") {
-            Ok(resp) => Ok(Some(CacheStats {
-                entries: resp.entries,
-                hit_count: resp.hit_count,
-                miss_count: resp.miss_count,
-                eviction_count: resp.eviction_count,
-                memory_bytes: resp.memory_bytes,
-            })),
-            Err(PgInferError::Remote(ref msg))
-                if msg.contains("404") || msg.contains("Not Found") =>
-            {
-                Ok(None)
+        if self.serves("/v1/cache/stats") != Some(false) {
+            let resp = optional_endpoint(
+                self.get_json::<infer_client::CacheStatsResponse>("/v1/cache/stats"),
+            )?;
+            if let Some(resp) = resp {
+                return Ok(Some(CacheStats {
+                    entries: resp.entries,
+                    hit_count: resp.hit_count,
+                    miss_count: resp.miss_count,
+                    eviction_count: resp.eviction_count,
+                    memory_bytes: resp.memory_bytes,
+                }));
             }
-            Err(e) => Err(e),
         }
+
+        // Fallback: the `server` block on /v1/stats.
+        let stats: infer_client::StatsResponse = self.get_json("/v1/stats")?;
+        let Some(kv) = stats.server.and_then(|s| s.v3_kv) else {
+            return Ok(None);
+        };
+        if !kv.enabled {
+            // Reporting zeros for a disabled cache would look like a cache
+            // that is being missed rather than one that is switched off.
+            return Ok(None);
+        }
+        Ok(Some(CacheStats {
+            entries: kv.entries,
+            hit_count: kv.hits,
+            miss_count: kv.misses,
+            // The server reports a bounded capacity, not an eviction
+            // counter. Left at 0 rather than derived from capacity, which
+            // would be a fabricated number.
+            eviction_count: 0,
+            // Not reported: the KV cache is bounded by entry count.
+            memory_bytes: 0,
+        }))
+    }
+}
+
+/// Treat "the server does not have this endpoint" as `Ok(None)` and every
+/// other failure as an error.
+///
+/// One place that inspects error text for a 404, rather than five. The
+/// text match is a fallback for servers that do not report capabilities;
+/// callers consult [`RemoteBackend::serves`] first and skip the request
+/// entirely when the server has already said it does not serve the route.
+///
+/// Matching on a message substring is fragile — it depends on how the
+/// transport formats a status — but it is the only signal available from
+/// a server that predates `/v1/capabilities`, and being wrong here fails
+/// safe: a misclassified error degrades an optional feature rather than
+/// corrupting a result.
+fn optional_endpoint<T>(r: Result<T, PgInferError>) -> Result<Option<T>, PgInferError> {
+    match r {
+        Ok(v) => Ok(Some(v)),
+        Err(PgInferError::Remote(ref msg)) if msg.contains("404") || msg.contains("Not Found") => {
+            Ok(None)
+        }
+        Err(e) => Err(e),
     }
 }
 
@@ -317,11 +405,7 @@ impl Backend for RemoteBackend {
     }
 
     fn walk(&self, prompt: &str, top_k: usize) -> Result<Vec<Hit>, PgInferError> {
-        let path = format!(
-            "/v1/walk?prompt={}&top={}",
-            urlencoding(prompt),
-            top_k
-        );
+        let path = format!("/v1/walk?prompt={}&top={}", urlencoding(prompt), top_k);
         let resp: infer_client::WalkResponse = self.get_json(&path)?;
 
         Ok(resp
@@ -537,49 +621,104 @@ impl Backend for RemoteBackend {
         query: &str,
         limit: usize,
     ) -> Result<Vec<RankedCandidate>, PgInferError> {
+        // `/v1/rank` is pg_infer-local and has never existed upstream, so
+        // a capability-reporting server lets us go straight to the
+        // fallback instead of paying a 404 on every call.
+        let served = self.serves("/v1/rank") != Some(false);
         let body = serde_json::json!({
             "query": query,
             "candidates": candidates,
             "top_k": limit,
         });
-        match self.post_json::<infer_client::RankResponse>("/v1/rank", body) {
-            Ok(resp) => Ok(resp
+        let remote = if served {
+            optional_endpoint(self.post_json::<infer_client::RankResponse>("/v1/rank", body))?
+        } else {
+            None
+        };
+        if let Some(resp) = remote {
+            return Ok(resp
                 .results
                 .into_iter()
                 .map(|r| RankedCandidate {
                     index: r.index,
                     score: r.score,
                 })
-                .collect()),
-            Err(PgInferError::Remote(ref msg))
-                if msg.contains("404") || msg.contains("Not Found") =>
-            {
-                // Server doesn't support /v1/rank yet — fall back to batch walks.
-                let scores = self.similar_to_many(candidates, query)?;
-                let mut ranked: Vec<RankedCandidate> = scores
-                    .into_iter()
-                    .enumerate()
-                    .map(|(i, s)| RankedCandidate { index: i, score: s })
-                    .collect();
-                ranked.sort_by(|a, b| {
-                    b.score
-                        .partial_cmp(&a.score)
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                });
-                if limit > 0 && ranked.len() > limit {
-                    ranked.truncate(limit);
-                }
-                Ok(ranked)
-            }
-            Err(e) => Err(e),
+                .collect());
         }
+        // No server-side ranking: score each candidate with a walk and
+        // sort here.
+        let scores = self.similar_to_many(candidates, query)?;
+        let mut ranked: Vec<RankedCandidate> = scores
+            .into_iter()
+            .enumerate()
+            .map(|(i, s)| RankedCandidate { index: i, score: s })
+            .collect();
+        ranked.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        if limit > 0 && ranked.len() > limit {
+            ranked.truncate(limit);
+        }
+        Ok(ranked)
     }
 
-    fn embed(&self, _text: &str) -> Result<Array1<f32>, PgInferError> {
-        // Could be lit up via `/v1/embed`, but nothing in pg_infer's hot
-        // path currently calls it (precompute_query_gates is dead).
-        // Revisit when we need client-side vector arithmetic.
-        unsupported("embed (not wired yet)")
+    fn embed(&self, text: &str) -> Result<Array1<f32>, PgInferError> {
+        // Two hops, because `/v1/embed` takes token ids: `/v1/token/encode`
+        // to tokenize with the *server's* tokenizer, then `/v1/embed` to
+        // look up the rows. Doing it server-side matters — a remote model
+        // has no local tokenizer or embedding table here, and encoding
+        // with a different tokenizer would silently produce vectors from
+        // the wrong rows.
+        //
+        // Mean-pools multi-token input to match the local backend
+        // (`fn_similar::embed_text`): same vector for the same text
+        // regardless of backend, which `am_scan`'s HNSW query path
+        // depends on. The server has already applied `embed_scale`.
+        if self.serves("/v1/embed") == Some(false) || self.serves("/v1/token/encode") == Some(false)
+        {
+            return unsupported("embed (server serves no /v1/embed)");
+        }
+
+        // `/v1/token/encode` is a GET with a `text` query param, and the
+        // server encodes with `add_special_tokens=false` — the same call
+        // `fn_similar::embed_text` makes locally, so the token ids agree.
+        let enc: infer_client::TokenEncodeResponse =
+            self.get_json(&format!("/v1/token/encode?text={}", urlencoding(text)))?;
+        if enc.token_ids.is_empty() {
+            return Err(PgInferError::EmptyPrompt);
+        }
+
+        let resp: infer_client::EmbedResponse = self.post_json(
+            "/v1/embed",
+            serde_json::json!({ "token_ids": enc.token_ids }),
+        )?;
+
+        let mut rows = resp.residual.into_iter();
+        let Some(first) = rows.next() else {
+            return Err(PgInferError::Remote(format!(
+                "/v1/embed returned no rows for {} token(s)",
+                enc.token_ids.len()
+            )));
+        };
+        let hidden = first.len();
+        let mut acc = Array1::<f32>::from(first);
+        let mut n = 1usize;
+        for row in rows {
+            if row.len() != hidden {
+                return Err(PgInferError::Remote(format!(
+                    "/v1/embed rows disagree on width: {hidden} vs {}",
+                    row.len()
+                )));
+            }
+            acc += &Array1::from(row);
+            n += 1;
+        }
+        if n > 1 {
+            acc /= n as f32;
+        }
+        Ok(acc)
     }
 
     fn warmup(

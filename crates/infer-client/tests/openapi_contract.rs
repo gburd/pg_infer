@@ -47,7 +47,8 @@
 //! changed, or we were wrong.  Fix the DTO — do not silence the check.
 
 use infer_client::{
-    DescribeResponse, InferResponse, RelationsResponse, StatsResponse, WarmupResponse,
+    CapabilitiesResponse, DescribeResponse, EmbedResponse, InferResponse, RelationsResponse,
+    StatsResponse, TokenEncodeResponse, WarmupResponse,
 };
 use serde_json::{json, Map, Value};
 
@@ -241,8 +242,8 @@ fn warmup_response_is_not_silently_zero() {
         }
     }
     let body = Value::Object(body);
-    let resp: WarmupResponse = serde_json::from_value(body.clone())
-        .expect("a fully-populated server response must parse");
+    let resp: WarmupResponse =
+        serde_json::from_value(body.clone()).expect("a fully-populated server response must parse");
     let read_anything = resp.layers_prefetched != 0
         || resp.experts_prefetched != 0
         || resp.total_ms != 0
@@ -399,7 +400,7 @@ fn pg_infer_local_endpoints_are_absent_upstream() {
 }
 
 /// `/v1/capabilities` — lets pg_infer ask what a server supports instead
-/// of probing for 404s.  Pinned so the handshake work has a fixed target.
+/// of probing for 404s.  Pinned so the handshake has a fixed target.
 #[test]
 fn capabilities_endpoint_is_available() {
     let spec = spec();
@@ -411,6 +412,106 @@ fn capabilities_endpoint_is_available() {
         paths.contains_key("/v1/capabilities"),
         "no /v1/capabilities: pg_infer must keep probing endpoints to \
          discover support"
+    );
+    assert!(
+        paths["/v1/capabilities"].get("get").is_some(),
+        "/v1/capabilities must be a GET"
+    );
+
+    // The handshake reads exactly three fields; a rename of any of them
+    // silently disables it.
+    let s = schema_of(&spec, "CapabilitiesResponse");
+    let props: Vec<&str> = s
+        .get("properties")
+        .and_then(Value::as_object)
+        .map(|o| o.keys().map(String::as_str).collect())
+        .unwrap_or_default();
+    for f in ["schema", "profile", "routes"] {
+        assert!(
+            props.contains(&f),
+            "CapabilitiesResponse lost `{f}`, which RemoteBackend::serves \
+             depends on. Server properties: {props:?}"
+        );
+    }
+    assert_parses::<CapabilitiesResponse>("CapabilitiesResponse");
+}
+
+/// `/v1/embed` + `/v1/token/encode` — what remote `embed()` is built on.
+///
+/// The method of each matters and neither is obvious: `token/encode` is a
+/// GET with a `text` query param (a POST body 405s), and `embed` is a
+/// POST taking `token_ids` — which is *why* `embed()` has to tokenize
+/// first rather than sending text.
+#[test]
+fn embed_pipeline_endpoints_match_implementation() {
+    let spec = spec();
+    let paths = spec
+        .get("paths")
+        .and_then(Value::as_object)
+        .expect("spec has paths");
+
+    let enc = paths
+        .get("/v1/token/encode")
+        .expect("remote embed() needs /v1/token/encode to tokenize");
+    assert!(
+        enc.get("get").is_some(),
+        "/v1/token/encode is a GET with ?text=; a POST body would 405"
+    );
+
+    let emb = paths
+        .get("/v1/embed")
+        .expect("remote embed() needs /v1/embed");
+    assert!(
+        emb.get("post").is_some(),
+        "/v1/embed is a POST taking {{token_ids}}"
+    );
+
+    let req = schema_of(&spec, "EmbedRequest");
+    let rprops: Vec<&str> = req
+        .get("properties")
+        .and_then(Value::as_object)
+        .map(|o| o.keys().map(String::as_str).collect())
+        .unwrap_or_default();
+    assert!(
+        rprops.contains(&"token_ids"),
+        "/v1/embed takes token ids, not text. Server properties: {rprops:?}"
+    );
+
+    assert_parses::<EmbedResponse>("EmbedResponse");
+    assert_parses::<TokenEncodeResponse>("TokenEncodeResponse");
+
+    // `residual` is row-major seq_len × hidden_size and embed() mean-pools
+    // the rows; a flat array here would be averaged along the wrong axis.
+    let resp = schema_of(&spec, "EmbedResponse");
+    assert_eq!(
+        resp.pointer("/properties/residual/type")
+            .and_then(Value::as_str),
+        Some("array"),
+        "EmbedResponse.residual must be an array of rows"
+    );
+    assert_eq!(
+        resp.pointer("/properties/residual/items/type")
+            .and_then(Value::as_str),
+        Some("array"),
+        "EmbedResponse.residual must be *nested* arrays (seq_len × hidden)"
+    );
+}
+
+/// `/v1/stats` must carry the `server` block that `cache_stats()` falls
+/// back to — the only real source, since `/v1/cache/stats` has never
+/// existed upstream.
+#[test]
+fn stats_server_block_backs_cache_stats() {
+    let spec = spec();
+    let stats = schema_of(&spec, "StatsResponse");
+    assert!(
+        stats
+            .get("properties")
+            .and_then(Value::as_object)
+            .map(|o| o.contains_key("server"))
+            .unwrap_or(false),
+        "/v1/stats lost its `server` block; infer_server_stats() then has \
+         no source at all"
     );
 }
 

@@ -39,13 +39,14 @@ against it. See [Testing Compatibility](#testing-compatibility).
 ## pg_infer-Local Endpoints
 
 These are **not** part of larql's `/v1` contract. They have never existed
-upstream -- not at any pinned commit -- and are pg_infer inventions kept
-behind 404 fallbacks so a real server simply reports them as unavailable:
+upstream -- not at any pinned commit -- and are pg_infer inventions. Each
+is skipped outright when the server reports its capabilities, and falls
+back to a 404 probe otherwise:
 
 | Endpoint | Status | Replacement |
 |----------|--------|-------------|
-| `/v1/cache/stats` | never upstream | `GET /v1/stats` -> `server` block (`v3_kv.{hits,misses,entries}`, `uptime_secs`, `requests_served`) |
-| `/v1/rank` | never upstream | falls back to batch walks |
+| `/v1/cache/stats` | never upstream | **now used**: `GET /v1/stats` -> `server.v3_kv` (`hits`, `misses`, `entries`), `uptime_secs`, `requests_served` |
+| `/v1/rank` | never upstream | falls back to batch walks + local sort |
 | `/v1/features` | never upstream | none; feature introspection needs a local vindex |
 | `/v1/layers` | never upstream | derived from `/v1/stats` |
 
@@ -54,6 +55,14 @@ which implied a compatibility guarantee that does not exist.
 `openapi_contract.rs::pg_infer_local_endpoints_are_absent_upstream` now
 asserts their absence, so if upstream ever adds one the test fails and the
 fallback can be dropped.
+
+`infer_server_stats()` previously returned an empty set against every real
+server, because `/v1/cache/stats` was its only source. It now reads the
+`server.v3_kv` block on `/v1/stats`. Two caveats, both deliberate: a
+disabled KV cache reports *nothing* rather than zeros (zeros would read as
+a cache being missed rather than one switched off), and `eviction_count` /
+`memory_bytes` stay 0 because the server reports a bounded entry capacity,
+not those figures -- deriving them would be fabrication.
 
 ## Vindex Generations
 
@@ -111,12 +120,44 @@ A refusal is cheap; a confident wrong answer is not.
 
 | Area | pg_infer | larql | Notes |
 |------|----------|-------|-------|
-| Embedding server | Built-in `embed()` | `POST /v1/embed` | Endpoint exists upstream; the remote backend does not use it yet |
+| Embedding server | Built-in `embed()` | `POST /v1/embed` | Remote backend now uses it (`/v1/token/encode` then `/v1/embed`, mean-pooled to match the local backend) |
 | VindexPatch | Not integrated | Full CRUD via `/v1/patches` | Future work |
 | Grid discovery | HTTP `/v1/models` poll | Router proxies `/v1/walk-ffn` itself | See below |
 | Predicate pushdown | Client-side filtering | `POST /v1/select` | Future work |
 | Boundary codec | Not used | larql-boundary crate | Binary wire format, future |
-| Capabilities | 404 probing | `GET /v1/capabilities` | Future work |
+| Capabilities | `GET /v1/capabilities` at connect, 404 probing as fallback | `GET /v1/capabilities` | See below |
+
+### Capability Handshake
+
+`RemoteBackend::connect()` fetches `GET /v1/capabilities` once, alongside
+the `/v1/stats` call it already made, and caches the result. The report's
+`routes` array is the server's list of every path it mounted, derived from
+the ledger it records *while building its router* -- so an advertised route
+cannot drift from a mounted one.
+
+`RemoteBackend::serves(path)` is deliberately three-valued:
+
+| Value | Meaning | Action |
+|-------|---------|--------|
+| `Some(true)` | server mounts the route | call it |
+| `Some(false)` | server said it does not | skip the request entirely |
+| `None` | server did not say | call it and interpret the result |
+
+`None` covers a server predating `/v1/capabilities`, or one reporting a
+report schema pg_infer does not recognise. Collapsing it into `false`
+would silently disable features against older servers, which is the
+opposite of what a capability check is for.
+
+The 404-substring matching is not gone -- it is the `None` fallback, now in
+one place (`optional_endpoint`) instead of copy-pasted at five call sites.
+Matching on a message substring is fragile, but it is the only signal a
+pre-capabilities server offers, and being wrong there fails safe: a
+misclassified error degrades an optional feature rather than corrupting a
+result.
+
+Concretely, `/v1/cache/stats` and `/v1/rank` have never existed upstream,
+so against a capability-reporting server they now cost **zero** requests
+instead of a guaranteed 404 per call.
 
 ### Grid Discovery
 
