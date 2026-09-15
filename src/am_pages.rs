@@ -164,7 +164,7 @@ pub fn pages_needed_for_embeddings(num_embeddings: u32, embedding_dim: u32) -> u
     if per_page == 0 {
         return 0;
     }
-    ((num_embeddings as usize + per_page - 1) / per_page) as u32
+    (num_embeddings as usize).div_ceil(per_page) as u32
 }
 
 /// Read metapage version from block 0 (returns 1 or 2).

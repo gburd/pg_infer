@@ -1,3 +1,15 @@
+// rust 1.98 prefers `as_chunks::<N>()` over `chunks_exact(N)`. These are
+// dequantisation loops where `chunks_exact(4)` reads as "4 bytes per f32" and
+// the turbofished const-generic form does not; the generated code is
+// equivalent. Upstream larql made the same call for the same lint.
+#![allow(clippy::chunks_exact_to_as_chunks)]
+
+// `ModelWeightsVariant`'s F32 and Quantized arms differ in size by design:
+// one holds expanded f32 tensors, the other packed quantised blocks. Boxing
+// the larger arm would add an indirection on the hot decode path to satisfy a
+// lint about an enum constructed once per model load.
+#![allow(clippy::large_enum_variant)]
+
 extern crate blas_src;
 
 pub mod attention;

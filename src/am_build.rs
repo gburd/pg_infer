@@ -115,6 +115,8 @@ pub unsafe extern "C-unwind" fn infer_amvacuumcleanup(
 /// # Safety
 ///
 /// Called by PostgreSQL executor during INSERT.
+// Arity is fixed by PostgreSQL's `aminsert` AM callback; not ours to reduce.
+#[allow(clippy::too_many_arguments)]
 #[pg_guard]
 pub unsafe extern "C-unwind" fn infer_aminsert(
     _index_rel: pg_sys::Relation,

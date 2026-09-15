@@ -70,7 +70,7 @@ pub fn auto_label_clusters(
                 .iter()
                 .map(|(t, &c)| (t.clone(), c))
                 .collect();
-            freq.sort_by(|a, b| b.1.cmp(&a.1));
+            freq.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
             let fallback: Vec<String> = freq
                 .iter()
                 .filter(|(t, _)| t.len() >= 3)

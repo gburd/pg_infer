@@ -518,7 +518,7 @@ impl<'a> WalkFfn<'a> {
         let mut full_activation = Array2::<f32>::zeros((seq_len, intermediate));
 
         // Check for Metal Q4 backend
-        let metal_q4 = self.backend.and_then(|be| if be.has_q4() { Some(be) } else { None });
+        let metal_q4 = self.backend.filter(|be| be.has_q4());
 
         if let Some(be) = metal_q4 {
             // Metal: ONE GPU submission for all gate+up across ALL seq positions

@@ -1,3 +1,9 @@
+// rust 1.98 prefers `as_chunks::<N>()` over `chunks_exact(N)`. These are
+// dequantisation loops where `chunks_exact(4)` reads as "4 bytes per f32" and
+// the turbofished const-generic form does not; the generated code is
+// equivalent. Upstream larql made the same call for the same lint.
+#![allow(clippy::chunks_exact_to_as_chunks)]
+
 #![allow(clippy::doc_overindented_list_items)]
 #![allow(clippy::doc_lazy_continuation)]
 

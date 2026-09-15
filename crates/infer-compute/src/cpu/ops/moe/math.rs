@@ -4,6 +4,8 @@
 //! per-expert helpers share them, nothing outside `moe/` should.
 
 /// Dequantize a BF16 byte slice to f32.
+// `chunks_exact(2)` reads as "2 bytes per bf16"; `as_chunks::<2>()` does not.
+#[allow(clippy::chunks_exact_to_as_chunks)]
 #[inline]
 pub(super) fn bf16_to_f32(bytes: &[u8]) -> Vec<f32> {
     bytes.chunks_exact(2)

@@ -283,7 +283,7 @@ pub(crate) fn mmap_show_relations(
 
     // Sort by count descending, limit to 30.
     let mut ranked: Vec<_> = agg.into_iter().collect();
-    ranked.sort_by(|a, b| b.1.count.cmp(&a.1.count));
+    ranked.sort_by_key(|(_, agg)| std::cmp::Reverse(agg.count));
     ranked.truncate(30);
 
     let results = ranked
