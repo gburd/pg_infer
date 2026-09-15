@@ -375,3 +375,48 @@ pub struct TokenEncodeResponse {
     #[serde(default)]
     pub token_ids: Vec<u32>,
 }
+
+// ── /v1/select ───────────────────────────────────────────────────────────────
+
+/// Response from `POST /v1/select` — server-side feature scan.
+///
+/// **The OpenAPI schema and the handler disagree here**, and this follows
+/// the handler, because that is what a client receives:
+///
+/// | | schema says | server sends |
+/// |---|---|---|
+/// | list key | `rows` | `edges` |
+/// | score field | `confidence` | `c_score` |
+///
+/// Verified against a live larql-server (`routes/select.rs` builds
+/// `{"edges": [...]}` with `c_score`, while `openapi.rs`'s `SelectRow`
+/// declares `rows`/`confidence`). Believing the schema here would have
+/// produced exactly the failure mode this crate already shipped three
+/// times: a struct that parses nothing, or silently parses to empty.
+///
+/// Both spellings are accepted so this keeps working if upstream aligns
+/// the handler with its own spec.
+#[derive(Debug, Clone, Deserialize)]
+pub struct SelectResponse {
+    #[serde(default, alias = "rows")]
+    pub edges: Vec<SelectRow>,
+    /// Matches before `limit` was applied.
+    #[serde(default)]
+    pub total: usize,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SelectRow {
+    #[serde(default)]
+    pub layer: usize,
+    #[serde(default)]
+    pub feature: usize,
+    /// Top token for this feature, already trimmed by the server.
+    #[serde(default)]
+    pub target: String,
+    #[serde(default, alias = "confidence")]
+    pub c_score: f32,
+    /// Probe-confirmed relation label, when the feature has one.
+    #[serde(default)]
+    pub relation: Option<String>,
+}

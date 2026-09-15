@@ -34,6 +34,6 @@ pub use transport::{BatchItem, CancelToken, CancellableClient, ClientError, Meth
 pub use types::{
     CacheStatsResponse, CapabilitiesResponse, DescribeEdge, DescribeResponse, EmbedResponse,
     InferPrediction, InferResponse, RankResponse, RankResult, RelationSummary, RelationsResponse,
-    ServerStats, StatsResponse, TokenEncodeResponse, V3KvStats, WalkHit, WalkResponse,
-    WarmupResponse, CAPABILITIES_SCHEMA,
+    SelectResponse, SelectRow, ServerStats, StatsResponse, TokenEncodeResponse, V3KvStats, WalkHit,
+    WalkResponse, WarmupResponse, CAPABILITIES_SCHEMA,
 };

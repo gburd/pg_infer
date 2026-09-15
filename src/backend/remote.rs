@@ -596,12 +596,57 @@ impl Backend for RemoteBackend {
 
     fn show_features(
         &self,
-        _layer: usize,
-        _filter: Option<&str>,
-        _min_score: f32,
-        _limit: usize,
+        layer: usize,
+        filter: Option<&str>,
+        min_score: f32,
+        limit: usize,
     ) -> Result<Vec<FeatureRow>, PgInferError> {
-        unsupported("show_features (no larql-server endpoint yet)")
+        // `/v1/select` is larql's server-side feature scan: it walks a
+        // layer's feature metadata and filters on the top token, which is
+        // exactly what `infer_show_features` asks for. Note this is *not*
+        // gate-KNN like `describe()` — it is a metadata scan, so pushing
+        // the filter down avoids shipping every feature in the layer.
+        if self.serves("/v1/select") == Some(false) {
+            return unsupported("show_features (server serves no /v1/select)");
+        }
+        let mut body = serde_json::json!({
+            "layer": layer,
+            "limit": limit,
+            // Accepted values are gate_score / confidence / c_score /
+            // layer; anything else falls through to the server's default.
+            // Naming one explicitly rather than relying on that default.
+            "order_by": "c_score",
+            "order": "desc",
+        });
+        // `entity` is a case-insensitive substring match on the feature's
+        // top token, which is what the local backend's `filter` does too.
+        if let Some(f) = filter {
+            body["entity"] = serde_json::json!(f);
+        }
+        if min_score > 0.0 {
+            body["min_confidence"] = serde_json::json!(min_score);
+        }
+
+        let Some(resp) =
+            optional_endpoint(self.post_json::<infer_client::SelectResponse>("/v1/select", body))?
+        else {
+            return unsupported("show_features (server serves no /v1/select)");
+        };
+
+        Ok(resp
+            .edges
+            .into_iter()
+            .map(|r| FeatureRow {
+                feature: r.feature as i32,
+                token: r.target,
+                score: r.c_score as f64,
+                // The local backend fills `also` with the feature's other
+                // top tokens; `/v1/select` reports only the top one, so
+                // this is empty rather than guessed. The probe relation
+                // label is the useful thing the server *does* add.
+                also: r.relation.unwrap_or_default(),
+            })
+            .collect())
     }
 
     fn snapshot_features(

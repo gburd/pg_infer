@@ -515,6 +515,80 @@ fn stats_server_block_backs_cache_stats() {
     );
 }
 
+/// `/v1/select` — the server-side feature scan behind remote
+/// `show_features`.
+///
+/// This one is a trap, and the test exists to keep it documented: the
+/// OpenAPI schema declares `SelectResponse.rows` of `SelectRow` with a
+/// `confidence` field, while the handler emits `{"edges": [...]}` with
+/// `c_score`. Verified against a live server. `SelectResponse` follows the
+/// handler and accepts both spellings, so it works either way — but a
+/// future reader should not "fix" it to match the schema.
+#[test]
+fn select_endpoint_shape_follows_the_handler_not_the_schema() {
+    let spec = spec();
+    let paths = spec
+        .get("paths")
+        .and_then(Value::as_object)
+        .expect("spec has paths");
+    let sel = paths
+        .get("/v1/select")
+        .expect("remote show_features needs /v1/select");
+    assert!(sel.get("post").is_some(), "/v1/select is a POST");
+
+    // Request side: these are the knobs show_features pushes down.
+    let req = schema_of(&spec, "SelectRequest");
+    let rprops: Vec<&str> = req
+        .get("properties")
+        .and_then(Value::as_object)
+        .map(|o| o.keys().map(String::as_str).collect())
+        .unwrap_or_default();
+    for f in [
+        "entity",
+        "layer",
+        "limit",
+        "min_confidence",
+        "order_by",
+        "order",
+    ] {
+        assert!(
+            rprops.contains(&f),
+            "SelectRequest lost `{f}`, which show_features sends. \
+             Server properties: {rprops:?}"
+        );
+    }
+
+    // Response side: parse both the schema's spelling and the handler's,
+    // because only one of them is what a real server sends.
+    let schema_shaped = json!({
+        "rows": [{ "layer": 1, "feature": 2, "target": "Paris", "confidence": 0.5 }],
+        "total": 1,
+        "latency_ms": 0.1,
+    });
+    let handler_shaped = json!({
+        "edges": [{ "layer": 1, "feature": 2, "target": "Paris", "c_score": 0.5 }],
+        "total": 1,
+        "latency_ms": 0.1,
+    });
+    for (name, body) in [
+        ("schema-shaped (rows/confidence)", schema_shaped),
+        ("handler-shaped (edges/c_score)", handler_shaped),
+    ] {
+        // `expect` rather than `panic!`: this crate denies clippy::panic,
+        // and a failure here is a genuine contract break either way.
+        let r: infer_client::SelectResponse =
+            serde_json::from_value(body).expect("select body must parse");
+        let row = r.edges.first().expect("select body must yield a row");
+        assert_eq!(row.target, "Paris", "{name}: target must be read");
+        assert_eq!(row.feature, 2, "{name}: feature must be read");
+        assert!(
+            (row.c_score - 0.5).abs() < f32::EPSILON,
+            "{name}: score must be read, got {}",
+            row.c_score
+        );
+    }
+}
+
 #[test]
 fn fixture_is_the_shape_we_think_it_is() {
     // Guard against a truncated or hand-edited fixture silently making

@@ -123,7 +123,7 @@ A refusal is cheap; a confident wrong answer is not.
 | Embedding server | Built-in `embed()` | `POST /v1/embed` | Remote backend now uses it (`/v1/token/encode` then `/v1/embed`, mean-pooled to match the local backend) |
 | VindexPatch | Not integrated | Full CRUD via `/v1/patches` | Future work |
 | Grid discovery | HTTP `/v1/models` poll | Router proxies `/v1/walk-ffn` itself | See below |
-| Predicate pushdown | Client-side filtering | `POST /v1/select` | Future work |
+| Predicate pushdown | `infer_show_features` pushes layer/filter/min_score/limit to `POST /v1/select` | `POST /v1/select` | `describe()` still uses `/v1/describe` (gate-KNN, different query) |
 | Boundary codec | Not used | larql-boundary crate | Binary wire format, future |
 | Capabilities | `GET /v1/capabilities` at connect, 404 probing as fallback | `GET /v1/capabilities` | See below |
 
@@ -158,6 +158,28 @@ result.
 Concretely, `/v1/cache/stats` and `/v1/rank` have never existed upstream,
 so against a capability-reporting server they now cost **zero** requests
 instead of a guaranteed 404 per call.
+
+### `/v1/select`: Schema and Handler Disagree
+
+Worth knowing before touching `SelectResponse`. larql-server's OpenAPI
+document declares `SelectResponse.rows` of `SelectRow`, with a
+`confidence` field. Its handler emits `{"edges": [...]}` with `c_score`:
+
+| | schema says | server sends |
+|---|---|---|
+| list key | `rows` | `edges` |
+| score field | `confidence` | `c_score` |
+
+Confirmed against a live server. `infer-client` follows the **handler**,
+since that is what arrives on the wire, and accepts both spellings so it
+keeps working if upstream aligns the two. Do not "correct" it to match the
+schema -- that reintroduces exactly the class of bug this chapter exists to
+document.
+
+This is also why the OpenAPI fixture is a *starting point* rather than the
+last word: the spec is generated from annotations, and an annotation can
+drift from the `json!` literal beside it. Endpoints whose handler builds
+its response inline are worth checking against a live server.
 
 ### Grid Discovery
 
