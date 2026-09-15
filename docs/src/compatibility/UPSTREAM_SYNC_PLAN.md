@@ -1,6 +1,10 @@
 # Upstream sync plan: larql → pg_infer
 
-Status: plan only, nothing applied. Written 2026-09-14.
+Status: **executed** (2026-09-14/15). Written 2026-09-14.
+
+Everything below is done except F4 (Nix re-derivation) and the "consider
+later" items in §5. What was found while executing it — including two
+places where this plan was wrong — is recorded in §9.
 
 Fork: **`github.com/gburd/larql`** (fork of `chrishayuk/larql`, last push 2026-07-08).
 Upstream: **`github.com/chrishayuk/larql`**.
@@ -401,3 +405,71 @@ stability guarantee (§"Breaking Change Policy") the code doesn't intend to keep
 The fork is in better shape than it looks: most of it shipped upstream under your
 name. What's left is one crate to upstream, one lost hunk to restore, and a set
 of pg_infer wire bugs that were never about the fork at all.
+
+
+## 9. Execution notes
+
+What actually happened, including where this plan was wrong.
+
+### Fork track
+
+| Step | Result |
+|------|--------|
+| F1 | `main` → `23a56db1`, old state kept at `archive/main-pre-resync` |
+| F2 | `feat/larql-cloud` — clippy `-D warnings` clean, 13/13 tests |
+| F3 | `feat/bitnet-serve` — 1279 passed vs 1277 on clean upstream (= the 2 tests added) |
+| F4 | **not done** — Nix re-derivation |
+
+Old `main` really did not compile, and for the reason diagnosed:
+
+```
+error[E0599]: no method named `is_bitnet` found for struct `Arc<LoadedModel>`
+error[E0599]: no method named `get_or_load_bitnet` found for struct `Arc<LoadedModel>`
+```
+
+Adapting the port to current upstream (rather than replaying the branch)
+caught four defects in the original code: a doubled `SSE_DONE`, literal
+`"stop"`/`"length"` instead of `FINISH_REASON_*`, a missing
+`GenerationTally` (BitNet traffic would report zero throughput), and
+`pick_template` now requiring `&ModelWeights` that the ternary path never
+loads.
+
+### pg_infer track
+
+All three wire bugs fixed and verified against a live larql-server, not
+only in unit tests. P1's contract test was confirmed **red** first (3
+failures) so it could not pass by construction.
+
+`/v1/capabilities`, `/v1/embed`, `/v1/stats.server` and `/v1/select` are
+wired. `infer_show_features` and `infer_server_stats` went from "always
+fails" / "always empty" to returning real server data.
+
+### Where this plan was wrong
+
+1. **§2.2 grid fix.** The plan said to point pg_infer at larql-router as a
+   single endpoint and delete client-side discovery. The router serves
+   `/v1/{walk-ffn,health,stats,models,completions,embeddings}` and **none**
+   of `/v1/{describe,walk,relations,infer}` — it cannot stand in for a
+   server. Client-side discovery was kept and fixed instead; the envelope
+   was the bug, not the architecture.
+
+2. **§3.5 "fetch the spec in CI".** The OpenAPI document is generated from
+   annotations, which can drift from the `json!` literal beside them.
+   `/v1/select` proves it: the schema says `rows`/`confidence`, the handler
+   sends `edges`/`c_score`. The fixture is a strong starting point and
+   catches renames — but an endpoint that builds its response inline needs
+   a live check too.
+
+### Two traps worth remembering
+
+- **A schema-parse test is not enough when every DTO field is
+  `#[serde(default)]`.** `WarmupResponse` parsed a fully-populated real
+  response as all zeros while the parse test passed. Asserting a value
+  *arrives* is a separate test from asserting the body parses.
+
+- **This dev box produces false SIGSEGVs.** 16 `larql-server` test binaries
+  crash locally on *both* modified branches and pristine upstream; on EC2
+  the same commits are 0 crashes. Local clippy is also unreliable there —
+  nix's `clippy-driver` 1.94 shadows rustup's pinned 1.98 and invents an
+  `E0602 unknown lint` for the workspace's own `allow`. Verify on EC2
+  before believing either signal.
