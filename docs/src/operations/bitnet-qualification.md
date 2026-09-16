@@ -73,43 +73,47 @@ upstream explicitly says is *not* the point:
 The other 24 functions are graph queries. Measured against the same real
 2B model, on a `--level browse` container (30 gate layers x 6912 features):
 
-| query | median | rows |
-|---|---|---|
-| `infer_show_layers` | **28.5 ms** | 30 |
-| `nearest_to` | **51.3 ms** | 5 |
-| `infer_show_features` | **55.0 ms** | 10 |
-| `describe` | **287.9 ms** | 20 |
-| `infer_show_relations` | **444.3 ms** | 50 |
-| `similar_to` | **638.6 ms** | 1 |
-| `walk` | **676.6 ms** | 150 |
-| `infer` (1 token) | 4757 ms | 5 |
+| query | before | **after** | rows |
+|---|---|---|---|
+| `infer_show_layers` | 28.5 ms | **29.3 ms** | 30 |
+| `nearest_to` | 51.3 ms | **35.5 ms** | 5 |
+| `infer_show_features` | 55.0 ms | **55.6 ms** | 10 |
+| `describe` | 287.9 ms | **96.3 ms** | 20 |
+| `infer_show_relations` | 444.3 ms | **442.9 ms** | 50 |
+| `similar_to` | 638.6 ms | **197.6 ms** | 1 |
+| `walk` | 676.6 ms | **198.2 ms** | 150 |
+| `infer` (1 token) | 4757 ms | (unchanged) | 5 |
+
+"after" is with the gate-scan fix described in
+[Closing the bandwidth gap](#closing-the-bandwidth-gap) below. The three
+that did not move (`show_layers`, `show_features`, `show_relations`) do not
+scan gate vectors, which is the confirmation that the fix hit what it
+claimed to.
 
 Spreads under 2 ms on every graph query. Raw:
 [`bench_graph.csv`](bench_graph.csv).
 
-Every graph query is **28--677 ms**: usable inside a real query, not a
-batch job. `describe()` at 288 ms is roughly 16x faster than a single
-generated token on the same hardware, and `show_layers` at 28 ms is
-interactive.
+Every graph query is **29--443 ms**: usable inside a real query, not a
+batch job. `describe()` at 96 ms is ~50x faster than a single generated
+token on the same hardware, and `show_layers` at 29 ms is interactive.
 
 ### Under concurrency
 
 `describe()` from independent `psql` processes, A/B alternated, 3 reps.
 Raw: [`bench_graph_conc.csv`](bench_graph_conc.csv).
 
-| concurrency | qps | p50 | speedup |
-|---|---|---|---|
-| 1 | 3.43 | 0.291s | 1.00x |
-| 2 | 7.37 | 0.270s | 2.15x |
-| 4 | 15.18 | 0.260s | 4.43x |
-| 8 | 29.86 | 0.263s | 8.71x |
-| 16 | **41.39** | 0.268s | 12.07x |
+| concurrency | qps (before) | **qps (after)** | p50 (after) | speedup |
+|---|---|---|---|---|
+| 1 | 3.43 | **9.96** | 0.099s | 1.00x |
+| 2 | 7.37 | **21.08** | 0.093s | 2.12x |
+| 4 | 15.18 | **39.17** | 0.099s | 3.93x |
+| 8 | 29.86 | **62.81** | 0.109s | 6.31x |
+| 16 | 41.39 | **111.29** | 0.110s | 11.18x |
 
-**41 qps at c=16 with p50 flat at ~0.27s.** Super-linear through c=8
-(8.71x on 8 workers) because the single-query path does not saturate a
-core and the server's page cache warms; it falls off to 12.07x at c=16 as
-32 vCPUs start to contend. Latency does not degrade -- p50 is *lower* at
-c=16 than at c=1.
+**111 qps at c=16 with p50 flat at ~0.11s.** Near-linear to c=8, then 11.18x at c=16 as 32 vCPUs begin to contend.
+Latency does not degrade: p50 is *lower* at c=16 (0.110s) than at c=1
+(0.099s is the single-query figure; the difference is scheduling, not
+queueing).
 
 And the assertion that matters more than the throughput:
 
@@ -125,7 +129,7 @@ race in the activation cache or the session overlay.
 
 | use | verdict |
 |---|---|
-| Graph queries (`describe`, `walk`, `similar_to`, `nearest_to`, `show_*`) | **Yes.** 28--677 ms single, 41 qps at c=16, latency flat under load. |
+| Graph queries (`describe`, `walk`, `similar_to`, `nearest_to`, `show_*`) | **Yes.** 29--443 ms single, 111 qps at c=16, latency flat under load. |
 | Generation (`infer`) on **arm64** | Plausible -- NEON kernels exist; unmeasured here. |
 | Generation (`infer`) on **x86_64** | **No.** ~1 tok/s, scalar kernel. Use a served model. |
 
@@ -136,6 +140,118 @@ b1.58 is a heavily-quantised 2B; the feature-labelling heuristics were
 tuned on Gemma-class models. **The mechanism works; do not read these
 particular labels as a quality benchmark.** A Gemma 3 4B browse vindex
 would be the fair test of output quality.
+
+## Closing the bandwidth gap
+
+The first pass of this page measured `describe()` at 288 ms and computed
+that as ~3.3 GB/s effective, against 200+ GB/s available. That gap was not
+physics; it was two implementation bugs, both in the gate scan.
+
+**1. A transpose defeated BLAS.** `gemv` was
+`matmul_transb(vec.reshape(1, hidden), gate)`, i.e. `a.dot(&b.t())` with
+`a` shaped `[1, hidden]`. ndarray only dispatches to BLAS when the operand
+layouts qualify, and that shape does not reach `sgemv`. Timed on one real
+layer (6912 features x 2560 dims, f32):
+
+| form | ms/layer | effective |
+|---|---|---|
+| `a.dot(&b.t())` (was) | 15.5 | 4.6 GB/s |
+| `gate.dot(&vec)` (is) | **3.3** | **21.4 GB/s** |
+| hand-rolled row dot | 9.8 | 7.2 GB/s |
+
+4.7x on the kernel from deleting a reshape. Worth noting the hand-rolled
+scalar loop beat the original BLAS call -- which is the tell that the
+original was not reaching BLAS at all.
+
+**2. f16 layers cloned the entire gate matrix per query.** The zero-copy
+path only handled f32, so every f16 layer fell through to `resolve_gate`,
+which ends in `cache[layer].as_ref().unwrap().clone()` -- a full f32 copy
+of the layer. At this shape that is ~71 MB per layer per call, so a
+12-layer `describe()` spent ~850 MB on allocation and memcpy before
+scoring a single feature. The *decode* was already cached; it was purely
+the copy.
+
+Fixed in [gburd/larql `perf/gate-scan`](https://github.com/gburd/larql/tree/perf/gate-scan).
+Correctness is unchanged -- identical edges and scores (`Zone` 332.80 L22
+remains the top edge for `France`), 4736 `larql-vindex` tests pass, and 93
+concurrent queries still return exactly one distinct answer.
+
+### What is still on the table
+
+The scan is now bandwidth-sane but still **single-threaded** (~15% of a
+32-vCPU box under 8 concurrent requests) and still **O(all features)**.
+Two further changes, neither attempted:
+
+- **Parallelise across layers.** A 12-layer `describe()` is 12 independent
+  gemv calls. `rayon` over layers should give most of another order of
+  magnitude on a many-core host.
+- **An ANN index that beats a full scan.** larql has `--hnsw`, but its own
+  docs say it is "break-even or net loss for dense <= 10K-feature models",
+  and this one has 6912. So HNSW is not the answer at this shape; a
+  different index would be.
+
+## Batching: making joins affordable
+
+Separately from the kernel, `describe()` has a fixed per-call latency and
+PostgreSQL evaluates a set-returning function once per row. So
+
+```sql
+SELECT p.sku, d.* FROM products p, describe(p.title) d;
+```
+
+pays that latency once per row, **sequentially**. `describe_many()` issues
+the requests concurrently over one connection and returns an `entity`
+column so the result joins back:
+
+| N | sequential | batched | speedup |
+|---|---|---|---|
+| 1 | 99.6 ms | 98.5 ms | 1.01x |
+| 2 | 197.7 ms | 91.9 ms | 2.15x |
+| 5 | 493.7 ms | 104.7 ms | 4.72x |
+| 10 | 992.5 ms | **116.8 ms** | **8.50x** |
+
+Sequential scales linearly; batched is nearly flat -- 98 -> 117 ms across a
+10x increase in N. Content is identical, verified edge-by-edge rather than
+by row count.
+
+Also: the 14 read-only SQL functions are now `STABLE PARALLEL SAFE` rather
+than pgrx's default `VOLATILE`, so PostgreSQL may cache a repeated call,
+hoist a constant-argument call out of a loop, and run them under `Gather`.
+
+## Would ds4 (DwarfStar) help?
+
+[antirez/ds4](https://github.com/antirez/ds4) is a native inference engine
+for DeepSeek V4 / GLM 5.x on Metal, CUDA and ROCm. It is genuinely fast at
+what it does. It would **not** help pg_infer, for a structural reason
+rather than a quality one.
+
+ds4 is a *generation* engine. Its HTTP surface is
+`/v1/{chat/completions,completions,messages,models,responses}` -- there is
+no `/v1/embeddings`, and no access to per-feature internals at all
+(checked: no gate-KNN, no feature metadata, no interpretability surface).
+pg_infer's 24 graph functions need exactly what ds4 does not expose: the
+gate vectors, per-feature metadata, and the ability to score a residual
+against every feature in a layer.
+
+The two projects optimise different axes:
+
+| | ds4 | larql + pg_infer |
+|---|---|---|
+| optimises | tokens/sec | queries over model internals |
+| exposes | text completions | gate KNN, feature metadata, edges |
+| bottleneck | dense matmul bandwidth | gate-scan bandwidth |
+
+Swapping larql for ds4 would make `infer()` much faster and delete
+`describe()`, `walk()`, `similar_to()` and the rest. Since generation is
+the *one* pg_infer function that is not the point, that is the wrong
+trade.
+
+Where ds4 *would* fit is alongside: if a deployment wants both
+"interpret the model as a graph" and "generate text quickly", run larql for
+the former and ds4 behind an OpenAI-compatible endpoint for the latter.
+pg_infer already speaks that protocol via `larql-cloud --proxy`, so ds4
+could serve `infer()` while larql serves the graph surface. That is a
+deployment choice, not a code change.
 
 ## Decode throughput
 
@@ -256,4 +372,4 @@ weights"). Serving both surfaces means two containers.
 
 Scripts: `scripts/verify_bitnet.py`, `scripts/bench_bitnet.py`,
 `scripts/bench_pg_infer.py`, `scripts/bench_graph.py`,
-`scripts/bench_graph_conc.py`.
+`scripts/bench_graph_conc.py`, `scripts/bench_batch.py`.
