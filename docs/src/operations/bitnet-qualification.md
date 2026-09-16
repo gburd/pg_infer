@@ -182,9 +182,9 @@ The scan is now bandwidth-sane but still **single-threaded** (~15% of a
 32-vCPU box under 8 concurrent requests) and still **O(all features)**.
 Two further changes, neither attempted:
 
-- **Parallelise across layers.** A 12-layer `describe()` is 12 independent
-  gemv calls. `rayon` over layers should give most of another order of
-  magnitude on a many-core host.
+- ~~**Parallelise across layers.**~~ **Done** — 12.29x on latency, but
+  ~1.07x on saturated throughput. See
+  [Can it reach 300x?](#can-it-reach-300x-parallelism-vs-the-bandwidth-wall).
 - **An ANN index that beats a full scan.** larql has `--hnsw`, but its own
   docs say it is "break-even or net loss for dense <= 10K-feature models",
   and this one has 6912. So HNSW is not the answer at this shape; a
@@ -217,6 +217,72 @@ by row count.
 Also: the 14 read-only SQL functions are now `STABLE PARALLEL SAFE` rather
 than pgrx's default `VOLATILE`, so PostgreSQL may cache a repeated call,
 hoist a constant-argument call out of a loop, and run them under `Gather`.
+
+## Can it reach 300x? (parallelism vs the bandwidth wall)
+
+Asked directly: what would it take to get ~300x and make this viable for
+OLTP at Amazon scale. The answer is that **300x on throughput is not
+reachable by parallelism**, and this is measured rather than argued.
+
+Rayon across layers was the obvious next lever, so it was implemented and
+A/B'd (binaries alternated within each rep, 5 reps, medians):
+
+| | before | after | |
+|---|---|---|---|
+| latency, 12 layers | 72.3 ms | **13.0 ms** | 5.56x |
+| latency, 30 layers | 177.1 ms | **14.4 ms** | **12.29x** |
+
+| throughput | before | after | |
+|---|---|---|---|
+| c=1 | 13.6 qps | 73.6 qps | 5.40x |
+| c=4 | 52.9 qps | 156.6 qps | 2.96x |
+| c=16 | 157.4 qps | 199.1 qps | 1.27x |
+| c=32 | 195.7 qps | 210.2 qps | **1.07x** |
+
+The latency win is large. The throughput speedup **decays to 1.0** exactly
+where it would need to hold, and both binaries converge on ~200 qps.
+
+That number is the wall. 200 qps x 849 MB/query is ~170 GB/s, at or past
+what this instance class sustains -- and it matches the earlier observation
+that the scan ran at 15% CPU on 32 vCPUs: threads stalled on memory, not
+busy. Parallelism fills idle cores when queries are few; at c=32 there are
+none to fill.
+
+### The only lever that reaches an order of magnitude
+
+Throughput is `bandwidth / bytes-per-query`. Bandwidth is fixed, so the
+only variable is bytes:
+
+| approach | bytes/query | qps/host at ~94 GB/s | vs today |
+|---|---|---|---|
+| full scan, f32 cached (today) | 849 MB | ~111--200 | 1x |
+| f16 scored in place | 425 MB | ~220--400 | 2x |
+| ANN, top 1% of features | 8.5 MB | ~11,000 | 100x |
+| ANN, top 0.1% | 0.85 MB | ~110,000 | ~1000x |
+
+So 300x exists, but only through sparse retrieval -- not scanning every
+feature. Two caveats:
+
+1. larql's `--hnsw` is **not** that index at this shape. Its own CLI doc
+   says "break-even or net loss for dense <= 10K-feature models" and this
+   model has 6912 features per layer.
+2. An ANN index over gate vectors is *precomputation*. And precomputing
+   `describe()` into a regular indexed table is already ~0.1 ms per lookup
+   with zero marginal cost, which is strictly better for the OLTP case.
+
+### Revised verdict
+
+| use | verdict |
+|---|---|
+| Interactive graph queries (analyst, dashboard, one row at a time) | **Yes, comfortably.** 13--18 ms. |
+| Batch/ETL enrichment over many rows | **Yes.** `describe_many` amortises; ~200 qps/host. |
+| Per-row inference inside an OLTP join at 100k qps | **No, and not with a faster kernel.** ~500 hosts at the measured ceiling. Precompute instead. |
+
+The gap between the first two rows and the third is architectural, not a
+constant factor. What the work in this chapter bought is a **26x latency
+improvement** (177 ms -> 14 ms at 30 layers) and ~2x throughput, which
+moves pg_infer decisively into "usable in an interactive query" without
+moving it into "usable per-row at Amazon scale".
 
 ## Would ds4 (DwarfStar) help?
 
