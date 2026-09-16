@@ -18,7 +18,7 @@ use crate::registry;
 /// SELECT * FROM nearest_to('France', layer => 20, top => 20);
 /// SELECT * FROM nearest_to('France', layer => 20, model => 'llama8b');
 /// ```
-#[pg_extern]
+#[pg_extern(stable, parallel_safe)]
 fn nearest_to(
     entity: &str,
     layer: i32,

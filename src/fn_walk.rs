@@ -12,7 +12,7 @@ use crate::registry;
 /// SELECT * FROM walk('The capital of France is', top => 10);
 /// SELECT * FROM walk('Hello world', top => 5, model => 'qwen05b');
 /// ```
-#[pg_extern]
+#[pg_extern(stable, parallel_safe)]
 #[tracing::instrument(skip_all, fields(prompt_len = prompt.len(), top_k = top, model = model.unwrap_or("default")))]
 fn walk(
     prompt: &str,
@@ -111,7 +111,7 @@ pub(crate) fn mmap_walk(
 /// SELECT * FROM infer_explain_walk('The capital of France is', top => 5);
 /// SELECT * FROM infer_explain_walk('France', top => 3, model => 'llama8b');
 /// ```
-#[pg_extern]
+#[pg_extern(stable, parallel_safe)]
 #[tracing::instrument(skip_all, fields(prompt_len = prompt.len(), top_k = top, model = model.unwrap_or("default")))]
 fn infer_explain_walk(
     prompt: &str,

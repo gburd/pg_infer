@@ -18,7 +18,7 @@ use crate::registry;
 /// SELECT * FROM infer_show_layers();
 /// SELECT * FROM infer_show_layers(model => 'qwen05b');
 /// ```
-#[pg_extern]
+#[pg_extern(stable, parallel_safe)]
 fn infer_show_layers(
     model: default!(Option<&str>, "NULL"),
 ) -> Result<
@@ -78,7 +78,7 @@ pub(crate) fn mmap_show_layers(
 /// SELECT * FROM infer_show_features(20);
 /// SELECT * FROM infer_show_features(20, filter => 'capital', top => 50);
 /// ```
-#[pg_extern]
+#[pg_extern(stable, parallel_safe)]
 fn infer_show_features(
     layer: i32,
     filter: default!(Option<&str>, "NULL"),
@@ -184,7 +184,7 @@ pub(crate) fn mmap_show_features(
 /// SELECT * FROM infer_show_relations();
 /// SELECT * FROM infer_show_relations(model => 'llama8b');
 /// ```
-#[pg_extern]
+#[pg_extern(stable, parallel_safe)]
 fn infer_show_relations(
     model: default!(Option<&str>, "NULL"),
 ) -> Result<

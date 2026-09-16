@@ -18,7 +18,7 @@ use crate::registry;
 /// SELECT * FROM products
 ///     WHERE similar_to(category, 'AI') > 15.0;
 /// ```
-#[pg_extern]
+#[pg_extern(stable, parallel_safe)]
 #[tracing::instrument(skip_all, fields(a = a, b = b, model = model.unwrap_or("default")))]
 fn similar_to(
     a: &str,
@@ -51,7 +51,7 @@ fn similar_to(
 ///   ) t
 ///   ORDER BY score DESC LIMIT 5;
 /// ```
-#[pg_extern]
+#[pg_extern(stable, parallel_safe)]
 #[tracing::instrument(skip_all, fields(num_candidates = candidates.len(), query = query, model = model.unwrap_or("default")))]
 fn similar_to_many(
     candidates: Vec<Option<String>>,
@@ -74,8 +74,9 @@ fn similar_to_many(
         }
     }
 
-    let scores =
-        registry::with_backend(&model_name, |backend| backend.similar_to_many(&non_null, query))?;
+    let scores = registry::with_backend(&model_name, |backend| {
+        backend.similar_to_many(&non_null, query)
+    })?;
 
     // Re-interleave NULLs.
     let mut out = Vec::with_capacity(candidates.len());
@@ -178,8 +179,7 @@ fn compute_layer_similarity(
     let hits_b = handle.gate_knn(layer, embed_b, top_k);
 
     // Build a set of feature indices activated by B.
-    let set_b: std::collections::HashSet<usize> =
-        hits_b.iter().map(|&(idx, _)| idx).collect();
+    let set_b: std::collections::HashSet<usize> = hits_b.iter().map(|&(idx, _)| idx).collect();
 
     // Find overlapping features and return the maximum shared score.
     let mut max_shared = 0.0f32;
@@ -269,7 +269,7 @@ pub(crate) fn score_to_distance(score: f64) -> f64 {
 }
 
 /// Distance function for the `<~>` operator (lower = more similar).
-#[pg_extern]
+#[pg_extern(stable, parallel_safe)]
 fn infer_distance(a: &str, b: &str) -> Result<f64, Box<dyn std::error::Error>> {
     let model_name = registry::resolve_model_name(None)?;
     let score = registry::with_backend(&model_name, |backend| backend.similar_to(a, b))?;
@@ -281,7 +281,7 @@ fn infer_distance(a: &str, b: &str) -> Result<f64, Box<dyn std::error::Error>> {
 ///
 /// Complement to `<~>` (distance).  Useful for `WHERE col <~ 'query' > threshold`
 /// patterns where you want to filter by similarity rather than sort by distance.
-#[pg_extern]
+#[pg_extern(stable, parallel_safe)]
 fn infer_similarity(a: &str, b: &str) -> Result<f64, Box<dyn std::error::Error>> {
     let model_name = registry::resolve_model_name(None)?;
     let score = registry::with_backend(&model_name, |backend| backend.similar_to(a, b))?;

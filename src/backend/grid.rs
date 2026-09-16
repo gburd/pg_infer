@@ -202,8 +202,7 @@ fn discover_and_update(
     // add new ones, remove stale ones.
     let existing_urls: std::collections::HashSet<String> =
         table.servers.iter().map(|s| s.url.clone()).collect();
-    let new_urls: std::collections::HashSet<String> =
-        discovered.iter().cloned().collect();
+    let new_urls: std::collections::HashSet<String> = discovered.iter().cloned().collect();
 
     // Remove stale servers.
     table.servers.retain(|s| new_urls.contains(&s.url));
@@ -339,6 +338,24 @@ impl Backend for GridBackend {
         self.with_server(|s| s.describe(entity, explicit_threshold))
     }
 
+    /// Forwarded so the batch reaches `RemoteBackend::describe_many`'s
+    /// pipelining. Without this override the trait default would loop
+    /// `describe`, i.e. one round trip per entity — the exact cost the
+    /// batch exists to avoid.
+    ///
+    /// The whole batch goes to one server rather than being split across
+    /// the route table: every server hosts the same model here, so
+    /// splitting buys nothing and would multiply connections.
+    /// ponytail: revisit if a batch ever exceeds one server's useful
+    /// concurrency, at which point chunking across servers is the fix.
+    fn describe_many(
+        &self,
+        entities: &[String],
+        explicit_threshold: Option<f64>,
+    ) -> Result<Vec<Vec<Edge>>, PgInferError> {
+        self.with_server(|s| s.describe_many(entities, explicit_threshold))
+    }
+
     fn walk(&self, prompt: &str, top_k: usize) -> Result<Vec<Hit>, PgInferError> {
         self.with_server(|s| s.walk(prompt, top_k))
     }
@@ -360,7 +377,11 @@ impl Backend for GridBackend {
         self.with_server(|s| s.similar_to(a, b))
     }
 
-    fn similar_to_many(&self, candidates: &[String], query: &str) -> Result<Vec<f64>, PgInferError> {
+    fn similar_to_many(
+        &self,
+        candidates: &[String],
+        query: &str,
+    ) -> Result<Vec<f64>, PgInferError> {
         self.with_server(|s| s.similar_to_many(candidates, query))
     }
 

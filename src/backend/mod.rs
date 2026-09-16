@@ -136,6 +136,29 @@ pub trait Backend: Send + Sync {
         explicit_threshold: Option<f64>,
     ) -> Result<Vec<Edge>, PgInferError>;
 
+    /// Describe many entities in one call.
+    ///
+    /// Returns one `Vec<Edge>` per input, in input order. The default
+    /// implementation loops `describe`, which is correct everywhere and is
+    /// what local backends want (the work is already in-process).
+    ///
+    /// Remote backends override it to pipeline the requests over one
+    /// connection. That is the difference between usable and unusable in a
+    /// join: `describe()` is per-entity work with a fixed per-call latency,
+    /// so a 100-row join pays that latency 100 times sequentially. Issuing
+    /// them concurrently turns N round trips into roughly one.
+    fn describe_many(
+        &self,
+        entities: &[String],
+        explicit_threshold: Option<f64>,
+    ) -> Result<Vec<Vec<Edge>>, PgInferError> {
+        let mut out = Vec::with_capacity(entities.len());
+        for e in entities {
+            out.push(self.describe(e, explicit_threshold)?);
+        }
+        Ok(out)
+    }
+
     fn walk(&self, prompt: &str, top_k: usize) -> Result<Vec<Hit>, PgInferError>;
 
     fn explain_walk(&self, prompt: &str, top_k: usize) -> Result<Vec<ExplainedHit>, PgInferError>;
@@ -152,8 +175,15 @@ pub trait Backend: Send + Sync {
     /// Compute `similar_to(cand, query)` for each candidate.  Default
     /// implementation just loops; backends that can overlap network
     /// round trips (remote) override this to fan out concurrently.
-    fn similar_to_many(&self, candidates: &[String], query: &str) -> Result<Vec<f64>, PgInferError> {
-        candidates.iter().map(|c| self.similar_to(c, query)).collect()
+    fn similar_to_many(
+        &self,
+        candidates: &[String],
+        query: &str,
+    ) -> Result<Vec<f64>, PgInferError> {
+        candidates
+            .iter()
+            .map(|c| self.similar_to(c, query))
+            .collect()
     }
 
     fn implies(&self, subject: &str, object: &str) -> Result<bool, PgInferError>;
@@ -188,8 +218,10 @@ pub trait Backend: Send + Sync {
     ) -> Result<Vec<FeatureRow>, PgInferError>;
 
     /// Used by `infer_diff()`.  Remote backends return `Unsupported`.
-    fn snapshot_features(&self, layer_filter: Option<i32>)
-        -> Result<Vec<FeatureSnapshot>, PgInferError>;
+    fn snapshot_features(
+        &self,
+        layer_filter: Option<i32>,
+    ) -> Result<Vec<FeatureSnapshot>, PgInferError>;
 
     /// Used by `infer_diff()`.  Remote backends return `Unsupported`.
     fn feature_meta_at(&self, layer: usize, feature: usize) -> Option<FeatureMetaLite>;
@@ -328,10 +360,26 @@ mod contract_tests {
 
         fn show_layers(&self) -> Result<Vec<LayerInfo>, PgInferError> {
             Ok(vec![
-                LayerInfo { layer: 0, band: "syntax".into(), num_features: 100 },
-                LayerInfo { layer: 1, band: "syntax".into(), num_features: 100 },
-                LayerInfo { layer: 2, band: "knowledge".into(), num_features: 100 },
-                LayerInfo { layer: 3, band: "output".into(), num_features: 100 },
+                LayerInfo {
+                    layer: 0,
+                    band: "syntax".into(),
+                    num_features: 100,
+                },
+                LayerInfo {
+                    layer: 1,
+                    band: "syntax".into(),
+                    num_features: 100,
+                },
+                LayerInfo {
+                    layer: 2,
+                    band: "knowledge".into(),
+                    num_features: 100,
+                },
+                LayerInfo {
+                    layer: 3,
+                    band: "output".into(),
+                    num_features: 100,
+                },
             ])
         }
 
@@ -415,11 +463,21 @@ mod contract_tests {
             chars_b.sort();
             // Produce a deterministic symmetric score
             let combined: String = if chars_a <= chars_b {
-                format!("{}{}", chars_a.iter().collect::<String>(), chars_b.iter().collect::<String>())
+                format!(
+                    "{}{}",
+                    chars_a.iter().collect::<String>(),
+                    chars_b.iter().collect::<String>()
+                )
             } else {
-                format!("{}{}", chars_b.iter().collect::<String>(), chars_a.iter().collect::<String>())
+                format!(
+                    "{}{}",
+                    chars_b.iter().collect::<String>(),
+                    chars_a.iter().collect::<String>()
+                )
             };
-            let hash = combined.bytes().fold(0u64, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u64));
+            let hash = combined
+                .bytes()
+                .fold(0u64, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u64));
             Ok((hash % 1000) as f64 / 100.0) // Score in [0, 10)
         }
 
@@ -440,15 +498,13 @@ mod contract_tests {
         }
 
         fn show_relations(&self) -> Result<Vec<RelationRow>, PgInferError> {
-            Ok(vec![
-                RelationRow {
-                    relation: "is_a".into(),
-                    count: 50,
-                    max_score: 0.95,
-                    layers: "2,3".into(),
-                    examples: "cat→animal, dog→animal".into(),
-                },
-            ])
+            Ok(vec![RelationRow {
+                relation: "is_a".into(),
+                count: 50,
+                max_score: 0.95,
+                layers: "2,3".into(),
+                examples: "cat→animal, dog→animal".into(),
+            }])
         }
 
         fn show_features(
@@ -521,7 +577,10 @@ mod contract_tests {
         assert!(
             (ab - ba).abs() < 1e-10,
             "similar_to not symmetric: ({}, {}) → {ab}, ({}, {}) → {ba}",
-            "cat", "dog", "dog", "cat",
+            "cat",
+            "dog",
+            "dog",
+            "cat",
         );
     }
 
@@ -541,7 +600,9 @@ mod contract_tests {
             assert!(
                 (batch_scores[i] - individual).abs() < 1e-10,
                 "similar_to_many[{i}] ({}) = {} but similar_to = {}",
-                candidate, batch_scores[i], individual,
+                candidate,
+                batch_scores[i],
+                individual,
             );
         }
     }
@@ -582,7 +643,11 @@ mod contract_tests {
 
         // All indices should be valid
         for r in &ranked {
-            assert!(r.index < candidates.len(), "rank index out of bounds: {}", r.index);
+            assert!(
+                r.index < candidates.len(),
+                "rank index out of bounds: {}",
+                r.index
+            );
         }
     }
 

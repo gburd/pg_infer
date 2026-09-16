@@ -404,6 +404,81 @@ impl Backend for RemoteBackend {
             .collect())
     }
 
+    /// Pipelined `describe` for many entities — one batch, N concurrent
+    /// requests over the same connection (HTTP/2 multiplexed, or
+    /// concurrent over UDS).
+    ///
+    /// This is the difference between `describe()` being a per-row cost
+    /// and a per-statement one. Sequentially, a 100-entity join pays the
+    /// full round trip 100 times; batched it pays roughly one, bounded by
+    /// the slowest response rather than their sum.
+    fn describe_many(
+        &self,
+        entities: &[String],
+        explicit_threshold: Option<f64>,
+    ) -> Result<Vec<Vec<Edge>>, PgInferError> {
+        if entities.is_empty() {
+            return Ok(Vec::new());
+        }
+        let threshold = explicit_threshold
+            .filter(|t| *t > 0.0)
+            .map(|t| t as f32)
+            .unwrap_or(0.0);
+        let top_k = crate::gucs::describe_top_k();
+
+        let items: Vec<BatchItem> = entities
+            .iter()
+            .map(|entity| {
+                let mut url = format!(
+                    "/v1/describe?entity={}&limit={}",
+                    urlencoding(entity),
+                    top_k
+                );
+                if threshold > 0.0 {
+                    url.push_str(&format!("&min_score={threshold}"));
+                }
+                BatchItem {
+                    url,
+                    method: Method::Get,
+                    body: None,
+                }
+            })
+            .collect();
+
+        let cancel = self.cancel_for_current_call();
+        let results: Vec<Result<infer_client::DescribeResponse, _>> = self
+            .client
+            .batch_with_tick(items, &cancel, crate::interrupt::pg_interrupt_tick)
+            .map_err(map_err)?;
+
+        // Preserve input order and surface the first failure rather than
+        // silently returning a short list — a caller joining on this needs
+        // to know a row is missing, not infer it from a count.
+        let mut out = Vec::with_capacity(entities.len());
+        for r in results {
+            let resp = r.map_err(map_err)?;
+            out.push(
+                resp.edges
+                    .into_iter()
+                    .map(|e| Edge {
+                        relation: e.relation,
+                        target: e.target,
+                        gate_score: e.gate_score as f64,
+                        layer: e.layer as i32,
+                    })
+                    .collect(),
+            );
+        }
+        if out.len() != entities.len() {
+            return Err(PgInferError::Remote(format!(
+                "describe batch returned {} results for {} entities",
+                out.len(),
+                entities.len()
+            )));
+        }
+        Ok(out)
+    }
+
     fn walk(&self, prompt: &str, top_k: usize) -> Result<Vec<Hit>, PgInferError> {
         let path = format!("/v1/walk?prompt={}&top={}", urlencoding(prompt), top_k);
         let resp: infer_client::WalkResponse = self.get_json(&path)?;

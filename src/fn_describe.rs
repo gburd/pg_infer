@@ -25,7 +25,7 @@ use crate::registry;
 /// SELECT * FROM describe('Einstein', model => 'llama3_8b');
 /// SELECT * FROM describe('France', threshold => 0.01);
 /// ```
-#[pg_extern]
+#[pg_extern(stable, parallel_safe)]
 #[tracing::instrument(skip_all, fields(entity = entity, model = model.unwrap_or("default")))]
 fn describe(
     entity: &str,
@@ -154,11 +154,7 @@ pub(crate) fn mmap_describe(
         .map(|(target, score, layer, _count, secondaries)| {
             let sec_refs: Vec<&str> = secondaries.iter().map(|s| s.as_str()).collect();
             let relation = crate::relation_classify::classify_relation(
-                layer,
-                num_layers,
-                &target,
-                score,
-                &sec_refs,
+                layer, num_layers, &target, score, &sec_refs,
             );
             crate::backend::Edge {
                 relation: relation.to_string(),
@@ -182,7 +178,7 @@ pub(crate) fn mmap_describe(
 /// SELECT * FROM describe_layers('France');
 /// SELECT * FROM describe_layers('Einstein', model => 'llama3_8b', threshold => 0.01);
 /// ```
-#[pg_extern]
+#[pg_extern(stable, parallel_safe)]
 #[tracing::instrument(skip_all, fields(entity = entity, model = model.unwrap_or("default")))]
 fn describe_layers(
     entity: &str,
@@ -287,7 +283,11 @@ pub(crate) fn mmap_describe_layers(
     }
 
     // Sort by gate score descending.
-    results.sort_by(|a, b| b.gate_score.partial_cmp(&a.gate_score).unwrap_or(std::cmp::Ordering::Equal));
+    results.sort_by(|a, b| {
+        b.gate_score
+            .partial_cmp(&a.gate_score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     Ok(results)
 }
@@ -311,10 +311,7 @@ fn resolve_threshold(explicit: Option<f64>, hits: &[(usize, usize, f32)]) -> f32
     }
 
     // Adaptive: 10% of the maximum observed score.
-    let max_score = hits
-        .iter()
-        .map(|&(_, _, s)| s)
-        .fold(0.0_f32, f32::max);
+    let max_score = hits.iter().map(|&(_, _, s)| s).fold(0.0_f32, f32::max);
 
     if max_score > 0.0 {
         max_score * 0.1
@@ -323,3 +320,80 @@ fn resolve_threshold(explicit: Option<f64>, hits: &[(usize, usize, f32)]) -> f32
     }
 }
 
+/// Describe many entities in one call, pipelined.
+///
+/// The join-shaped form of [`describe`]. `describe()` is per-entity work
+/// with a fixed per-call latency, and PostgreSQL evaluates a set-returning
+/// function once per row, so
+///
+/// ```sql
+/// SELECT p.sku, d.* FROM products p, describe(p.title) d;   -- N round trips
+/// ```
+///
+/// pays that latency once per row, sequentially. This issues them
+/// concurrently over one connection instead:
+///
+/// ```sql
+/// SELECT * FROM describe_many(ARRAY(SELECT title FROM products LIMIT 100));
+/// ```
+///
+/// The extra `entity` column identifies which input each edge came from, so
+/// the result joins back:
+///
+/// ```sql
+/// WITH d AS (SELECT * FROM describe_many(ARRAY(SELECT title FROM products)))
+/// SELECT p.sku, d.relation, d.target
+///   FROM products p JOIN d ON d.entity = p.title;
+/// ```
+///
+/// Against a local backend this is exactly a loop — the work is already
+/// in-process and there is no round trip to amortise. The gain is on
+/// remote and grid backends.
+#[pg_extern(stable, parallel_safe)]
+#[tracing::instrument(skip_all, fields(n = entities.len(), model = model.unwrap_or("default")))]
+fn describe_many(
+    entities: Vec<String>,
+    model: default!(Option<&str>, "NULL"),
+    threshold: default!(Option<f64>, "NULL"),
+) -> Result<
+    TableIterator<
+        'static,
+        (
+            name!(entity, String),
+            name!(relation, String),
+            name!(target, String),
+            name!(confidence, f64),
+            name!(layer, i32),
+        ),
+    >,
+    Box<dyn std::error::Error>,
+> {
+    if entities.is_empty() {
+        return Ok(TableIterator::new(Vec::new()));
+    }
+    let model_name = registry::resolve_model_name(model)?;
+
+    let per_entity = registry::with_backend(&model_name, |backend| {
+        backend.describe_many(&entities, threshold)
+    })?;
+
+    // Flatten, tagging each edge with the entity it came from. The
+    // backend contract guarantees one result per input in input order,
+    // so zip is safe; it checks that rather than assuming it.
+    if per_entity.len() != entities.len() {
+        return Err(format!(
+            "backend returned {} result sets for {} entities",
+            per_entity.len(),
+            entities.len()
+        )
+        .into());
+    }
+    let mut rows = Vec::new();
+    for (entity, edges) in entities.into_iter().zip(per_entity) {
+        for e in edges {
+            rows.push((entity.clone(), e.relation, e.target, e.gate_score, e.layer));
+        }
+    }
+
+    Ok(TableIterator::new(rows))
+}

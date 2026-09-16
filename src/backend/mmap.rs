@@ -83,7 +83,9 @@ impl Backend for MmapBackend {
     fn implies(&self, subject: &str, object: &str) -> Result<bool, PgInferError> {
         let object_lower = object.to_lowercase();
         let edges = self.describe(subject, None)?;
-        Ok(edges.iter().any(|e| e.target.to_lowercase() == object_lower))
+        Ok(edges
+            .iter()
+            .any(|e| e.target.to_lowercase() == object_lower))
     }
 
     fn describe_layers(
@@ -120,10 +122,12 @@ impl Backend for MmapBackend {
     }
 
     fn feature_meta_at(&self, layer: usize, feature: usize) -> Option<FeatureMetaLite> {
-        self.handle.feature_meta(layer, feature).map(|m| FeatureMetaLite {
-            top_token: m.top_token,
-            c_score: m.c_score,
-        })
+        self.handle
+            .feature_meta(layer, feature)
+            .map(|m| FeatureMetaLite {
+                top_token: m.top_token,
+                c_score: m.c_score,
+            })
     }
 
     fn embed(&self, text: &str) -> Result<Array1<f32>, PgInferError> {

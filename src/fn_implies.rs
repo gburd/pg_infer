@@ -12,7 +12,7 @@ use crate::registry;
 /// SELECT implies('France', 'Paris');         -- true
 /// SELECT implies('France', 'banana');        -- false
 /// ```
-#[pg_extern]
+#[pg_extern(stable, parallel_safe)]
 #[tracing::instrument(skip_all, fields(subject = subject, object = object, model = model.unwrap_or("default")))]
 fn implies(
     subject: &str,
@@ -21,9 +21,7 @@ fn implies(
 ) -> Result<bool, Box<dyn std::error::Error>> {
     let model_name = registry::resolve_model_name(model)?;
 
-    let result = registry::with_backend(&model_name, |backend| {
-        backend.implies(subject, object)
-    })?;
+    let result = registry::with_backend(&model_name, |backend| backend.implies(subject, object))?;
 
     Ok(result)
 }
@@ -35,9 +33,7 @@ fn implies(
 #[pg_extern]
 fn infer_implies_op(left: &str, right: &str) -> Result<bool, Box<dyn std::error::Error>> {
     let model_name = registry::resolve_model_name(None)?;
-    let result = registry::with_backend(&model_name, |backend| {
-        backend.implies(left, right)
-    })?;
+    let result = registry::with_backend(&model_name, |backend| backend.implies(left, right))?;
     Ok(result)
 }
 
