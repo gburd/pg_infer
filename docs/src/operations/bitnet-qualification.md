@@ -56,6 +56,87 @@ SELECT * FROM infer('The capital of France is', 3, 'bitnet');
 
 (`Ġ` is GPT-2 byte-BPE for a leading space.)
 
+## Is it fast enough to use in practice?
+
+Yes for the graph surface, no for generation on x86 — and the first is what
+pg_infer is for.
+
+**The earlier decode numbers on this page measure the wrong thing.** They
+measure `infer()`, which is 1 of pg_infer's 26 SQL functions, and the one
+upstream explicitly says is *not* the point:
+
+> Thesis: the differentiated functionality is the database, not the tok/s.
+> [...] "query, edit, and interpret the model like a graph database" --
+> `DESCRIBE`, `INSERT INTO EDGES`, `walk` -- is a genuine moat with **no
+> competitor**. -- larql `ROADMAP.md`
+
+The other 24 functions are graph queries. Measured against the same real
+2B model, on a `--level browse` container (30 gate layers x 6912 features):
+
+| query | median | rows |
+|---|---|---|
+| `infer_show_layers` | **28.5 ms** | 30 |
+| `nearest_to` | **51.3 ms** | 5 |
+| `infer_show_features` | **55.0 ms** | 10 |
+| `describe` | **287.9 ms** | 20 |
+| `infer_show_relations` | **444.3 ms** | 50 |
+| `similar_to` | **638.6 ms** | 1 |
+| `walk` | **676.6 ms** | 150 |
+| `infer` (1 token) | 4757 ms | 5 |
+
+Spreads under 2 ms on every graph query. Raw:
+[`bench_graph.csv`](bench_graph.csv).
+
+Every graph query is **28--677 ms**: usable inside a real query, not a
+batch job. `describe()` at 288 ms is roughly 16x faster than a single
+generated token on the same hardware, and `show_layers` at 28 ms is
+interactive.
+
+### Under concurrency
+
+`describe()` from independent `psql` processes, A/B alternated, 3 reps.
+Raw: [`bench_graph_conc.csv`](bench_graph_conc.csv).
+
+| concurrency | qps | p50 | speedup |
+|---|---|---|---|
+| 1 | 3.43 | 0.291s | 1.00x |
+| 2 | 7.37 | 0.270s | 2.15x |
+| 4 | 15.18 | 0.260s | 4.43x |
+| 8 | 29.86 | 0.263s | 8.71x |
+| 16 | **41.39** | 0.268s | 12.07x |
+
+**41 qps at c=16 with p50 flat at ~0.27s.** Super-linear through c=8
+(8.71x on 8 workers) because the single-query path does not saturate a
+core and the server's page cache warms; it falls off to 12.07x at c=16 as
+32 vCPUs start to contend. Latency does not degrade -- p50 is *lower* at
+c=16 than at c=1.
+
+And the assertion that matters more than the throughput:
+
+```
+DISTINCT ANSWERS ACROSS 93 QUERIES: {'|Zone|332.80'}
+```
+
+One answer. A qps figure cannot tell you whether concurrency changed the
+result; asserting a single answer across every level is what rules out a
+race in the activation cache or the session overlay.
+
+### So, practically
+
+| use | verdict |
+|---|---|
+| Graph queries (`describe`, `walk`, `similar_to`, `nearest_to`, `show_*`) | **Yes.** 28--677 ms single, 41 qps at c=16, latency flat under load. |
+| Generation (`infer`) on **arm64** | Plausible -- NEON kernels exist; unmeasured here. |
+| Generation (`infer`) on **x86_64** | **No.** ~1 tok/s, scalar kernel. Use a served model. |
+
+One caveat on *quality* rather than speed: `describe('France')` on this
+model returns edges like `Zone`, `demographics`, `Barb` -- structurally
+correct output (real gate scores, real layers) but weak semantics. BitNet
+b1.58 is a heavily-quantised 2B; the feature-labelling heuristics were
+tuned on Gemma-class models. **The mechanism works; do not read these
+particular labels as a quality benchmark.** A Gemma 3 4B browse vindex
+would be the fair test of output quality.
+
 ## Decode throughput
 
 A/B alternated across cases, 3 reps, medians. Raw samples:
@@ -160,5 +241,19 @@ psql -c "SELECT infer_create_model_remote('bitnet','http://127.0.0.1:28080')"
 psql -c "SELECT * FROM infer('The capital of France is', 3, 'bitnet')"
 ```
 
+A `browse` container (needed for the graph queries) is a separate, slower
+build -- it extracts gate vectors and runs feature/relation clustering:
+
+```sh
+larql convert gguf-to-vindex --level browse --f16 \
+  -o bitnet-browse.vindex bitnet-gguf/ggml-model-i2_s.gguf   # ~45 min
+```
+
+`--keep-quant --dense-only` and `--level browse` are mutually exclusive in
+practice: the first has no gate vectors (so no graph surface), the second
+has no weights (so `infer()` returns 503 "vindex does not contain model
+weights"). Serving both surfaces means two containers.
+
 Scripts: `scripts/verify_bitnet.py`, `scripts/bench_bitnet.py`,
-`scripts/bench_pg_infer.py`.
+`scripts/bench_pg_infer.py`, `scripts/bench_graph.py`,
+`scripts/bench_graph_conc.py`.
