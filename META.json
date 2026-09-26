@@ -1,0 +1,58 @@
+{
+   "name": "pg_infer",
+   "abstract": "Query transformer model weights as PostgreSQL relations",
+   "description": "pg_infer exposes what a transformer language model has learned -- feature activations, learned associations, and semantic relationships -- as SQL-queryable relations, without running inference. Built with pgrx (Rust). EXPERIMENTAL: the SQL API and the vindex format may change between releases.",
+   "version": "0.1.2-alpha",
+   "release_status": "testing",
+   "maintainer": [
+      "Greg Burd <greg@burd.me>"
+   ],
+   "license": "apache_2_0",
+   "provides": {
+      "pg_infer": {
+         "abstract": "Query transformer model weights as SQL relations",
+         "file": "sql/pg_infer--0.1.2-alpha.sql",
+         "docfile": "README",
+         "version": "0.1.2-alpha"
+      }
+   },
+   "prereqs": {
+      "runtime": {
+         "requires": {
+            "PostgreSQL": "18.0.0"
+         }
+      }
+   },
+   "resources": {
+      "homepage": "https://codeberg.org/gregburd/pg_infer",
+      "repository": {
+         "url": "https://codeberg.org/gregburd/pg_infer.git",
+         "web": "https://codeberg.org/gregburd/pg_infer",
+         "type": "git"
+      },
+      "bugtracker": {
+         "web": "https://codeberg.org/gregburd/pg_infer/issues"
+      }
+   },
+   "generated_by": "Greg Burd",
+   "meta-spec": {
+      "version": "1.0.0",
+      "url": "https://pgxn.org/meta/spec.txt"
+   },
+   "tags": [
+      "machine learning",
+      "transformer",
+      "interpretability",
+      "knowledge graph",
+      "pgrx"
+   ],
+   "no_index": {
+      "directory": [
+         "benches",
+         "crates",
+         "docs",
+         "scripts",
+         "tests"
+      ]
+   }
+}
