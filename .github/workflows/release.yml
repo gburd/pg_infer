@@ -65,3 +65,28 @@ jobs:
           generate_release_notes: true
           files: |
             *.tar.gz
+
+  # Queue a postgresql.org news article for moderation (never auto-published;
+  # see ci/announce.sh). Patch releases are skipped by the script unless their
+  # changes carry a "### Security" section.
+  announce:
+    name: Announce to PostgreSQL news/announce
+    needs: [release]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # announce.sh reads the commits since the previous tag
+      - name: Announce to PostgreSQL news/announce
+        env:
+          PGORG_USER: ${{ secrets.PGORG_USER }}
+          PGORG_PASSWORD: ${{ secrets.PGORG_PASSWORD }}
+          PGORG_ORG_ID: ${{ secrets.PGORG_ORG_ID }}
+          PGORG_EMAIL_ID: ${{ secrets.PGORG_EMAIL_ID }}
+          PGORG_TAGS: ${{ secrets.PGORG_TAGS }}
+        run: |
+          if [ -z "$PGORG_USER" ] || [ -z "$PGORG_PASSWORD" ]; then
+            echo "PGORG_USER/PGORG_PASSWORD secrets not set; skipping announcement."
+            exit 0
+          fi
+          bash ci/announce.sh "${GITHUB_REF_NAME#v}"
