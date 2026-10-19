@@ -28,7 +28,7 @@ tokenizers = "0.21"
 rand = "0.8"
 
 # Checksums
-sha2 = "0.10"
+sha2 = "0.11"
 
 # base64 encoding for the HF preupload file-sample field.
 base64 = "0.22"
