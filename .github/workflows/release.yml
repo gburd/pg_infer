@@ -32,7 +32,19 @@ jobs:
         run: cargo pgrx init --pg${{ matrix.pg_version }} download
 
       - name: Build extension (release)
-        run: cargo pgrx package --pg-config $(which pg_config)
+        run: |
+          # NOT `which pg_config`: that finds the runner's preinstalled
+          # PostgreSQL (16), and pgrx derives the feature name from the
+          # pg_config it is given, so it then demands a `pg16` feature this
+          # crate does not declare. Use the install pgrx just built.
+          shopt -s nullglob
+          cfgs=($HOME/.pgrx/${{ matrix.pg_version }}.*/pgrx-install/bin/pg_config)
+          if [ ${#cfgs[@]} -ne 1 ]; then
+            echo "::error::expected exactly one pgrx pg_config for PG ${{ matrix.pg_version }}, found ${#cfgs[@]}: ${cfgs[*]:-none}"
+            exit 1
+          fi
+          echo "using ${cfgs[0]} ($(${cfgs[0]} --version))"
+          cargo pgrx package --pg-config "${cfgs[0]}"
 
       - name: Package artifact
         run: |
