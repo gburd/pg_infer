@@ -29,7 +29,7 @@ services:
     volumes:
       - ./pg_infer.so:/usr/lib/postgresql/18/lib/pg_infer.so:ro
       - ./pg_infer.control:/usr/share/postgresql/18/extension/pg_infer.control:ro
-      - ./pg_infer--1.0.0.sql:/usr/share/postgresql/18/extension/pg_infer--1.0.0.sql:ro
+      - ./pg_infer--0.1.2-alpha.sql:/usr/share/postgresql/18/extension/pg_infer--0.1.2-alpha.sql:ro
     ports:
       - "5432:5432"
     depends_on:
@@ -91,7 +91,7 @@ services:
     volumes:
       - ./pg_infer.so:/usr/lib/postgresql/18/lib/pg_infer.so:ro
       - ./pg_infer.control:/usr/share/postgresql/18/extension/pg_infer.control:ro
-      - ./pg_infer--1.0.0.sql:/usr/share/postgresql/18/extension/pg_infer--1.0.0.sql:ro
+      - ./pg_infer--0.1.2-alpha.sql:/usr/share/postgresql/18/extension/pg_infer--0.1.2-alpha.sql:ro
     ports:
       - "5432:5432"
     depends_on:
@@ -132,7 +132,7 @@ FROM postgres:18
 # Copy pre-built extension files
 COPY pg_infer.so /usr/lib/postgresql/18/lib/
 COPY pg_infer.control /usr/share/postgresql/18/extension/
-COPY pg_infer--1.0.0.sql /usr/share/postgresql/18/extension/
+COPY pg_infer--0.1.2-alpha.sql /usr/share/postgresql/18/extension/
 ```
 
 ## Health Checks
