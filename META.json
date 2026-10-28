@@ -2,7 +2,7 @@
    "name": "pg_infer",
    "abstract": "Query transformer model weights as PostgreSQL relations",
    "description": "pg_infer exposes what a transformer language model has learned -- feature activations, learned associations, and semantic relationships -- as SQL-queryable relations, without running inference. Built with pgrx (Rust). EXPERIMENTAL: the SQL API and the vindex format may change between releases.",
-   "version": "0.1.2-alpha",
+   "version": "0.1.3-alpha",
    "release_status": "testing",
    "maintainer": [
       "Greg Burd <greg@burd.me>"
@@ -11,9 +11,9 @@
    "provides": {
       "pg_infer": {
          "abstract": "Query transformer model weights as SQL relations",
-         "file": "sql/pg_infer--0.1.2-alpha.sql",
+         "file": "sql/pg_infer--0.1.3-alpha.sql",
          "docfile": "README",
-         "version": "0.1.2-alpha"
+         "version": "0.1.3-alpha"
       }
    },
    "prereqs": {
