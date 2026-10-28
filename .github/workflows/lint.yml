@@ -24,7 +24,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Install OpenBLAS
-        run: sudo apt-get install -y libopenblas-dev
+        run: sudo apt-get update -qq && sudo apt-get install -y libopenblas-dev libreadline-dev zlib1g-dev pkg-config
 
       - name: Clippy (workspace, excluding pg_infer extension)
         run: cargo clippy --workspace --exclude pg_infer -- -D warnings
@@ -46,7 +46,7 @@ jobs:
 
       - name: Install system deps
         run: |
-          sudo apt-get install -y libopenblas-dev
+          sudo apt-get update -qq && sudo apt-get install -y libopenblas-dev libreadline-dev zlib1g-dev pkg-config
           cargo install cargo-pgrx --version 0.17.0 --locked
           cargo pgrx init --pg18 download
 

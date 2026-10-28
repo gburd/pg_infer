@@ -4,16 +4,31 @@ name: pgxn-release
 # PGXN_PASSWORD repository secrets (a https://manager.pgxn.org account);
 # without them the job skips instead of failing.
 #
-# This runs on the GitHub mirror only. Codeberg does not upload to PGXN,
-# so each version is uploaded exactly once.
+# This runs on the GitHub mirror only. Codeberg is the canonical origin and
+# auto-mirrors here; Codeberg provides no shared Actions runners, so a
+# workflow placed there would never execute. (pg_fts learned this the
+# expensive way: its PGXN publishing sat in a .forgejo workflow that never
+# ran once in 115 queued runs, and PGXN stayed on 0.2.0 while 45 releases
+# shipped.) Every release channel lives in the ONE workflow that runs.
 #
-# The install SQL (sql/pg_infer--<version>.sql) is committed, so the
-# source distribution is a plain git archive of the tag; no pgrx toolchain
-# is needed.  It is a SOURCE archive: users build with cargo pgrx.
+# The install SQL (sql/pg_infer--<version>.sql) is committed, so the source
+# distribution is a plain git archive of the tag; no pgrx toolchain is
+# needed to produce it. It is a SOURCE archive: users build with cargo pgrx.
 
 on:
   push:
     tags: ['v*']
+  # Manual (re)publish of an EXISTING tag. v0.1.2-alpha was tagged on
+  # 2026-09-15, eleven days BEFORE this workflow existed, so the tag push
+  # never triggered anything and the release was never published. `gh run
+  # rerun` cannot fix that -- there is no run to rerun -- and re-tagging
+  # would rewrite published history. Hence a dispatch that takes a tag.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing release tag to (re)publish, e.g. v0.1.2-alpha'
+        required: true
+        type: string
 
 jobs:
   pgxn:
@@ -32,11 +47,53 @@ jobs:
 
       - uses: actions/checkout@v4
         if: steps.check.outputs.skip != 'true'
+        with:
+          fetch-depth: 0   # need the tag and full history for `git archive`
+          ref: ${{ inputs.tag || github.ref }}
 
-      - name: Check versions match the tag
+      - name: Resolve release version
+        id: ver
         if: steps.check.outputs.skip != 'true'
         run: |
-          VER="${GITHUB_REF_NAME#v}"
+          TAG="${{ inputs.tag || github.ref_name }}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      # THE CHECKOUT MUST BE THE RELEASE IT CLAIMS TO BE.
+      #
+      # Codeberg mirrors main and the tag to GitHub as separate ref updates, so
+      # the tag-push event can fire while refs/tags/vX.Y.Z here still resolves to
+      # the PREVIOUS release's commit -- a few-second race present on every
+      # release. pg_fts hit it live on v1.8.4: the job checked out v1.8.3's
+      # commit and built the previous release's code under the new tag, caught
+      # only because the zip filename did not match.
+      #
+      # So: re-fetch until the checked-out META.json version equals the tag's,
+      # bounded; if it never matches, FAIL rather than publish a mislabelled
+      # artifact. Tolerating the race is the convenience; refusing to publish
+      # the wrong code is the invariant.
+      - name: Verify checkout matches the tag (mirror race guard)
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          WANT="${{ steps.ver.outputs.version }}"
+          TAG="${{ steps.ver.outputs.tag }}"
+          for i in $(seq 1 12); do
+            GOT="$(jq -r .version META.json)"
+            if [ "$GOT" = "$WANT" ]; then
+              echo "checkout is $GOT for tag $TAG (attempt $i)"; exit 0
+            fi
+            echo "checkout says $GOT but tag is $TAG; mirror may still be catching up ($i/12)"
+            sleep 10
+            git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG" 2>/dev/null || true
+            git checkout -q --detach "refs/tags/$TAG" || true
+          done
+          echo "::error::checked out version $GOT does not match tag $TAG after 2 minutes; refusing to build a mislabelled release"
+          exit 1
+
+      - name: Check versions agree
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          VER="${{ steps.ver.outputs.version }}"
           META_VER="$(jq -r .version META.json)"
           CARGO_VER="$(grep -m1 '^version = ' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')"
           CTL_VER="$(sed -n "s/^default_version *= *'\(.*\)'/\1/p" pg_infer.control)"
@@ -49,12 +106,45 @@ jobs:
           test -f "sql/pg_infer--${VER}.sql" || {
             echo "::error::sql/pg_infer--${VER}.sql is missing"; exit 1; }
 
-      - name: Build distribution
+      # PGXN rejects a malformed META.json at upload with a terse message, after
+      # the build has already run. Its own validator is three lines of Perl and
+      # catches the same problems locally, so the release fails fast and for a
+      # legible reason.
+      - name: Validate META.json (PGXN's own validator)
         if: steps.check.outputs.skip != 'true'
         run: |
-          VER="${GITHUB_REF_NAME#v}"
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq cpanminus >/dev/null
+          sudo cpanm -q --notest PGXN::Meta::Validator >/dev/null 2>&1
+          perl -MPGXN::Meta::Validator -MJSON::PP -e '
+            my $j = do { local $/; open my $f, "<", "META.json" or die; <$f> };
+            my $v = PGXN::Meta::Validator->new(JSON::PP->new->decode($j));
+            if ($v->is_valid) { print "META.json is valid\n"; exit 0 }
+            print "META.json is INVALID:\n"; print "  $_\n" for $v->errors; exit 1'
+
+      # THE RELEASE GATE. A source archive that does not compile is worse than
+      # no release: PGXN versions are immutable, so a broken upload can only be
+      # superseded, never withdrawn. Build and test what is actually in the
+      # archive before publishing it.
+      - name: Build + test (gate the release)
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          sudo apt-get update -qq
+          # pgrx builds PostgreSQL from source; its configure needs readline
+          # and zlib. Without them: "configure: error: readline library not found".
+          sudo apt-get install -y --no-install-recommends \
+            libopenblas-dev libreadline-dev zlib1g-dev pkg-config
+          cargo install cargo-pgrx --version 0.17.0 --locked
+          cargo pgrx init --pg18 download
+          cargo test --workspace --exclude pg_infer
+
+      - name: Build source distribution
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          VER="${{ steps.ver.outputs.version }}"
           git archive --format=zip --prefix="pg_infer-${VER}/" \
-            -o "pg_infer-${VER}.zip" "$GITHUB_REF_NAME"
+            -o "pg_infer-${VER}.zip" "${{ steps.ver.outputs.tag }}"
+          unzip -l "pg_infer-${VER}.zip" | tail -3
 
       - name: Upload to PGXN
         if: steps.check.outputs.skip != 'true'
@@ -62,8 +152,9 @@ jobs:
           PGXN_USERNAME: ${{ secrets.PGXN_USERNAME }}
           PGXN_PASSWORD: ${{ secrets.PGXN_PASSWORD }}
         run: |
-          archive="pg_infer-${GITHUB_REF_NAME#v}.zip"
-          # 2xx/3xx: accepted.  409: this version is already on PGXN.
+          archive="pg_infer-${{ steps.ver.outputs.version }}.zip"
+          # 2xx/3xx: accepted.  409: this version is already on PGXN, which
+          # makes a re-run of a published tag idempotent rather than fatal.
           code=$(curl -sS -o /tmp/pgxn_resp.txt -w '%{http_code}' \
             --user "$PGXN_USERNAME:$PGXN_PASSWORD" \
             -F "archive=@${archive};type=application/zip" \
@@ -71,6 +162,6 @@ jobs:
           echo "PGXN upload HTTP $code"; cat /tmp/pgxn_resp.txt || true
           case "$code" in
             2*|3*) echo "PGXN upload accepted." ;;
-            409)   echo "::warning::this version is already on PGXN." ;;
-            *)     echo "::error::PGXN upload failed (HTTP $code)"; exit 1 ;;
+            409)   echo "::warning::this version is already on PGXN; skipping." ;;
+            *)     echo "::error::PGXN upload failed (HTTP $code) -- check PGXN_USERNAME/PGXN_PASSWORD and META.json"; exit 1 ;;
           esac
