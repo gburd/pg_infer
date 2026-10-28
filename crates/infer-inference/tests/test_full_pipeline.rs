@@ -51,33 +51,54 @@ fn create_test_model(dir: &Path) {
         let kv_dim = num_kv_heads * head_dim;
         tensors.insert(
             format!("{p}.self_attn.q_proj.weight"),
-            (random_f32(q_dim * hidden, layer * 100 + 10), vec![q_dim, hidden]),
+            (
+                random_f32(q_dim * hidden, layer * 100 + 10),
+                vec![q_dim, hidden],
+            ),
         );
         tensors.insert(
             format!("{p}.self_attn.k_proj.weight"),
-            (random_f32(kv_dim * hidden, layer * 100 + 20), vec![kv_dim, hidden]),
+            (
+                random_f32(kv_dim * hidden, layer * 100 + 20),
+                vec![kv_dim, hidden],
+            ),
         );
         tensors.insert(
             format!("{p}.self_attn.v_proj.weight"),
-            (random_f32(kv_dim * hidden, layer * 100 + 30), vec![kv_dim, hidden]),
+            (
+                random_f32(kv_dim * hidden, layer * 100 + 30),
+                vec![kv_dim, hidden],
+            ),
         );
         tensors.insert(
             format!("{p}.self_attn.o_proj.weight"),
-            (random_f32(hidden * q_dim, layer * 100 + 40), vec![hidden, q_dim]),
+            (
+                random_f32(hidden * q_dim, layer * 100 + 40),
+                vec![hidden, q_dim],
+            ),
         );
 
         // FFN (gate/up/down)
         tensors.insert(
             format!("{p}.mlp.gate_proj.weight"),
-            (random_f32(intermediate * hidden, layer * 100 + 50), vec![intermediate, hidden]),
+            (
+                random_f32(intermediate * hidden, layer * 100 + 50),
+                vec![intermediate, hidden],
+            ),
         );
         tensors.insert(
             format!("{p}.mlp.up_proj.weight"),
-            (random_f32(intermediate * hidden, layer * 100 + 60), vec![intermediate, hidden]),
+            (
+                random_f32(intermediate * hidden, layer * 100 + 60),
+                vec![intermediate, hidden],
+            ),
         );
         tensors.insert(
             format!("{p}.mlp.down_proj.weight"),
-            (random_f32(hidden * intermediate, layer * 100 + 70), vec![hidden, intermediate]),
+            (
+                random_f32(hidden * intermediate, layer * 100 + 70),
+                vec![hidden, intermediate],
+            ),
         );
     }
 
@@ -97,8 +118,11 @@ fn create_test_model(dir: &Path) {
         "rope_theta": 10000.0,
         "rms_norm_eps": 1e-5
     });
-    std::fs::write(dir.join("config.json"), serde_json::to_string_pretty(&config).unwrap())
-        .unwrap();
+    std::fs::write(
+        dir.join("config.json"),
+        serde_json::to_string_pretty(&config).unwrap(),
+    )
+    .unwrap();
 
     // Write tokenizer
     write_mock_tokenizer(dir, vocab);
@@ -140,10 +164,9 @@ fn write_safetensors(dir: &Path, tensors: &HashMap<String, (Vec<f32>, Vec<usize>
 
 fn write_mock_tokenizer(dir: &Path, vocab_size: usize) {
     let tokens = [
-        "the", "a", "is", "of", "France", "Paris", "Germany", "Berlin",
-        "capital", "Europe", "language", "French", "city", "country", "and", "in",
-        "cat", "dog", "runs", "fast", "big", "small", "red", "blue",
-        "one", "two", "three", "four", "five", "six", "seven", "eight",
+        "the", "a", "is", "of", "France", "Paris", "Germany", "Berlin", "capital", "Europe",
+        "language", "French", "city", "country", "and", "in", "cat", "dog", "runs", "fast", "big",
+        "small", "red", "blue", "one", "two", "three", "four", "five", "six", "seven", "eight",
     ];
 
     let mut vocab = serde_json::Map::new();
@@ -276,7 +299,10 @@ fn predict_probabilities_sorted_descending() {
         assert!(
             window[0].1 >= window[1].1,
             "predictions not sorted: {} ({}) before {} ({})",
-            window[0].0, window[0].1, window[1].0, window[1].1,
+            window[0].0,
+            window[0].1,
+            window[1].0,
+            window[1].1,
         );
     }
 
@@ -319,7 +345,10 @@ fn autoregressive_generation_loop() {
         assert!(!result.token_ids.is_empty(), "predict returned no tokens");
 
         let next_id = result.token_ids[0];
-        assert!((next_id as usize) < 32, "generated token {next_id} out of vocab");
+        assert!(
+            (next_id as usize) < 32,
+            "generated token {next_id} out of vocab"
+        );
         token_ids.push(next_id);
     }
 

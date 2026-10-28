@@ -196,10 +196,9 @@ fn infer_models() -> Result<
             let num_layers: Option<i32> = row.get(5)?;
             let hidden_size: Option<i32> = row.get(6)?;
             let vocab_size: Option<i32> = row.get(7)?;
-            let registered_at: TimestampWithTimeZone =
-                row.get(8)?.unwrap_or_else(|| {
-                    TimestampWithTimeZone::new_unchecked(2000, 1, 1, 0, 0, 0.0)
-                });
+            let registered_at: TimestampWithTimeZone = row
+                .get(8)?
+                .unwrap_or_else(|| TimestampWithTimeZone::new_unchecked(2000, 1, 1, 0, 0, 0.0));
 
             rows.push((
                 model_name,
@@ -344,8 +343,8 @@ fn resolve_data_directory() -> PathBuf {
     if path.is_absolute() {
         path.to_path_buf()
     } else {
-        let pgdata = std::env::var("PGDATA")
-            .unwrap_or_else(|_| "/var/lib/postgresql/data".to_string());
+        let pgdata =
+            std::env::var("PGDATA").unwrap_or_else(|_| "/var/lib/postgresql/data".to_string());
         Path::new(&pgdata).join(path)
     }
 }
@@ -384,13 +383,9 @@ fn resolve_source(source: &str) -> Result<String, PgInferError> {
         data_dir.join(source)
     };
 
-    let canonical = resolved
-        .canonicalize()
-        .unwrap_or_else(|_| resolved.clone());
+    let canonical = resolved.canonicalize().unwrap_or_else(|_| resolved.clone());
 
-    let canonical_data_dir = data_dir
-        .canonicalize()
-        .unwrap_or_else(|_| data_dir.clone());
+    let canonical_data_dir = data_dir.canonicalize().unwrap_or_else(|_| data_dir.clone());
 
     if !canonical.starts_with(&canonical_data_dir) {
         return Err(PgInferError::PathNotPermitted {

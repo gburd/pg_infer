@@ -48,7 +48,11 @@ fn e4m3_bits_to_f32_compute(byte: u8) -> f32 {
         frac * (2.0_f32).powi(exp as i32 - 7)
     };
 
-    if sign == 1 { -mag } else { mag }
+    if sign == 1 {
+        -mag
+    } else {
+        mag
+    }
 }
 
 /// Convert f32 to E4M3 byte with round-to-nearest-even.
@@ -183,7 +187,9 @@ mod tests {
     fn e4m3_round_trip_representable() {
         for byte in 0..=255u8 {
             let f = e4m3_to_f32(byte);
-            if f.is_nan() { continue; }
+            if f.is_nan() {
+                continue;
+            }
             let back = f32_to_e4m3(f);
             if f == 0.0 {
                 assert!(back == 0x00 || back == 0x80);
@@ -212,7 +218,10 @@ mod tests {
         for m in 1..=7u8 {
             let expected = (m as f32 / 8.0) * (2.0_f32).powi(-6);
             let decoded = e4m3_to_f32(m);
-            assert!((decoded - expected).abs() < 1e-12, "m={m}: expected {expected}, got {decoded}");
+            assert!(
+                (decoded - expected).abs() < 1e-12,
+                "m={m}: expected {expected}, got {decoded}"
+            );
         }
         for m in 1..=7u8 {
             let expected = -(m as f32 / 8.0) * (2.0_f32).powi(-6);

@@ -5,8 +5,8 @@
 
 use std::sync::Arc;
 
-use cudarc::cublas::{CudaBlas, GemmConfig};
 use cudarc::cublas::sys::cublasOperation_t;
+use cudarc::cublas::{CudaBlas, GemmConfig};
 use cudarc::driver::{CudaDevice, CudaSlice, CudaStream};
 use ndarray::{Array2, ArrayView2};
 
@@ -39,7 +39,11 @@ pub fn sgemm(
         (b.shape()[1], b.shape()[0])
     };
 
-    assert_eq!(k_a, k_check, "matmul dimension mismatch: A cols {} != B rows {}", k_a, k_check);
+    assert_eq!(
+        k_a, k_check,
+        "matmul dimension mismatch: A cols {} != B rows {}",
+        k_a, k_check
+    );
 
     let k = k_a;
 
@@ -131,7 +135,13 @@ pub fn gemv(
     x: &[f32],
 ) -> Result<Vec<f32>, CudaError> {
     let (n, k) = (w.shape()[0], w.shape()[1]);
-    assert_eq!(x.len(), k, "gemv dimension mismatch: x len {} != W cols {}", x.len(), k);
+    assert_eq!(
+        x.len(),
+        k,
+        "gemv dimension mismatch: x len {} != W cols {}",
+        x.len(),
+        k
+    );
 
     // Treat x as a [k, 1] matrix and compute W[n,k] * x[k,1] = y[n,1]
     // Using the row-major sgemm path.

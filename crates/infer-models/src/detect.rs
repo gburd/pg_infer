@@ -69,7 +69,10 @@ pub fn detect_architecture(model_dir: &Path) -> Result<Box<dyn ModelArchitecture
 pub fn detect_from_json(config: &serde_json::Value) -> Box<dyn ModelArchitecture> {
     let model_config = parse_model_config(config);
     if let Err(e) = model_config.validate() {
-        eprintln!("infer-models: config validation warning for '{}': {e}", model_config.model_type);
+        eprintln!(
+            "infer-models: config validation warning for '{}': {e}",
+            model_config.model_type
+        );
     }
     let model_type = model_config.model_type.as_str();
 
@@ -117,7 +120,9 @@ pub fn detect_from_json(config: &serde_json::Value) -> Box<dyn ModelArchitecture
 ///
 /// Use this in code paths where a malformed config should abort (e.g., vindex build)
 /// rather than degrade silently.
-pub fn detect_from_json_strict(config: &serde_json::Value) -> Result<Box<dyn ModelArchitecture>, ModelError> {
+pub fn detect_from_json_strict(
+    config: &serde_json::Value,
+) -> Result<Box<dyn ModelArchitecture>, ModelError> {
     let model_config = parse_model_config(config);
     if let Err(reason) = model_config.validate() {
         return Err(ModelError::ConfigValidation {
@@ -554,10 +559,7 @@ mod tests {
         assert_eq!(arch.num_experts(), 128);
         assert_eq!(arch.num_experts_per_token(), 8);
         assert_eq!(arch.moe_intermediate_size(), 768);
-        assert_eq!(
-            arch.moe_router_key(0).unwrap(),
-            "layers.0.mlp.gate.weight"
-        );
+        assert_eq!(arch.moe_router_key(0).unwrap(), "layers.0.mlp.gate.weight");
         assert_eq!(
             arch.expert_ffn_gate_key(0, 5).unwrap(),
             "layers.0.mlp.experts.5.gate_proj.weight"
@@ -1155,7 +1157,7 @@ mod tests {
         // sliding layers still ship v_proj in safetensors.
         assert!(arch.config().attention_k_eq_v);
         assert!(!arch.v_shares_k(0)); // sliding
-        assert!(arch.v_shares_k(5));  // global
+        assert!(arch.v_shares_k(5)); // global
 
         // V-norm (parameter-free RMSNorm on V states)
         assert!(arch.has_v_norm());

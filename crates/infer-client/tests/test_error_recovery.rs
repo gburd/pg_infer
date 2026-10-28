@@ -21,8 +21,7 @@ fn connection_refused_returns_helpful_error() {
             // Client created (it doesn't connect eagerly), but the first
             // request should fail with a transport error.
             let token = CancelToken::new();
-            let result: Result<StatsResponse, ClientError> =
-                c.get_json("/v1/stats", &token);
+            let result: Result<StatsResponse, ClientError> = c.get_json("/v1/stats", &token);
             match result {
                 Err(ClientError::Transport(msg)) => {
                     // Should mention connection failure
@@ -68,8 +67,7 @@ fn timeout_returns_error_not_hang() {
         Ok(c) => {
             let token = CancelToken::new();
             let start = std::time::Instant::now();
-            let result: Result<StatsResponse, ClientError> =
-                c.get_json("/v1/stats", &token);
+            let result: Result<StatsResponse, ClientError> = c.get_json("/v1/stats", &token);
             let elapsed = start.elapsed();
 
             // Should complete within a reasonable time (not hang)
@@ -80,11 +78,7 @@ fn timeout_returns_error_not_hang() {
             );
 
             // Should be an error
-            assert!(
-                result.is_err(),
-                "expected timeout error, got: {:?}",
-                result
-            );
+            assert!(result.is_err(), "expected timeout error, got: {:?}", result);
         }
         Err(e) => {
             eprintln!("connect() returned error (acceptable): {:?}", e);
@@ -118,8 +112,7 @@ fn cancellation_aborts_request() {
             });
 
             let start = std::time::Instant::now();
-            let result: Result<StatsResponse, ClientError> =
-                c.get_json("/v1/stats", &token);
+            let result: Result<StatsResponse, ClientError> = c.get_json("/v1/stats", &token);
             let elapsed = start.elapsed();
 
             // Should abort quickly (within ~1 second)
@@ -145,10 +138,7 @@ fn cancellation_aborts_request() {
 #[test]
 fn invalid_url_returns_error() {
     let result = CancellableClient::connect("not-a-url", Duration::from_secs(1));
-    assert!(
-        result.is_err(),
-        "expected error for invalid URL, got: Ok"
-    );
+    assert!(result.is_err(), "expected error for invalid URL, got: Ok");
     if let Err(ClientError::InvalidUrl(msg)) = result {
         assert!(!msg.is_empty(), "error message should not be empty");
     }

@@ -61,10 +61,28 @@ pub(crate) fn classify_relation(
 /// Check if any secondary tokens suggest a geographic context.
 fn has_geographic_term(secondaries: &[&str]) -> bool {
     const GEO_HINTS: &[&str] = &[
-        "city", "country", "state", "region", "continent", "capital",
-        "province", "territory", "island", "ocean", "sea", "river",
-        "mountain", "lake", "north", "south", "east", "west",
-        "europe", "asia", "africa", "america",
+        "city",
+        "country",
+        "state",
+        "region",
+        "continent",
+        "capital",
+        "province",
+        "territory",
+        "island",
+        "ocean",
+        "sea",
+        "river",
+        "mountain",
+        "lake",
+        "north",
+        "south",
+        "east",
+        "west",
+        "europe",
+        "asia",
+        "africa",
+        "america",
     ];
 
     for secondary in secondaries {
@@ -85,33 +103,51 @@ mod tests {
     #[test]
     fn test_syntax_band() {
         assert_eq!(classify_relation(0, 30, "test", 10.0, &[]), "related_to");
-        assert_eq!(classify_relation(5, 30, "Paris", 50.0, &["city"]), "related_to");
+        assert_eq!(
+            classify_relation(5, 30, "Paris", 50.0, &["city"]),
+            "related_to"
+        );
     }
 
     #[test]
     fn test_output_band() {
         assert_eq!(classify_relation(25, 30, "dog", 10.0, &[]), "similar_to");
-        assert_eq!(classify_relation(29, 30, "Paris", 50.0, &["city"]), "similar_to");
+        assert_eq!(
+            classify_relation(29, 30, "Paris", 50.0, &["city"]),
+            "similar_to"
+        );
     }
 
     #[test]
     fn test_knowledge_band_high_score_capitalized() {
-        assert_eq!(classify_relation(15, 30, "Europe", 35.0, &["continent"]), "part_of");
+        assert_eq!(
+            classify_relation(15, 30, "Europe", 35.0, &["continent"]),
+            "part_of"
+        );
     }
 
     #[test]
     fn test_knowledge_band_geographic() {
-        assert_eq!(classify_relation(15, 30, "Paris", 10.0, &["city", "capital"]), "located_in");
+        assert_eq!(
+            classify_relation(15, 30, "Paris", 10.0, &["city", "capital"]),
+            "located_in"
+        );
     }
 
     #[test]
     fn test_knowledge_band_instance_of() {
-        assert_eq!(classify_relation(15, 30, "Einstein", 10.0, &["physicist"]), "instance_of");
+        assert_eq!(
+            classify_relation(15, 30, "Einstein", 10.0, &["physicist"]),
+            "instance_of"
+        );
     }
 
     #[test]
     fn test_knowledge_band_has_property() {
-        assert_eq!(classify_relation(15, 30, "tall", 25.0, &["height"]), "has_property");
+        assert_eq!(
+            classify_relation(15, 30, "tall", 25.0, &["height"]),
+            "has_property"
+        );
     }
 
     #[test]

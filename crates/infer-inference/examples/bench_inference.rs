@@ -8,8 +8,8 @@
 use std::time::Instant;
 
 use infer_inference::attention::{apply_rope, gqa_attention};
-use infer_inference::ffn::WeightFfn;
 use infer_inference::ffn::FfnBackend;
+use infer_inference::ffn::WeightFfn;
 use infer_inference::model::{load_model_dir, resolve_model_path};
 use infer_inference::residual::{rms_norm, rms_norm_heads};
 use infer_inference::{capture_residuals, predict, InferenceModel};

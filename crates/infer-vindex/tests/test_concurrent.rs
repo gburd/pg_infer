@@ -90,7 +90,8 @@ fn concurrent_gate_knn_no_panic() {
         .collect();
 
     for h in handles {
-        h.join().expect("thread panicked during concurrent gate_knn");
+        h.join()
+            .expect("thread panicked during concurrent gate_knn");
     }
 }
 

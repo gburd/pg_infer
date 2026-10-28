@@ -133,7 +133,9 @@ mod tests {
         engine.prefill(&weights, &[0u32, 1]).expect("prefill");
         let h = engine.decode_step(&weights, 2).expect("decode");
         assert_eq!(h.shape(), &[1, weights.hidden_size]);
-        assert!(hidden_to_raw_logits(&weights, &h).iter().all(|v| v.is_finite()));
+        assert!(hidden_to_raw_logits(&weights, &h)
+            .iter()
+            .all(|v| v.is_finite()));
     }
 
     #[test]
@@ -154,7 +156,9 @@ mod tests {
     fn window_clipping_limits_hot_store() {
         let weights = make_test_weights();
         let mut engine = MarkovResidualEngine::new(Some(2));
-        engine.prefill(&weights, &[0u32, 1, 2, 3, 4]).expect("prefill");
+        engine
+            .prefill(&weights, &[0u32, 1, 2, 3, 4])
+            .expect("prefill");
         assert!(engine.window_tokens() <= 2);
         assert!(engine.cold_bytes() > 0);
     }

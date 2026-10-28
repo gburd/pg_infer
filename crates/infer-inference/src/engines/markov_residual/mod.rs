@@ -8,6 +8,8 @@ pub mod compute;
 pub mod engine;
 pub mod store;
 
-pub use compute::{recompute_kv, rs_decode_step, rs_prefill, kv_memory_bytes_for_seq, RsPrefillResult};
+pub use compute::{
+    kv_memory_bytes_for_seq, recompute_kv, rs_decode_step, rs_prefill, RsPrefillResult,
+};
 pub use engine::MarkovResidualEngine;
 pub use store::RsStore;

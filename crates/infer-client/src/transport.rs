@@ -37,9 +37,9 @@ use http_body_util::Full;
 #[cfg(unix)]
 use hyper::body::Incoming;
 #[cfg(unix)]
-use hyper::{Request, Response};
-#[cfg(unix)]
 use hyper::Uri;
+#[cfg(unix)]
+use hyper::{Request, Response};
 #[cfg(unix)]
 use hyper_util::client::legacy::Client as HyperClient;
 #[cfg(unix)]
@@ -448,9 +448,13 @@ impl Drop for CancellableClient {
 /// Pre-built transport handle — the client thread consumes this to avoid
 /// re-parsing the URL inside the runtime.
 enum TransportInit {
-    Http { base: String },
+    Http {
+        base: String,
+    },
     #[cfg(unix)]
-    Uds { path: PathBuf },
+    Uds {
+        path: PathBuf,
+    },
 }
 
 fn classify(raw: &str) -> Result<(Scheme, String, TransportInit), ClientError> {
@@ -471,7 +475,11 @@ fn classify(raw: &str) -> Result<(Scheme, String, TransportInit), ClientError> {
                 // Form like `uds://localhost/path` — take the path component.
                 match rest.find('/') {
                     Some(idx) => PathBuf::from(&rest[idx..]),
-                    None => return Err(ClientError::InvalidUrl(format!("no socket path in '{raw}'"))),
+                    None => {
+                        return Err(ClientError::InvalidUrl(format!(
+                            "no socket path in '{raw}'"
+                        )))
+                    }
                 }
             };
             // UDS "base_url" stays empty; per-request paths are used directly.
@@ -500,11 +508,7 @@ fn classify(raw: &str) -> Result<(Scheme, String, TransportInit), ClientError> {
     match parsed.scheme() {
         "http" | "https" => {
             let base = raw.trim_end_matches('/').to_string();
-            Ok((
-                Scheme::Http,
-                base.clone(),
-                TransportInit::Http { base },
-            ))
+            Ok((Scheme::Http, base.clone(), TransportInit::Http { base }))
         }
         other => Err(ClientError::InvalidUrl(format!(
             "unsupported URL scheme '{other}' in '{raw}'"
@@ -514,11 +518,7 @@ fn classify(raw: &str) -> Result<(Scheme, String, TransportInit), ClientError> {
 
 // ── Runtime thread ────────────────────────────────────────────────────────────
 
-fn runtime_thread(
-    rx: std::sync::mpsc::Receiver<Cmd>,
-    init: TransportInit,
-    timeout: Duration,
-) {
+fn runtime_thread(rx: std::sync::mpsc::Receiver<Cmd>, init: TransportInit, timeout: Duration) {
     let runtime = match Builder::new_current_thread().enable_all().build() {
         Ok(rt) => rt,
         Err(e) => {
@@ -541,9 +541,7 @@ fn runtime_thread(
             Cmd::Request(job) => {
                 runtime.block_on(async {
                     let result = match &transport {
-                        Transport::Http { client, base } => {
-                            execute_http(client, base, &job).await
-                        }
+                        Transport::Http { client, base } => execute_http(client, base, &job).await,
                         #[cfg(unix)]
                         Transport::Uds { client, .. } => execute_uds(client, &job, timeout).await,
                     };
@@ -609,8 +607,11 @@ where
     // Simpler + correct: collect via a join set that preserves order.
     use std::pin::Pin;
     use std::task::Poll;
-    let mut pinned: Vec<(usize, Pin<Box<F>>)> =
-        futures.into_iter().enumerate().map(|(i, f)| (i, Box::pin(f))).collect();
+    let mut pinned: Vec<(usize, Pin<Box<F>>)> = futures
+        .into_iter()
+        .enumerate()
+        .map(|(i, f)| (i, Box::pin(f)))
+        .collect();
     let mut out: Vec<Option<T>> = Vec::new();
     out.resize_with(pinned.len(), || None);
 
@@ -662,7 +663,10 @@ fn build_transport(init: TransportInit, timeout: Duration) -> Result<Transport, 
                 .pool_idle_timeout(Duration::from_secs(90))
                 .pool_max_idle_per_host(16)
                 .build::<_, Full<Bytes>>(connector);
-            Ok(Transport::Uds { client, _path: path })
+            Ok(Transport::Uds {
+                client,
+                _path: path,
+            })
         }
     }
 }
@@ -819,8 +823,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn uds_url_parses() {
-        let (scheme, base, init) =
-            classify("uds:///tmp/larql.sock").expect("uds:/// form parses");
+        let (scheme, base, init) = classify("uds:///tmp/larql.sock").expect("uds:/// form parses");
         assert_eq!(scheme, Scheme::Uds);
         assert_eq!(base, "");
         match init {
@@ -843,8 +846,7 @@ mod tests {
 
     #[test]
     fn http_url_parses() {
-        let (scheme, base, _) =
-            classify("http://localhost:8080").expect("http parses");
+        let (scheme, base, _) = classify("http://localhost:8080").expect("http parses");
         assert_eq!(scheme, Scheme::Http);
         assert_eq!(base, "http://localhost:8080");
 
@@ -952,8 +954,7 @@ mod tests {
         assert!(*ready.lock().expect("ready final"), "server did not start");
 
         let url = format!("uds://{}", sock_path.display());
-        let client =
-            CancellableClient::connect(&url, Duration::from_secs(5)).expect("uds client");
+        let client = CancellableClient::connect(&url, Duration::from_secs(5)).expect("uds client");
         let cancel = CancelToken::new();
 
         // 10 concurrent requests.  Serial would be 10 * 30 ms = 300 ms;
@@ -1104,8 +1105,8 @@ mod tests {
         assert!(*ready.lock().expect("ready final"), "server did not start");
 
         let url = format!("uds://{}", sock_path.display());
-        let client = CancellableClient::connect(&url, Duration::from_secs(5))
-            .expect("uds client builds");
+        let client =
+            CancellableClient::connect(&url, Duration::from_secs(5)).expect("uds client builds");
         let cancel = CancelToken::new();
         let resp: serde_json::Value = client
             .get_json("/v1/health", &cancel)

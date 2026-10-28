@@ -3,8 +3,8 @@
 //! All gate KNN methods for VectorIndex: single-query, batched, expert-scoped,
 //! score computation, HNSW integration, and top-K selection.
 
-use ndarray::{Array1, Array2, ArrayView2};
 use infer_compute::ComputeBackend;
+use ndarray::{Array1, Array2, ArrayView2};
 
 use super::core::VectorIndex;
 use super::types::*;
@@ -43,7 +43,9 @@ fn gate_gemv_gpu(
     x: &ArrayView2<f32>,
     backend: &dyn infer_compute::ComputeBackend,
 ) -> Option<Array2<f32>> {
-    if x.shape()[0] != 1 { return None; }
+    if x.shape()[0] != 1 {
+        return None;
+    }
     let x_row = x.row(0);
     let x_slice = x_row.as_slice()?;
     // Force GPU dispatch regardless of the backend's flop_threshold —
@@ -98,8 +100,15 @@ impl VectorIndex {
     /// cap is reached. Must be called with `cache` already locked by the
     /// caller; `just_inserted` is true when the caller *just* decoded and
     /// wrote `cache[layer]`.
-    fn touch_gate_cache_lru(&self, layer: usize, just_inserted: bool, cache: &mut [Option<Vec<f32>>]) {
-        let max = self.gate_cache_max_layers.load(std::sync::atomic::Ordering::Relaxed);
+    fn touch_gate_cache_lru(
+        &self,
+        layer: usize,
+        just_inserted: bool,
+        cache: &mut [Option<Vec<f32>>],
+    ) {
+        let max = self
+            .gate_cache_max_layers
+            .load(std::sync::atomic::Ordering::Relaxed);
         if max == 0 {
             return;
         }
@@ -129,9 +138,16 @@ impl VectorIndex {
         {
             let warmed = self.warmed_gates.read().unwrap();
             if let Some(Some(ref data)) = warmed.get(layer) {
-                let nf = self.gate_mmap_slices.get(layer).map(|s| s.num_features).unwrap_or(0);
+                let nf = self
+                    .gate_mmap_slices
+                    .get(layer)
+                    .map(|s| s.num_features)
+                    .unwrap_or(0);
                 if nf > 0 {
-                    return Some(GateData { data: data.clone(), num_features: nf });
+                    return Some(GateData {
+                        data: data.clone(),
+                        num_features: nf,
+                    });
                 }
             }
         }
@@ -147,14 +163,18 @@ impl VectorIndex {
         // 3. Mmap
         if let Some(ref mmap) = self.gate_mmap_bytes {
             if let Some(slice) = self.gate_mmap_slices.get(layer) {
-                if slice.num_features == 0 { return None; }
+                if slice.num_features == 0 {
+                    return None;
+                }
 
                 let data = match self.gate_mmap_dtype {
                     crate::config::dtype::StorageDtype::F32 => {
                         let bpf = 4;
                         let byte_offset = slice.float_offset * bpf;
                         let byte_end = byte_offset + slice.num_features * self.hidden_size * bpf;
-                        if byte_end > mmap.len() { return None; }
+                        if byte_end > mmap.len() {
+                            return None;
+                        }
                         let float_count = slice.num_features * self.hidden_size;
                         unsafe {
                             let ptr = mmap[byte_offset..byte_end].as_ptr() as *const f32;
@@ -165,9 +185,13 @@ impl VectorIndex {
                         let bpf = 2;
                         let byte_offset = slice.float_offset * bpf;
                         let byte_end = byte_offset + slice.num_features * self.hidden_size * bpf;
-                        if byte_end > mmap.len() { return None; }
+                        if byte_end > mmap.len() {
+                            return None;
+                        }
                         let mut cache = self.f16_decode_cache.lock().unwrap();
-                        if cache.len() <= layer { cache.resize(layer + 1, None); }
+                        if cache.len() <= layer {
+                            cache.resize(layer + 1, None);
+                        }
                         let miss = cache[layer].is_none();
                         if miss {
                             let raw = &mmap[byte_offset..byte_end];
@@ -181,7 +205,9 @@ impl VectorIndex {
                         let bytes_per_feature = self.hidden_size / 4;
                         let byte_offset = slice.float_offset;
                         let byte_end = byte_offset + slice.num_features * bytes_per_feature;
-                        if byte_end > mmap.len() { return None; }
+                        if byte_end > mmap.len() {
+                            return None;
+                        }
                         let packed = &mmap[byte_offset..byte_end];
                         // Decode ternary to f32 for callers that need a dense matrix
                         let count = slice.num_features * self.hidden_size;
@@ -191,7 +217,10 @@ impl VectorIndex {
                             .collect()
                     }
                 };
-                return Some(GateData { data, num_features: slice.num_features });
+                return Some(GateData {
+                    data,
+                    num_features: slice.num_features,
+                });
             }
         }
 
@@ -248,13 +277,17 @@ impl VectorIndex {
     ) -> Option<Vec<(usize, f32)>> {
         let mmap = self.gate_mmap_bytes.as_ref()?;
         let slice = self.gate_mmap_slices.get(layer)?;
-        if slice.num_features == 0 { return Some(vec![]); }
+        if slice.num_features == 0 {
+            return Some(vec![]);
+        }
 
         let bytes_per_feature = self.hidden_size / 4;
         // For Ternary dtype, float_offset stores the raw byte offset directly
         let byte_offset = slice.float_offset;
         let byte_end = byte_offset + slice.num_features * bytes_per_feature;
-        if byte_end > mmap.len() { return None; }
+        if byte_end > mmap.len() {
+            return None;
+        }
         let packed = &mmap[byte_offset..byte_end];
 
         let x = residual.as_slice()?;
@@ -271,9 +304,14 @@ impl VectorIndex {
         {
             let warmed = self.warmed_gates.read().unwrap();
             if let Some(Some(ref data)) = warmed.get(layer) {
-                let nf = self.gate_mmap_slices.get(layer).map(|s| s.num_features).unwrap_or(0);
+                let nf = self
+                    .gate_mmap_slices
+                    .get(layer)
+                    .map(|s| s.num_features)
+                    .unwrap_or(0);
                 if nf > 0 {
-                    let view = ArrayView2::from_shape((nf, self.hidden_size), data.as_slice()).unwrap();
+                    let view =
+                        ArrayView2::from_shape((nf, self.hidden_size), data.as_slice()).unwrap();
                     return Some(gemv(&view, residual));
                 }
             }
@@ -283,16 +321,21 @@ impl VectorIndex {
         if self.gate_mmap_dtype == crate::config::dtype::StorageDtype::F32 {
             if let Some(ref mmap) = self.gate_mmap_bytes {
                 if let Some(slice) = self.gate_mmap_slices.get(layer) {
-                    if slice.num_features == 0 { return None; }
+                    if slice.num_features == 0 {
+                        return None;
+                    }
                     let bpf = 4;
                     let byte_offset = slice.float_offset * bpf;
                     let byte_end = byte_offset + slice.num_features * self.hidden_size * bpf;
-                    if byte_end > mmap.len() { return None; }
+                    if byte_end > mmap.len() {
+                        return None;
+                    }
                     let data = unsafe {
                         let ptr = mmap[byte_offset..byte_end].as_ptr() as *const f32;
                         std::slice::from_raw_parts(ptr, slice.num_features * self.hidden_size)
                     };
-                    let view = ArrayView2::from_shape((slice.num_features, self.hidden_size), data).unwrap();
+                    let view = ArrayView2::from_shape((slice.num_features, self.hidden_size), data)
+                        .unwrap();
                     return Some(gemv(&view, residual));
                 }
             }
@@ -311,7 +354,9 @@ impl VectorIndex {
         top_k: usize,
     ) -> Option<Vec<(usize, f32)>> {
         let num_features = self.num_features(layer);
-        if num_features == 0 { return None; }
+        if num_features == 0 {
+            return None;
+        }
 
         // Get gate data as contiguous f32 (from mmap or warmed cache)
         let gate_data: &[f32];
@@ -321,10 +366,14 @@ impl VectorIndex {
         let mmap_slice = if self.gate_mmap_dtype == crate::config::dtype::StorageDtype::F32 {
             self.gate_mmap_bytes.as_ref().and_then(|mmap| {
                 let slice = self.gate_mmap_slices.get(layer)?;
-                if slice.num_features == 0 { return None; }
+                if slice.num_features == 0 {
+                    return None;
+                }
                 let byte_offset = slice.float_offset * 4;
                 let byte_end = byte_offset + slice.num_features * self.hidden_size * 4;
-                if byte_end > mmap.len() { return None; }
+                if byte_end > mmap.len() {
+                    return None;
+                }
                 Some(unsafe {
                     std::slice::from_raw_parts(
                         mmap[byte_offset..byte_end].as_ptr() as *const f32,
@@ -376,17 +425,23 @@ impl VectorIndex {
         // If promoted to heap, use heap path
         if let Some(Some(ref matrix)) = self.gate_vectors.get(layer) {
             let end = feat_end.min(matrix.shape()[0]);
-            if feat_start >= end { return vec![]; }
+            if feat_start >= end {
+                return vec![];
+            }
             let slice = matrix.slice(ndarray::s![feat_start..end, ..]);
             let scores = gemv(&slice, residual);
             let mut hits = Self::top_k_from_scores(&scores, top_k);
-            for hit in &mut hits { hit.0 += feat_start; }
+            for hit in &mut hits {
+                hit.0 += feat_start;
+            }
             return hits;
         }
 
         if let Some(ref mmap) = self.gate_mmap_bytes {
             if let Some(slice) = self.gate_mmap_slices.get(layer) {
-                if slice.num_features == 0 || feat_start >= slice.num_features { return vec![]; }
+                if slice.num_features == 0 || feat_start >= slice.num_features {
+                    return vec![];
+                }
                 let end = feat_end.min(slice.num_features);
                 let n_features = end - feat_start;
 
@@ -394,35 +449,48 @@ impl VectorIndex {
                     crate::config::dtype::StorageDtype::F32 => {
                         let bpf = 4;
                         let layer_byte_start = slice.float_offset * bpf;
-                        let expert_byte_start = layer_byte_start + feat_start * self.hidden_size * bpf;
+                        let expert_byte_start =
+                            layer_byte_start + feat_start * self.hidden_size * bpf;
                         let expert_byte_end = layer_byte_start + end * self.hidden_size * bpf;
-                        if expert_byte_end > mmap.len() { return vec![]; }
+                        if expert_byte_end > mmap.len() {
+                            return vec![];
+                        }
                         let data = unsafe {
-                            let ptr = mmap[expert_byte_start..expert_byte_end].as_ptr() as *const f32;
+                            let ptr =
+                                mmap[expert_byte_start..expert_byte_end].as_ptr() as *const f32;
                             std::slice::from_raw_parts(ptr, n_features * self.hidden_size)
                         };
-                        let view = ndarray::ArrayView2::from_shape(
-                            (n_features, self.hidden_size), data
-                        ).unwrap();
+                        let view =
+                            ndarray::ArrayView2::from_shape((n_features, self.hidden_size), data)
+                                .unwrap();
                         let scores = gemv(&view, residual);
                         let mut hits = Self::top_k_from_scores(&scores, top_k);
-                        for hit in &mut hits { hit.0 += feat_start; }
+                        for hit in &mut hits {
+                            hit.0 += feat_start;
+                        }
                         return hits;
                     }
                     crate::config::dtype::StorageDtype::F16 => {
                         let bpf = 2;
                         let layer_byte_start = slice.float_offset * bpf;
-                        let expert_byte_start = layer_byte_start + feat_start * self.hidden_size * bpf;
+                        let expert_byte_start =
+                            layer_byte_start + feat_start * self.hidden_size * bpf;
                         let expert_byte_end = layer_byte_start + end * self.hidden_size * bpf;
-                        if expert_byte_end > mmap.len() { return vec![]; }
+                        if expert_byte_end > mmap.len() {
+                            return vec![];
+                        }
                         let raw = &mmap[expert_byte_start..expert_byte_end];
                         let floats = infer_models::quant::half::decode_f16(raw);
                         let view = ndarray::ArrayView2::from_shape(
-                            (n_features, self.hidden_size), &floats
-                        ).unwrap();
+                            (n_features, self.hidden_size),
+                            &floats,
+                        )
+                        .unwrap();
                         let scores = gemv(&view, residual);
                         let mut hits = Self::top_k_from_scores(&scores, top_k);
-                        for hit in &mut hits { hit.0 += feat_start; }
+                        for hit in &mut hits {
+                            hit.0 += feat_start;
+                        }
                         return hits;
                     }
                     crate::config::dtype::StorageDtype::Ternary => {
@@ -430,17 +498,23 @@ impl VectorIndex {
                         let layer_byte_start = slice.float_offset;
                         let expert_byte_start = layer_byte_start + feat_start * bytes_per_feature;
                         let expert_byte_end = layer_byte_start + end * bytes_per_feature;
-                        if expert_byte_end > mmap.len() { return vec![]; }
+                        if expert_byte_end > mmap.len() {
+                            return vec![];
+                        }
                         let packed = &mmap[expert_byte_start..expert_byte_end];
                         let x = match residual.as_slice() {
                             Some(s) => s,
                             None => return vec![],
                         };
                         let cpu = infer_compute::CpuBackend;
-                        if let Some(scores_vec) = cpu.ternary_matvec(packed, x, n_features, self.hidden_size) {
+                        if let Some(scores_vec) =
+                            cpu.ternary_matvec(packed, x, n_features, self.hidden_size)
+                        {
                             let scores = Array1::from_vec(scores_vec);
                             let mut hits = Self::top_k_from_scores(&scores, top_k);
-                            for hit in &mut hits { hit.0 += feat_start; }
+                            for hit in &mut hits {
+                                hit.0 += feat_start;
+                            }
                             return hits;
                         }
                     }
@@ -467,12 +541,7 @@ impl VectorIndex {
     }
 
     /// Full walk: gate KNN at each layer, annotated with down token metadata.
-    pub fn walk(
-        &self,
-        residual: &Array1<f32>,
-        layers: &[usize],
-        top_k: usize,
-    ) -> WalkTrace {
+    pub fn walk(&self, residual: &Array1<f32>, layers: &[usize], top_k: usize) -> WalkTrace {
         let mut trace_layers = Vec::with_capacity(layers.len());
 
         for &layer in layers {
@@ -502,14 +571,11 @@ impl VectorIndex {
     /// Input: x is [seq_len, hidden]. Computes gate_vectors @ x^T = [features, seq_len].
     /// Returns the union of per-position top-K feature indices (sorted).
     /// One gemm replaces seq_len separate gemv calls.
-    pub fn gate_knn_batch(
-        &self,
-        layer: usize,
-        x: &Array2<f32>,
-        top_k: usize,
-    ) -> Vec<usize> {
+    pub fn gate_knn_batch(&self, layer: usize, x: &Array2<f32>, top_k: usize) -> Vec<usize> {
         let seq_len = x.shape()[0];
-        if seq_len == 0 { return vec![]; }
+        if seq_len == 0 {
+            return vec![];
+        }
 
         // Fast path: zero-copy f32 mmap/warmed
         let scores_2d = if let Some(s) = self.gate_scores_2d_fast(layer, x) {
@@ -530,9 +596,8 @@ impl VectorIndex {
             let mut indexed: Vec<(usize, f32)> = col.iter().copied().enumerate().collect();
             let k = top_k.min(num_features);
             if k > 0 && k < indexed.len() {
-                indexed.select_nth_unstable_by(k, |a, b| {
-                    b.1.abs().partial_cmp(&a.1.abs()).unwrap()
-                });
+                indexed
+                    .select_nth_unstable_by(k, |a, b| b.1.abs().partial_cmp(&a.1.abs()).unwrap());
                 indexed.truncate(k);
             }
             feature_set.extend(indexed.iter().map(|(idx, _)| *idx));
@@ -547,11 +612,7 @@ impl VectorIndex {
     /// Compute gate scores for all features × all positions in one BLAS gemm.
     /// Returns [seq_len, intermediate] matrix = x @ gate_vectors^T.
     /// These scores are the gate projections — the same as x @ W_gate.T.
-    pub fn gate_scores_batch(
-        &self,
-        layer: usize,
-        x: &Array2<f32>,
-    ) -> Option<Array2<f32>> {
+    pub fn gate_scores_batch(&self, layer: usize, x: &Array2<f32>) -> Option<Array2<f32>> {
         self.gate_scores_batch_backend(layer, x, None)
     }
 
@@ -568,7 +629,9 @@ impl VectorIndex {
         x: &Array2<f32>,
         backend: Option<&dyn infer_compute::ComputeBackend>,
     ) -> Option<Array2<f32>> {
-        if x.shape()[0] == 0 { return None; }
+        if x.shape()[0] == 0 {
+            return None;
+        }
 
         // Metal gemv fast path (decode / single-row prefill).
         if let Some(be) = backend {
@@ -601,9 +664,14 @@ impl VectorIndex {
         {
             let warmed = self.warmed_gates.read().unwrap();
             if let Some(Some(ref data)) = warmed.get(layer) {
-                let nf = self.gate_mmap_slices.get(layer).map(|s| s.num_features).unwrap_or(0);
+                let nf = self
+                    .gate_mmap_slices
+                    .get(layer)
+                    .map(|s| s.num_features)
+                    .unwrap_or(0);
                 if nf > 0 {
-                    let view = ArrayView2::from_shape((nf, self.hidden_size), data.as_slice()).unwrap();
+                    let view =
+                        ArrayView2::from_shape((nf, self.hidden_size), data.as_slice()).unwrap();
                     if let Some(scores) = gate_gemv_gpu(&view, &x.view(), backend) {
                         return Some(scores);
                     }
@@ -614,15 +682,20 @@ impl VectorIndex {
         if self.gate_mmap_dtype == crate::config::dtype::StorageDtype::F32 {
             if let Some(ref mmap) = self.gate_mmap_bytes {
                 if let Some(slice) = self.gate_mmap_slices.get(layer) {
-                    if slice.num_features == 0 { return None; }
+                    if slice.num_features == 0 {
+                        return None;
+                    }
                     let byte_offset = slice.float_offset * 4;
                     let byte_end = byte_offset + slice.num_features * self.hidden_size * 4;
-                    if byte_end > mmap.len() { return None; }
+                    if byte_end > mmap.len() {
+                        return None;
+                    }
                     let data = unsafe {
                         let ptr = mmap[byte_offset..byte_end].as_ptr() as *const f32;
                         std::slice::from_raw_parts(ptr, slice.num_features * self.hidden_size)
                     };
-                    let view = ArrayView2::from_shape((slice.num_features, self.hidden_size), data).unwrap();
+                    let view = ArrayView2::from_shape((slice.num_features, self.hidden_size), data)
+                        .unwrap();
                     if let Some(scores) = gate_gemv_gpu(&view, &x.view(), backend) {
                         return Some(scores);
                     }
@@ -634,25 +707,26 @@ impl VectorIndex {
         // an ~18 K × 5376 gate matrix (387 MB f32, 194 MB f16) halving
         // the memory bandwidth is the difference between hitting the
         // CPU-BLAS ceiling and going faster on Metal.
-        if self.gate_mmap_dtype == crate::config::dtype::StorageDtype::F16
-            && x.shape()[0] == 1 {
-                let slice = self.gate_mmap_slices.get(layer)?;
-                if slice.num_features == 0 { return None; }
-                let mmap = self.gate_mmap_bytes.as_ref()?;
-                let byte_offset = slice.float_offset * 2;
-                let byte_end = byte_offset + slice.num_features * self.hidden_size * 2;
-                if byte_end <= mmap.len() {
-                    let raw = &mmap[byte_offset..byte_end];
-                    let x_row = x.row(0);
-                    if let Some(x_slice) = x_row.as_slice() {
-                        if let Some(scores) = backend.f16_gemv_force(
-                            raw, x_slice, slice.num_features, self.hidden_size,
-                        ) {
-                            return Array2::from_shape_vec((slice.num_features, 1), scores).ok();
-                        }
+        if self.gate_mmap_dtype == crate::config::dtype::StorageDtype::F16 && x.shape()[0] == 1 {
+            let slice = self.gate_mmap_slices.get(layer)?;
+            if slice.num_features == 0 {
+                return None;
+            }
+            let mmap = self.gate_mmap_bytes.as_ref()?;
+            let byte_offset = slice.float_offset * 2;
+            let byte_end = byte_offset + slice.num_features * self.hidden_size * 2;
+            if byte_end <= mmap.len() {
+                let raw = &mmap[byte_offset..byte_end];
+                let x_row = x.row(0);
+                if let Some(x_slice) = x_row.as_slice() {
+                    if let Some(scores) =
+                        backend.f16_gemv_force(raw, x_slice, slice.num_features, self.hidden_size)
+                    {
+                        return Array2::from_shape_vec((slice.num_features, 1), scores).ok();
                     }
                 }
             }
+        }
         None
     }
 
@@ -662,9 +736,14 @@ impl VectorIndex {
         {
             let warmed = self.warmed_gates.read().unwrap();
             if let Some(Some(ref data)) = warmed.get(layer) {
-                let nf = self.gate_mmap_slices.get(layer).map(|s| s.num_features).unwrap_or(0);
+                let nf = self
+                    .gate_mmap_slices
+                    .get(layer)
+                    .map(|s| s.num_features)
+                    .unwrap_or(0);
                 if nf > 0 {
-                    let view = ArrayView2::from_shape((nf, self.hidden_size), data.as_slice()).unwrap();
+                    let view =
+                        ArrayView2::from_shape((nf, self.hidden_size), data.as_slice()).unwrap();
                     return Some(gate_matmul(&view, &x.view()));
                 }
             }
@@ -673,15 +752,20 @@ impl VectorIndex {
         if self.gate_mmap_dtype == crate::config::dtype::StorageDtype::F32 {
             if let Some(ref mmap) = self.gate_mmap_bytes {
                 if let Some(slice) = self.gate_mmap_slices.get(layer) {
-                    if slice.num_features == 0 { return None; }
+                    if slice.num_features == 0 {
+                        return None;
+                    }
                     let byte_offset = slice.float_offset * 4;
                     let byte_end = byte_offset + slice.num_features * self.hidden_size * 4;
-                    if byte_end > mmap.len() { return None; }
+                    if byte_end > mmap.len() {
+                        return None;
+                    }
                     let data = unsafe {
                         let ptr = mmap[byte_offset..byte_end].as_ptr() as *const f32;
                         std::slice::from_raw_parts(ptr, slice.num_features * self.hidden_size)
                     };
-                    let view = ArrayView2::from_shape((slice.num_features, self.hidden_size), data).unwrap();
+                    let view = ArrayView2::from_shape((slice.num_features, self.hidden_size), data)
+                        .unwrap();
                     return Some(gate_matmul(&view, &x.view()));
                 }
             }
@@ -691,21 +775,29 @@ impl VectorIndex {
         // per-layer, and this replaces a 462MB clone with a direct view.
         if self.gate_mmap_dtype == crate::config::dtype::StorageDtype::F16 {
             let slice = self.gate_mmap_slices.get(layer)?;
-            if slice.num_features == 0 { return None; }
+            if slice.num_features == 0 {
+                return None;
+            }
             let mmap = self.gate_mmap_bytes.as_ref()?;
             let mut cache = self.f16_decode_cache.lock().unwrap();
-            if cache.len() <= layer { cache.resize(layer + 1, None); }
+            if cache.len() <= layer {
+                cache.resize(layer + 1, None);
+            }
             let miss = cache[layer].is_none();
             if miss {
                 let byte_offset = slice.float_offset * 2;
                 let byte_end = byte_offset + slice.num_features * self.hidden_size * 2;
-                if byte_end > mmap.len() { return None; }
+                if byte_end > mmap.len() {
+                    return None;
+                }
                 let raw = &mmap[byte_offset..byte_end];
                 cache[layer] = Some(infer_models::quant::half::decode_f16(raw));
             }
             self.touch_gate_cache_lru(layer, miss, &mut cache);
             let data = cache[layer].as_ref().unwrap();
-            let view = ArrayView2::from_shape((slice.num_features, self.hidden_size), data.as_slice()).unwrap();
+            let view =
+                ArrayView2::from_shape((slice.num_features, self.hidden_size), data.as_slice())
+                    .unwrap();
             return Some(gate_matmul(&view, &x.view()));
         }
         None
@@ -715,13 +807,16 @@ impl VectorIndex {
     ///
     /// `ef_search`: beam width for search (50-200). Higher = better recall, slower.
     pub fn enable_hnsw(&self, ef_search: usize) {
-        self.hnsw_enabled.store(true, std::sync::atomic::Ordering::Relaxed);
-        self.hnsw_ef_search.store(ef_search, std::sync::atomic::Ordering::Relaxed);
+        self.hnsw_enabled
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        self.hnsw_ef_search
+            .store(ef_search, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Disable HNSW, revert to brute-force matmul.
     pub fn disable_hnsw(&self) {
-        self.hnsw_enabled.store(false, std::sync::atomic::Ordering::Relaxed);
+        self.hnsw_enabled
+            .store(false, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Whether HNSW is currently enabled.
@@ -739,14 +834,16 @@ impl VectorIndex {
     /// Get or build the HNSW index for a layer (lazy).
     fn get_or_build_hnsw(&self, layer: usize) -> bool {
         let mut cache = self.hnsw_cache.lock().unwrap();
-        if cache.len() <= layer { cache.resize_with(layer + 1, || None); }
-        if cache[layer].is_some() { return true; }
+        if cache.len() <= layer {
+            cache.resize_with(layer + 1, || None);
+        }
+        if cache[layer].is_some() {
+            return true;
+        }
 
         // Build from gate vectors
         if let Some((data, num_features)) = self.gate_matrix_f32(layer) {
-            let view = ArrayView2::from_shape(
-                (num_features, self.hidden_size), &data
-            ).unwrap();
+            let view = ArrayView2::from_shape((num_features, self.hidden_size), &data).unwrap();
             let hnsw = super::hnsw::HnswLayer::build(&view, 8, 32);
             cache[layer] = Some(hnsw);
             true
@@ -762,9 +859,13 @@ impl VectorIndex {
         residual: &Array1<f32>,
         top_k: usize,
     ) -> Option<Vec<(usize, f32)>> {
-        if !self.get_or_build_hnsw(layer) { return None; }
+        if !self.get_or_build_hnsw(layer) {
+            return None;
+        }
 
-        let ef = self.hnsw_ef_search.load(std::sync::atomic::Ordering::Relaxed);
+        let ef = self
+            .hnsw_ef_search
+            .load(std::sync::atomic::Ordering::Relaxed);
 
         // We need both the HNSW index and the vectors for search
         let cache = self.hnsw_cache.lock().unwrap();
@@ -772,9 +873,7 @@ impl VectorIndex {
 
         // Get gate matrix for dot product computation during search
         let (data, num_features) = self.gate_matrix_f32(layer)?;
-        let view = ArrayView2::from_shape(
-            (num_features, self.hidden_size), &data
-        ).unwrap();
+        let view = ArrayView2::from_shape((num_features, self.hidden_size), &data).unwrap();
 
         let results = hnsw.search(&view, residual, top_k, ef);
         Some(results)
@@ -805,9 +904,9 @@ impl VectorIndex {
                 let x = residual.as_slice().unwrap();
                 let (q8_x, q8_scales) = infer_compute::cpu::q4::quantize_to_q8(x);
                 let num_features = self.num_features(layer);
-                if let Some(scores_vec) = backend.q4_matvec(
-                    q4_data, &q8_x, &q8_scales, num_features, self.hidden_size,
-                ) {
+                if let Some(scores_vec) =
+                    backend.q4_matvec(q4_data, &q8_x, &q8_scales, num_features, self.hidden_size)
+                {
                     return Self::top_k_from_scores(&Array1::from_vec(scores_vec), top_k);
                 }
             }
@@ -835,21 +934,28 @@ impl VectorIndex {
         top_k: usize,
         backend: &dyn infer_compute::ComputeBackend,
     ) -> Option<Vec<(usize, f32)>> {
-        if !backend.has_q4() { return None; }
+        if !backend.has_q4() {
+            return None;
+        }
         let q4_data = self.gate_q4_data(layer)?;
         let slice = self.gate_q4_slices.get(layer)?;
-        if slice.num_features == 0 { return None; }
+        if slice.num_features == 0 {
+            return None;
+        }
 
-        let (q8_x, q8_scales) = infer_compute::cpu::q4::quantize_to_q8(residual.as_slice().unwrap());
+        let (q8_x, q8_scales) =
+            infer_compute::cpu::q4::quantize_to_q8(residual.as_slice().unwrap());
         let scores_vec = backend.q4_matvec(
-            q4_data, &q8_x, &q8_scales,
-            slice.num_features, self.hidden_size,
+            q4_data,
+            &q8_x,
+            &q8_scales,
+            slice.num_features,
+            self.hidden_size,
         )?;
 
         let scores = Array1::from_vec(scores_vec);
         Some(Self::top_k_from_scores(&scores, top_k))
     }
-
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -918,12 +1024,7 @@ mod gate_cache_lru_tests {
 
     /// Snapshot of the LRU queue, front (newest) first.
     fn lru_snapshot(idx: &VectorIndex) -> Vec<usize> {
-        idx.gate_cache_lru
-            .lock()
-            .unwrap()
-            .iter()
-            .copied()
-            .collect()
+        idx.gate_cache_lru.lock().unwrap().iter().copied().collect()
     }
 
     #[test]
@@ -1064,7 +1165,14 @@ mod ternary_gate_tests {
         }
 
         let mmap = anon.make_read_only().unwrap();
-        VectorIndex::new_mmap(mmap, slices, StorageDtype::Ternary, None, num_layers, hidden)
+        VectorIndex::new_mmap(
+            mmap,
+            slices,
+            StorageDtype::Ternary,
+            None,
+            num_layers,
+            hidden,
+        )
     }
 
     #[test]
@@ -1114,7 +1222,10 @@ mod ternary_gate_tests {
         let packed = dtype::encode_ternary(&vals);
         anon[..per_layer_bytes].copy_from_slice(&packed);
 
-        let slices = vec![GateLayerSlice { float_offset: 0, num_features }];
+        let slices = vec![GateLayerSlice {
+            float_offset: 0,
+            num_features,
+        }];
         let mmap = anon.make_read_only().unwrap();
         let idx = VectorIndex::new_mmap(mmap, slices, StorageDtype::Ternary, None, 1, hidden);
 

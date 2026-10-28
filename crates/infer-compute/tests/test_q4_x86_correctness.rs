@@ -12,17 +12,29 @@ fn f16_to_f32(bits: u16) -> f32 {
     let exp = ((bits >> 10) & 0x1F) as i32;
     let mant = (bits & 0x3FF) as u32;
     if exp == 0 {
-        if mant == 0 { return if sign == 1 { -0.0 } else { 0.0 }; }
+        if mant == 0 {
+            return if sign == 1 { -0.0 } else { 0.0 };
+        }
         let val = mant as f32 / 1024.0 * 2.0f32.powi(-14);
         return if sign == 1 { -val } else { val };
     }
     if exp == 31 {
         return if mant == 0 {
-            if sign == 1 { f32::NEG_INFINITY } else { f32::INFINITY }
-        } else { f32::NAN };
+            if sign == 1 {
+                f32::NEG_INFINITY
+            } else {
+                f32::INFINITY
+            }
+        } else {
+            f32::NAN
+        };
     }
     let val = (1.0 + mant as f32 / 1024.0) * 2.0f32.powi(exp - 15);
-    if sign == 1 { -val } else { val }
+    if sign == 1 {
+        -val
+    } else {
+        val
+    }
 }
 
 /// Dequantize a single Q4_0 row (blocks_per_row * 18 bytes) into f32.
@@ -37,7 +49,7 @@ fn dequantize_q4_0_row(row: &[u8], hidden: usize) -> Vec<f32> {
             let byte = block[2 + j];
             let lo = (byte & 0x0F) as i32 - 8;
             let hi = ((byte >> 4) & 0x0F) as i32 - 8;
-            out[b * 32 + 2 * j]     = lo as f32 * scale;
+            out[b * 32 + 2 * j] = lo as f32 * scale;
             out[b * 32 + 2 * j + 1] = hi as f32 * scale;
         }
     }
@@ -65,17 +77,23 @@ fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
 fn max_rel_err(kernel: &[f32], reference: &[f32]) -> f32 {
     let scale: f32 = reference.iter().map(|v| v.abs()).fold(0.0f32, f32::max);
     let denom = scale.max(1e-6);
-    kernel.iter().zip(reference)
+    kernel
+        .iter()
+        .zip(reference)
         .map(|(k, r)| (k - r).abs() / denom)
         .fold(0.0f32, f32::max)
 }
 
 fn synth(n: usize, seed: u64) -> Vec<f32> {
     let mut s = seed;
-    (0..n).map(|_| {
-        s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
-        ((s >> 33) as f32) / (u32::MAX as f32) * 2.0 - 1.0
-    }).collect()
+    (0..n)
+        .map(|_| {
+            s = s
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            ((s >> 33) as f32) / (u32::MAX as f32) * 2.0 - 1.0
+        })
+        .collect()
 }
 
 #[test]
@@ -148,15 +166,19 @@ fn q4_vecmat_matches_dequant_reference() {
 
 #[cfg(target_arch = "x86_64")]
 mod q4k_avx2_tests {
-    use infer_compute::cpu::ops::q4k_matvec;
     use infer_compute::cpu::ops::q4_common::quantize_q4_k;
+    use infer_compute::cpu::ops::q4k_matvec;
 
     fn synth(n: usize, seed: u64) -> Vec<f32> {
         let mut s = seed;
-        (0..n).map(|_| {
-            s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
-            ((s >> 33) as f32) / (u32::MAX as f32) * 2.0 - 1.0
-        }).collect()
+        (0..n)
+            .map(|_| {
+                s = s
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
+                ((s >> 33) as f32) / (u32::MAX as f32) * 2.0 - 1.0
+            })
+            .collect()
     }
 
     #[test]
@@ -181,7 +203,8 @@ mod q4k_avx2_tests {
             assert!(
                 diff < 1e-3,
                 "row {i}: scalar={}, avx2={}, diff={diff}",
-                scalar[i], dispatched[i]
+                scalar[i],
+                dispatched[i]
             );
         }
     }
@@ -208,7 +231,8 @@ mod q4k_avx2_tests {
             assert!(
                 rel < 1e-4,
                 "row {i}: scalar={}, avx2={}, diff={diff}, rel={rel}",
-                scalar[i], dispatched[i]
+                scalar[i],
+                dispatched[i]
             );
         }
     }
@@ -240,15 +264,19 @@ mod q4k_avx2_tests {
 
 #[cfg(target_arch = "x86_64")]
 mod q6k_avx2_tests {
-    use infer_compute::cpu::ops::q6k_matvec;
     use infer_compute::cpu::ops::q4_common::quantize_q6_k;
+    use infer_compute::cpu::ops::q6k_matvec;
 
     fn synth(n: usize, seed: u64) -> Vec<f32> {
         let mut s = seed;
-        (0..n).map(|_| {
-            s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
-            ((s >> 33) as f32) / (u32::MAX as f32) * 2.0 - 1.0
-        }).collect()
+        (0..n)
+            .map(|_| {
+                s = s
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
+                ((s >> 33) as f32) / (u32::MAX as f32) * 2.0 - 1.0
+            })
+            .collect()
     }
 
     #[test]
@@ -272,7 +300,8 @@ mod q6k_avx2_tests {
             assert!(
                 diff < 1e-4,
                 "row {i}: scalar={}, avx2={}, diff={diff}",
-                scalar[i], dispatched[i]
+                scalar[i],
+                dispatched[i]
             );
         }
     }
@@ -299,7 +328,8 @@ mod q6k_avx2_tests {
             assert!(
                 rel < 1e-4,
                 "row {i}: scalar={}, avx2={}, diff={diff}, rel={rel}",
-                scalar[i], dispatched[i]
+                scalar[i],
+                dispatched[i]
             );
         }
     }
@@ -329,5 +359,8 @@ fn q4_matvec_vs_raw_f32_matvec_quant_noise() {
 
     // Q4 (4-bit) + Q8 (8-bit) with random inputs — expect high cosine,
     // but not tight elementwise agreement.
-    assert!(cos > 0.99, "cosine {cos} indicates kernel disagrees with f32 reference");
+    assert!(
+        cos > 0.99,
+        "cosine {cos} indicates kernel disagrees with f32 reference"
+    );
 }

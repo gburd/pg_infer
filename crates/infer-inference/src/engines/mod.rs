@@ -6,5 +6,5 @@
 
 pub mod markov_residual;
 
-pub use markov_residual::{MarkovResidualEngine, RsStore, RsPrefillResult};
-pub use markov_residual::{rs_prefill, rs_decode_step, recompute_kv, kv_memory_bytes_for_seq};
+pub use markov_residual::{kv_memory_bytes_for_seq, recompute_kv, rs_decode_step, rs_prefill};
+pub use markov_residual::{MarkovResidualEngine, RsPrefillResult, RsStore};

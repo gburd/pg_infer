@@ -12,7 +12,10 @@ pub mod quant;
 pub mod vectors;
 pub mod weights;
 
-pub use config::{Activation, ExpertFormat, FfnLayerType, FfnType, ModelArchitecture, ModelConfig, NormType, RopeScaling};
+pub use config::{
+    Activation, ExpertFormat, FfnLayerType, FfnType, ModelArchitecture, ModelConfig, NormType,
+    RopeScaling,
+};
 pub use detect::{detect_architecture, detect_from_json, detect_from_json_strict, ModelError};
 
 pub use architectures::bitnet::BitNetArch;
@@ -39,7 +42,7 @@ pub use vectors::{
 pub use weights::{ModelWeights, WeightArray};
 
 pub use loading::{
-    is_ffn_tensor, load_gguf, load_model_dir, load_model_dir_filtered,
-    load_model_dir_walk_only, resolve_model_path,
-    load_gguf_quantized, GgufQuantFormat, QuantizedModelWeights, QuantizedTensor,
+    is_ffn_tensor, load_gguf, load_gguf_quantized, load_model_dir, load_model_dir_filtered,
+    load_model_dir_walk_only, resolve_model_path, GgufQuantFormat, QuantizedModelWeights,
+    QuantizedTensor,
 };

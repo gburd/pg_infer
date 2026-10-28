@@ -153,17 +153,18 @@ impl Clone for VectorIndex {
             f16_decode_cache: Mutex::new(vec![None; self.num_layers]),
             gate_cache_lru: Mutex::new(std::collections::VecDeque::new()),
             gate_cache_max_layers: std::sync::atomic::AtomicUsize::new(
-                self.gate_cache_max_layers.load(std::sync::atomic::Ordering::Relaxed),
+                self.gate_cache_max_layers
+                    .load(std::sync::atomic::Ordering::Relaxed),
             ),
             warmed_gates: std::sync::RwLock::new(vec![None; self.num_layers]),
             down_features_mmap: self.down_features_mmap.clone(),
             up_features_mmap: self.up_features_mmap.clone(),
             hnsw_cache: Mutex::new((0..self.num_layers).map(|_| None).collect()),
             hnsw_enabled: std::sync::atomic::AtomicBool::new(
-                self.hnsw_enabled.load(Ordering::Relaxed)
+                self.hnsw_enabled.load(Ordering::Relaxed),
             ),
             hnsw_ef_search: std::sync::atomic::AtomicUsize::new(
-                self.hnsw_ef_search.load(Ordering::Relaxed)
+                self.hnsw_ef_search.load(Ordering::Relaxed),
             ),
             lm_head_mmap: self.lm_head_mmap.clone(),
             lm_head_f16_mmap: self.lm_head_f16_mmap.clone(),
@@ -172,9 +173,7 @@ impl Clone for VectorIndex {
             interleaved_q4_mmap: self.interleaved_q4_mmap.clone(),
             interleaved_q4k_mmap: self.interleaved_q4k_mmap.clone(),
             interleaved_q4k_manifest: self.interleaved_q4k_manifest.clone(),
-            q4k_ffn_cache: Mutex::new(
-                (0..self.num_layers).map(|_| [None, None, None]).collect(),
-            ),
+            q4k_ffn_cache: Mutex::new((0..self.num_layers).map(|_| [None, None, None]).collect()),
             gate_q4_mmap: self.gate_q4_mmap.clone(),
             gate_q4_slices: self.gate_q4_slices.clone(),
             lm_head_q4_mmap: self.lm_head_q4_mmap.clone(),
@@ -305,7 +304,10 @@ impl VectorIndex {
     /// `relation_labels` map so `feature_meta()` can return relation labels.
     ///
     /// Silently returns Ok(0) if either file is missing (optional data).
-    pub fn load_relation_labels(&mut self, dir: &std::path::Path) -> Result<usize, crate::VindexError> {
+    pub fn load_relation_labels(
+        &mut self,
+        dir: &std::path::Path,
+    ) -> Result<usize, crate::VindexError> {
         use std::io::BufRead;
 
         let clusters_path = dir.join("relation_clusters.json");
@@ -316,8 +318,8 @@ impl VectorIndex {
         }
 
         // Parse cluster result to get labels per cluster index.
-        let clusters_text = std::fs::read_to_string(&clusters_path)
-            .map_err(crate::VindexError::Io)?;
+        let clusters_text =
+            std::fs::read_to_string(&clusters_path).map_err(crate::VindexError::Io)?;
         let cluster_result: crate::clustering::ClusterResult = serde_json::from_str(&clusters_text)
             .map_err(|e| crate::VindexError::Parse(format!("relation_clusters.json: {e}")))?;
 
@@ -334,8 +336,7 @@ impl VectorIndex {
         };
 
         // Parse feature assignments (NDJSON: {"l": layer, "f": feature, "c": cluster})
-        let file = std::fs::File::open(&assignments_path)
-            .map_err(crate::VindexError::Io)?;
+        let file = std::fs::File::open(&assignments_path).map_err(crate::VindexError::Io)?;
         let reader = std::io::BufReader::new(file);
         let mut count = 0usize;
 
@@ -366,7 +367,8 @@ impl VectorIndex {
         if self.is_mmap() {
             return 0;
         }
-        self.gate_vectors.iter()
+        self.gate_vectors
+            .iter()
             .filter_map(|v| v.as_ref())
             .map(|m| m.len() * std::mem::size_of::<f32>())
             .sum()

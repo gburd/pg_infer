@@ -191,8 +191,7 @@ impl BackendCache {
     }
 }
 
-static BACKEND_CACHE: Lazy<Mutex<BackendCache>> =
-    Lazy::new(|| Mutex::new(BackendCache::new()));
+static BACKEND_CACHE: Lazy<Mutex<BackendCache>> = Lazy::new(|| Mutex::new(BackendCache::new()));
 
 /// Resolve the model name for a query function.
 ///
@@ -332,9 +331,7 @@ fn load_backend(model_name: &str) -> Result<Arc<dyn Backend>, PgInferError> {
                     model_name
                 ))
             })?;
-            let model_id = row
-                .server_url
-                .unwrap_or_else(|| model_name.to_string());
+            let model_id = row.server_url.unwrap_or_else(|| model_name.to_string());
             let backend = GridBackend::connect(
                 &model_id,
                 &grid_url,
@@ -374,13 +371,20 @@ pub fn load_from_path(path: &Path) -> Result<ModelHandle, PgInferError> {
         vindex.enable_hnsw(gucs::hnsw_ef_search());
 
         if gucs::build_hnsw_on_load() {
-            pgrx::log!("Building HNSW indexes for all {} layers...", vindex.num_layers);
+            pgrx::log!(
+                "Building HNSW indexes for all {} layers...",
+                vindex.num_layers
+            );
             for layer in 0..vindex.num_layers {
                 let dummy_vec = ndarray::Array1::<f32>::zeros(vindex.hidden_size);
                 let _ = vindex.gate_knn(layer, &dummy_vec, 1);
 
                 if layer > 0 && (layer + 1) % 10 == 0 {
-                    pgrx::log!("  Built HNSW for {}/{} layers", layer + 1, vindex.num_layers);
+                    pgrx::log!(
+                        "  Built HNSW for {}/{} layers",
+                        layer + 1,
+                        vindex.num_layers
+                    );
                 }
             }
             pgrx::log!("HNSW build complete for all {} layers", vindex.num_layers);

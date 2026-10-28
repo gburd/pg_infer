@@ -37,9 +37,7 @@ fn infer_diff(
 > {
     let limit = top.unwrap_or(20) as usize;
 
-    let a_data = registry::with_backend(model_a, |backend| {
-        backend.snapshot_features(layer)
-    })?;
+    let a_data = registry::with_backend(model_a, |backend| backend.snapshot_features(layer))?;
 
     // We need per-feature metadata from B to synthesize diff rows.  The
     // trait exposes `feature_meta_at` — remote backends return `None`

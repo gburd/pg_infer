@@ -38,9 +38,13 @@ extern "C" {
 pub fn dispatch(packed: &[u8], x: &[f32], num_rows: usize, hidden: usize) -> Vec<f32> {
     debug_assert!(hidden.is_multiple_of(4), "hidden must be multiple of 4");
     let bytes_per_row = hidden / 4;
-    debug_assert_eq!(packed.len(), num_rows * bytes_per_row,
+    debug_assert_eq!(
+        packed.len(),
+        num_rows * bytes_per_row,
         "packed length mismatch: expected {}, got {}",
-        num_rows * bytes_per_row, packed.len());
+        num_rows * bytes_per_row,
+        packed.len()
+    );
     debug_assert!(x.len() >= hidden, "x length must be >= hidden");
 
     let mut scores = vec![0.0f32; num_rows];
@@ -61,9 +65,13 @@ pub fn dispatch(packed: &[u8], x: &[f32], num_rows: usize, hidden: usize) -> Vec
 pub fn dispatch_scalar(packed: &[u8], x: &[f32], num_rows: usize, hidden: usize) -> Vec<f32> {
     debug_assert!(hidden.is_multiple_of(4), "hidden must be multiple of 4");
     let bytes_per_row = hidden / 4;
-    debug_assert_eq!(packed.len(), num_rows * bytes_per_row,
+    debug_assert_eq!(
+        packed.len(),
+        num_rows * bytes_per_row,
         "packed length mismatch: expected {}, got {}",
-        num_rows * bytes_per_row, packed.len());
+        num_rows * bytes_per_row,
+        packed.len()
+    );
 
     let mut scores = vec![0.0f32; num_rows];
 
@@ -79,10 +87,26 @@ pub fn dispatch_scalar(packed: &[u8], x: &[f32], num_rows: usize, hidden: usize)
             let v3 = (byte >> 6) & 0x03;
 
             // 0b01 → +1 (add), 0b10 → -1 (subtract), 0b00 → 0 (skip)
-            if v0 == 1 { acc += x[base]; } else if v0 == 2 { acc -= x[base]; }
-            if v1 == 1 { acc += x[base + 1]; } else if v1 == 2 { acc -= x[base + 1]; }
-            if v2 == 1 { acc += x[base + 2]; } else if v2 == 2 { acc -= x[base + 2]; }
-            if v3 == 1 { acc += x[base + 3]; } else if v3 == 2 { acc -= x[base + 3]; }
+            if v0 == 1 {
+                acc += x[base];
+            } else if v0 == 2 {
+                acc -= x[base];
+            }
+            if v1 == 1 {
+                acc += x[base + 1];
+            } else if v1 == 2 {
+                acc -= x[base + 1];
+            }
+            if v2 == 1 {
+                acc += x[base + 2];
+            } else if v2 == 2 {
+                acc -= x[base + 2];
+            }
+            if v3 == 1 {
+                acc += x[base + 3];
+            } else if v3 == 2 {
+                acc -= x[base + 3];
+            }
         }
         scores[row] = acc;
     }
@@ -99,7 +123,12 @@ mod tests {
         data.chunks_exact(4)
             .map(|chunk| {
                 let e = |v: i8| -> u8 {
-                    match v { 0 => 0b00, 1 => 0b01, -1 => 0b10, _ => 0b00 }
+                    match v {
+                        0 => 0b00,
+                        1 => 0b01,
+                        -1 => 0b10,
+                        _ => 0b00,
+                    }
                 };
                 e(chunk[0]) | (e(chunk[1]) << 2) | (e(chunk[2]) << 4) | (e(chunk[3]) << 6)
             })
@@ -126,10 +155,7 @@ mod tests {
         // x: [1, 2, 3, 4, 5, 6, 7, 8]
         // Row 0: (1+2+3+4) - (5+6+7+8) = 10 - 26 = -16
         // Row 1: -(1+2+3+4) + (5+6+7+8) = -10 + 26 = 16
-        let weights: Vec<i8> = vec![
-            1, 1, 1, 1, -1, -1, -1, -1,
-            -1, -1, -1, -1, 1, 1, 1, 1,
-        ];
+        let weights: Vec<i8> = vec![1, 1, 1, 1, -1, -1, -1, -1, -1, -1, -1, -1, 1, 1, 1, 1];
         let packed = pack_ternary(&weights);
         let x: Vec<f32> = (1..=8).map(|i| i as f32).collect();
         let scores = dispatch(&packed, &x, 2, 8);

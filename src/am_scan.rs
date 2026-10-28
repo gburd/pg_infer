@@ -61,8 +61,7 @@ pub unsafe extern "C-unwind" fn infer_ambeginscan(
     let scan = pg_sys::RelationGetIndexScan(index_rel, nkeys, norderbys);
 
     // Read metapage version to determine scan strategy.
-    let index_version = am_pages::read_metapage_version(index_rel)
-        .unwrap_or(1);
+    let index_version = am_pages::read_metapage_version(index_rel).unwrap_or(1);
 
     // Read model name from the metapage.
     let model_name = am_options::read_model_from_metapage(index_rel)
@@ -108,7 +107,10 @@ pub unsafe extern "C-unwind" fn infer_amrescan(
     // The key is the RHS of `col <~> 'query text'`.
     if norderbys > 0 && !orderbys.is_null() {
         let key = &*orderbys;
-        debug_assert!(!key.sk_argument.is_null(), "scan key argument should not be null");
+        debug_assert!(
+            !key.sk_argument.is_null(),
+            "scan key argument should not be null"
+        );
         if !key.sk_argument.is_null() {
             // The argument is a text datum — use text_to_cstring for safe extraction.
             let text_ptr = key.sk_argument.cast_mut_ptr::<pg_sys::varlena>();
@@ -134,11 +136,7 @@ pub unsafe extern "C-unwind" fn infer_amrescan(
 
     // Copy order-by keys into scan descriptor for executor.
     if norderbys > 0 && !orderbys.is_null() {
-        std::ptr::copy_nonoverlapping(
-            orderbys,
-            (*scan).orderByData,
-            norderbys as usize,
-        );
+        std::ptr::copy_nonoverlapping(orderbys, (*scan).orderByData, norderbys as usize);
     }
 }
 
@@ -313,10 +311,9 @@ unsafe fn compute_ranked_results(
     let limit = candidates.len();
 
     // Call backend.rank() for batch scoring.
-    let ranked: Vec<RankedCandidate> =
-        registry::with_backend(&state.model_name, |backend| {
-            backend.rank(&candidates, query, limit)
-        })?;
+    let ranked: Vec<RankedCandidate> = registry::with_backend(&state.model_name, |backend| {
+        backend.rank(&candidates, query, limit)
+    })?;
 
     // Convert to (TID, distance) pairs sorted by distance ascending.
     state.results = ranked
@@ -378,10 +375,8 @@ unsafe fn compute_ranked_results_v2(
     let entry_size = crate::am_pages::EmbeddingEntryHeader::SIZE + dim;
 
     // Embed the query text to get a float vector.
-    let query_embedding: Vec<f32> = registry::with_backend(&state.model_name, |backend| {
-        backend.embed(query)
-    })?
-    .to_vec();
+    let query_embedding: Vec<f32> =
+        registry::with_backend(&state.model_name, |backend| backend.embed(query))?.to_vec();
 
     // HNSW search: get candidates.
     let ef_search = crate::gucs::am_hnsw_ef_search();
@@ -396,10 +391,14 @@ unsafe fn compute_ranked_results_v2(
         }
         let header_bytes = &embed_data[offset..header_end];
         // SAFETY: EmbeddingEntryHeader is repr(C) with known layout.
-        let header =
-            &*(header_bytes.as_ptr() as *const crate::am_pages::EmbeddingEntryHeader);
+        let header = &*(header_bytes.as_ptr() as *const crate::am_pages::EmbeddingEntryHeader);
         let quantized = &embed_data[header_end..header_end + dim];
-        crate::sq8::asymmetric_distance_sq8_squared(&query_embedding, quantized, header.min, header.max)
+        crate::sq8::asymmetric_distance_sq8_squared(
+            &query_embedding,
+            quantized,
+            header.min,
+            header.max,
+        )
     };
 
     let hnsw_results = searcher.search(num_candidates, ef_search, &distance_fn);
@@ -434,8 +433,8 @@ unsafe fn compute_ranked_results_v2(
         if header_end > embed_data.len() {
             continue;
         }
-        let header =
-            &*(embed_data[offset..header_end].as_ptr() as *const crate::am_pages::EmbeddingEntryHeader);
+        let header = &*(embed_data[offset..header_end].as_ptr()
+            as *const crate::am_pages::EmbeddingEntryHeader);
 
         let tid = header.tid;
         candidate_tids.push(tid);
@@ -451,10 +450,9 @@ unsafe fn compute_ranked_results_v2(
 
     // Re-rank with full model.
     let limit = candidate_texts.len();
-    let ranked: Vec<RankedCandidate> =
-        registry::with_backend(&state.model_name, |backend| {
-            backend.rank(&candidate_texts, query, limit)
-        })?;
+    let ranked: Vec<RankedCandidate> = registry::with_backend(&state.model_name, |backend| {
+        backend.rank(&candidate_texts, query, limit)
+    })?;
 
     // Convert to (TID, distance) pairs.
     state.results = ranked
@@ -528,12 +526,7 @@ unsafe fn fetch_text_from_heap(
     // Fetch the tuple by TID.
     let snapshot = pg_sys::GetActiveSnapshot();
     let mut tid_copy = *tid;
-    let found = pg_sys::table_tuple_fetch_row_version(
-        heap_rel,
-        &mut tid_copy,
-        snapshot,
-        slot,
-    );
+    let found = pg_sys::table_tuple_fetch_row_version(heap_rel, &mut tid_copy, snapshot, slot);
 
     if !found {
         pg_sys::ExecDropSingleTupleTableSlot(slot);

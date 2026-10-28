@@ -100,10 +100,14 @@ pub fn summarize_experts(
 ) -> Vec<Array2<f32>> {
     use rayon::prelude::*;
 
-    experts.par_iter().enumerate().map(|(i, expert)| {
-        let seed = 42u64.wrapping_add(i as u64);
-        top_k_right_singular_vectors(expert.view(), top_k, p_iters, seed)
-    }).collect()
+    experts
+        .par_iter()
+        .enumerate()
+        .map(|(i, expert)| {
+            let seed = 42u64.wrapping_add(i as u64);
+            top_k_right_singular_vectors(expert.view(), top_k, p_iters, seed)
+        })
+        .collect()
 }
 
 #[cfg(test)]

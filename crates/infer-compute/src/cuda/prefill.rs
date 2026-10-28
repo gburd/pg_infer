@@ -15,10 +15,10 @@
 //! 7. FFN: gate + up -> activation -> down
 //! 8. Post-FFN residual (with optional post-FFN norm)
 
-use super::{CudaBackend, CudaError};
 use super::kernels;
+use super::{CudaBackend, CudaError};
 use crate::backend::ComputeBackend;
-use crate::pipeline::{FullPipelineLayer, QuantFormat, Activation, FfnType};
+use crate::pipeline::{Activation, FfnType, FullPipelineLayer, QuantFormat};
 
 // ── Helper: RMS norm (CPU-side, applied per position) ──
 
@@ -66,34 +66,28 @@ fn quant_matvec(
     hidden: usize,
 ) -> Result<Vec<f32>, CudaError> {
     match format {
-        QuantFormat::Q4_K | QuantFormat::Q4_KF => {
-            kernels::q4k_matvec_cuda(
-                &backend.device,
-                &backend.stream,
-                &backend.buffer_pool,
-                data,
-                x,
-                num_rows,
-                hidden,
-            )
-        }
-        QuantFormat::Q6_K => {
-            kernels::q6k_matvec_cuda(
-                &backend.device,
-                &backend.stream,
-                &backend.buffer_pool,
-                data,
-                x,
-                num_rows,
-                hidden,
-            )
-        }
+        QuantFormat::Q4_K | QuantFormat::Q4_KF => kernels::q4k_matvec_cuda(
+            &backend.device,
+            &backend.stream,
+            &backend.buffer_pool,
+            data,
+            x,
+            num_rows,
+            hidden,
+        ),
+        QuantFormat::Q6_K => kernels::q6k_matvec_cuda(
+            &backend.device,
+            &backend.stream,
+            &backend.buffer_pool,
+            data,
+            x,
+            num_rows,
+            hidden,
+        ),
         QuantFormat::Q4_0 | QuantFormat::Q8_0 => {
             // Q4_0/Q8_0: fall back to CPU for now (requires Q8 quantized input)
             let result = backend.cpu_fallback.q4k_matvec(data, x, num_rows, hidden);
-            result.ok_or_else(|| {
-                CudaError::KernelLaunch("Q4_0/Q8_0 fallback failed".into())
-            })
+            result.ok_or_else(|| CudaError::KernelLaunch("Q4_0/Q8_0 fallback failed".into()))
         }
     }
 }
@@ -111,7 +105,11 @@ fn apply_rope(
     rope_base: f32,
     rotary_dim: usize,
 ) {
-    let dim = if rotary_dim == 0 { head_dim } else { rotary_dim };
+    let dim = if rotary_dim == 0 {
+        head_dim
+    } else {
+        rotary_dim
+    };
     let half = dim / 2;
 
     for s in 0..seq_len {
@@ -220,10 +218,8 @@ fn apply_qk_norm(
             let base = s * num_heads * head_dim + h * head_dim;
             let head_slice = &vectors[base..base + head_dim];
 
-            let rms = (head_slice.iter().map(|&v| v * v).sum::<f32>()
-                / head_dim as f32
-                + eps)
-                .sqrt();
+            let rms =
+                (head_slice.iter().map(|&v| v * v).sum::<f32>() / head_dim as f32 + eps).sqrt();
 
             for d in 0..head_dim {
                 vectors[base + d] = vectors[base + d] / rms * (norm_weight[d] + offset);
@@ -236,20 +232,11 @@ fn apply_qk_norm(
 
 /// Apply parameter-free RMS norm per V head (Gemma 4).
 /// Normalizes each head's V vector to unit RMS.
-fn apply_v_norm(
-    v: &mut [f32],
-    seq_len: usize,
-    num_kv_heads: usize,
-    head_dim: usize,
-    eps: f32,
-) {
+fn apply_v_norm(v: &mut [f32], seq_len: usize, num_kv_heads: usize, head_dim: usize, eps: f32) {
     for s in 0..seq_len {
         for h in 0..num_kv_heads {
             let base = s * num_kv_heads * head_dim + h * head_dim;
-            let rms = (v[base..base + head_dim]
-                .iter()
-                .map(|&x| x * x)
-                .sum::<f32>()
+            let rms = (v[base..base + head_dim].iter().map(|&x| x * x).sum::<f32>()
                 / head_dim as f32
                 + eps)
                 .sqrt();
@@ -292,14 +279,22 @@ fn ffn_one_position(
 
             // Gate projection: [inter] = gate_weights[inter, hidden] @ input[hidden]
             let gate_out = quant_matvec(
-                backend, layer.gate.data, layer.gate.format,
-                input, inter, hidden,
+                backend,
+                layer.gate.data,
+                layer.gate.format,
+                input,
+                inter,
+                hidden,
             )?;
 
             // Up projection: [inter] = up_weights[inter, hidden] @ input[hidden]
             let up_out = quant_matvec(
-                backend, layer.up.data, layer.up.format,
-                input, inter, hidden,
+                backend,
+                layer.up.data,
+                layer.up.format,
+                input,
+                inter,
+                hidden,
             )?;
 
             // Activation: act(gate) * up
@@ -319,8 +314,12 @@ fn ffn_one_position(
 
             // Down projection: [hidden] = down_weights[hidden, inter] @ act[inter]
             let down_out = quant_matvec(
-                backend, layer.down.data, layer.down.format,
-                &act_out, hidden, inter,
+                backend,
+                layer.down.data,
+                layer.down.format,
+                &act_out,
+                hidden,
+                inter,
             )?;
 
             Ok(down_out)
@@ -329,8 +328,12 @@ fn ffn_one_position(
             // Standard FFN: up -> activation -> down
             let inter = infer_rows(layer.up.data, layer.up.format, hidden);
             let mut up_out = quant_matvec(
-                backend, layer.up.data, layer.up.format,
-                input, inter, hidden,
+                backend,
+                layer.up.data,
+                layer.up.format,
+                input,
+                inter,
+                hidden,
             )?;
 
             // Add bias if present
@@ -356,8 +359,12 @@ fn ffn_one_position(
 
             // Down projection
             let mut down_out = quant_matvec(
-                backend, layer.down.data, layer.down.format,
-                &up_out, hidden, inter,
+                backend,
+                layer.down.data,
+                layer.down.format,
+                &up_out,
+                hidden,
+                inter,
             )?;
 
             // Add bias if present
@@ -384,7 +391,7 @@ fn infer_rows(data: &[u8], format: QuantFormat, hidden: usize) -> usize {
         QuantFormat::Q4_K | QuantFormat::Q4_KF => (hidden / 256) * 144,
         QuantFormat::Q6_K => (hidden / 256) * 210,
         QuantFormat::Q4_0 => hidden * 9 / 16, // 18 bytes per 32 values
-        QuantFormat::Q8_0 => hidden,           // 1 byte per value (scales separate)
+        QuantFormat::Q8_0 => hidden,          // 1 byte per value (scales separate)
     };
     if bytes_per_row == 0 {
         return 0;
@@ -463,22 +470,34 @@ pub fn prefill_cuda(
 
             // Q projection
             let q = quant_matvec(
-                backend, layer.wq.data, layer.wq.format,
-                input_pos, q_dim, hidden,
+                backend,
+                layer.wq.data,
+                layer.wq.format,
+                input_pos,
+                q_dim,
+                hidden,
             )?;
             q_all.extend_from_slice(&q);
 
             // K projection
             let k = quant_matvec(
-                backend, layer.wk.data, layer.wk.format,
-                input_pos, kv_dim, hidden,
+                backend,
+                layer.wk.data,
+                layer.wk.format,
+                input_pos,
+                kv_dim,
+                hidden,
             )?;
             k_all.extend_from_slice(&k);
 
             // V projection
             let v = quant_matvec(
-                backend, layer.wv.data, layer.wv.format,
-                input_pos, kv_dim, hidden,
+                backend,
+                layer.wv.data,
+                layer.wv.format,
+                input_pos,
+                kv_dim,
+                hidden,
             )?;
             v_all.extend_from_slice(&v);
         }
@@ -486,14 +505,24 @@ pub fn prefill_cuda(
         // ── 2b. QK-norm (Gemma 3/4) ──
         if let Some(q_norm) = layer.q_norm_weight {
             apply_qk_norm(
-                &mut q_all, seq_len, num_q_heads, head_dim,
-                q_norm, eps, qk_norm_offset,
+                &mut q_all,
+                seq_len,
+                num_q_heads,
+                head_dim,
+                q_norm,
+                eps,
+                qk_norm_offset,
             );
         }
         if let Some(k_norm) = layer.k_norm_weight {
             apply_qk_norm(
-                &mut k_all, seq_len, num_kv_heads, head_dim,
-                k_norm, eps, qk_norm_offset,
+                &mut k_all,
+                seq_len,
+                num_kv_heads,
+                head_dim,
+                k_norm,
+                eps,
+                qk_norm_offset,
             );
         }
 
@@ -503,14 +532,34 @@ pub fn prefill_cuda(
         }
 
         // ── 3. RoPE ──
-        apply_rope(&mut q_all, seq_len, num_q_heads, head_dim, rope_base, rotary_dim);
-        apply_rope(&mut k_all, seq_len, num_kv_heads, head_dim, rope_base, rotary_dim);
+        apply_rope(
+            &mut q_all,
+            seq_len,
+            num_q_heads,
+            head_dim,
+            rope_base,
+            rotary_dim,
+        );
+        apply_rope(
+            &mut k_all,
+            seq_len,
+            num_kv_heads,
+            head_dim,
+            rope_base,
+            rotary_dim,
+        );
 
         // ── 4. Attention ──
         let attn_out = scaled_dot_product_attention(
-            &q_all, &k_all, &v_all,
-            seq_len, num_q_heads, num_kv_heads, head_dim,
-            scale, softcap,
+            &q_all,
+            &k_all,
+            &v_all,
+            seq_len,
+            num_q_heads,
+            num_kv_heads,
+            head_dim,
+            scale,
+            softcap,
         );
 
         // ── 5. O projection per position ──
@@ -518,8 +567,12 @@ pub fn prefill_cuda(
         for s in 0..seq_len {
             let attn_pos = &attn_out[s * q_dim..(s + 1) * q_dim];
             let o = quant_matvec(
-                backend, layer.wo.data, layer.wo.format,
-                attn_pos, hidden, q_dim,
+                backend,
+                layer.wo.data,
+                layer.wo.format,
+                attn_pos,
+                hidden,
+                q_dim,
             )?;
             o_out.extend_from_slice(&o);
         }
@@ -535,7 +588,12 @@ pub fn prefill_cuda(
         let h_post_attn = if has_post_norms {
             // Post-norm: norm(O) + residual
             let o_normed = rms_norm_batch(
-                &o_out, layer.post_attn_norm, hidden, seq_len, eps, norm_offset,
+                &o_out,
+                layer.post_attn_norm,
+                hidden,
+                seq_len,
+                eps,
+                norm_offset,
             );
             add_residual(&h, &o_normed)
         } else {
@@ -552,7 +610,12 @@ pub fn prefill_cuda(
             layer.post_attn_norm
         };
         let ffn_input = rms_norm_batch(
-            &h_post_attn, ffn_norm_weight, hidden, seq_len, eps, norm_offset,
+            &h_post_attn,
+            ffn_norm_weight,
+            hidden,
+            seq_len,
+            eps,
+            norm_offset,
         );
 
         // ── 8. FFN: gate + up -> activation -> down (per position) ──
@@ -567,9 +630,8 @@ pub fn prefill_cuda(
         h = if has_post_norms {
             if let Some(post_ffn_norm) = layer.post_ffn_norm {
                 // Post-norm: norm(FFN output) + residual
-                let ffn_normed = rms_norm_batch(
-                    &ffn_out, post_ffn_norm, hidden, seq_len, eps, norm_offset,
-                );
+                let ffn_normed =
+                    rms_norm_batch(&ffn_out, post_ffn_norm, hidden, seq_len, eps, norm_offset);
                 add_residual(&h_post_attn, &ffn_normed)
             } else {
                 add_residual(&h_post_attn, &ffn_out)

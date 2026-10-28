@@ -6,7 +6,7 @@ use ndarray::{s, Array2};
 use super::store::RsStore;
 use crate::attention::SharedKV;
 use crate::attention::{
-    apply_rope_partial_at, run_attention_with_kv_backend, run_attention_block_decode_step_backend,
+    apply_rope_partial_at, run_attention_block_decode_step_backend, run_attention_with_kv_backend,
 };
 use crate::ffn::FfnBackend;
 use crate::forward::{add_bias, apply_norm, embed_tokens_pub, run_ffn};
@@ -370,8 +370,8 @@ pub(super) fn last_row(h: &Array2<f32>) -> Array2<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use infer_compute::CpuBackend;
     use crate::model::test_utils::make_test_weights;
+    use infer_compute::CpuBackend;
 
     #[test]
     fn recompute_kv_returns_some_with_valid_weights() {
@@ -400,8 +400,14 @@ mod tests {
         let weights = make_test_weights();
         let h = Array2::from_elem((2, weights.hidden_size), 0.1f32);
         let (k, v) = recompute_kv(&weights, &h, 0, 0, &CpuBackend).unwrap();
-        assert!(k.iter().all(|x| x.is_finite()), "K contains non-finite values");
-        assert!(v.iter().all(|x| x.is_finite()), "V contains non-finite values");
+        assert!(
+            k.iter().all(|x| x.is_finite()),
+            "K contains non-finite values"
+        );
+        assert!(
+            v.iter().all(|x| x.is_finite()),
+            "V contains non-finite values"
+        );
     }
 
     #[test]
@@ -411,7 +417,10 @@ mod tests {
         let (k0, _) = recompute_kv(&weights, &h, 0, 0, &CpuBackend).unwrap();
         let (k5, _) = recompute_kv(&weights, &h, 0, 5, &CpuBackend).unwrap();
         let diff: f32 = k0.iter().zip(k5.iter()).map(|(a, b)| (a - b).abs()).sum();
-        assert!(diff > 0.0, "RoPE at different positions should produce different K");
+        assert!(
+            diff > 0.0,
+            "RoPE at different positions should produce different K"
+        );
     }
 
     #[test]

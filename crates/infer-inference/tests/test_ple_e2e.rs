@@ -6,10 +6,10 @@
 //! - With zero gate weights, PLE contribution is blocked (output ≈ input)
 //! - Without PLE tensors, `precompute_per_layer_inputs` returns empty Vec
 
-use std::collections::HashMap;
 use infer_inference::forward::ple::precompute_per_layer_inputs;
 use infer_inference::infer_models::{detect_from_json, ModelWeights, WeightArray};
 use infer_inference::ndarray::Array2;
+use std::collections::HashMap;
 
 const VOCAB: usize = 32;
 const HIDDEN: usize = 16;
@@ -70,14 +70,35 @@ fn make_ple_weights() -> ModelWeights {
 
     for layer in 0..NUM_LAYERS {
         // Attention projections
-        tensors.insert(arch.attn_q_key(layer), rand_mat(q_dim, HIDDEN, 100 + layer as u64 * 10, 0.1));
-        tensors.insert(arch.attn_k_key(layer), rand_mat(kv_dim, HIDDEN, 200 + layer as u64 * 10, 0.1));
-        tensors.insert(arch.attn_v_key(layer), rand_mat(kv_dim, HIDDEN, 300 + layer as u64 * 10, 0.1));
-        tensors.insert(arch.attn_o_key(layer), rand_mat(HIDDEN, q_dim, 400 + layer as u64 * 10, 0.1));
+        tensors.insert(
+            arch.attn_q_key(layer),
+            rand_mat(q_dim, HIDDEN, 100 + layer as u64 * 10, 0.1),
+        );
+        tensors.insert(
+            arch.attn_k_key(layer),
+            rand_mat(kv_dim, HIDDEN, 200 + layer as u64 * 10, 0.1),
+        );
+        tensors.insert(
+            arch.attn_v_key(layer),
+            rand_mat(kv_dim, HIDDEN, 300 + layer as u64 * 10, 0.1),
+        );
+        tensors.insert(
+            arch.attn_o_key(layer),
+            rand_mat(HIDDEN, q_dim, 400 + layer as u64 * 10, 0.1),
+        );
         // FFN
-        tensors.insert(arch.ffn_gate_key(layer), rand_mat(INTER, HIDDEN, 500 + layer as u64 * 10, 0.1));
-        tensors.insert(arch.ffn_up_key(layer), rand_mat(INTER, HIDDEN, 600 + layer as u64 * 10, 0.1));
-        tensors.insert(arch.ffn_down_key(layer), rand_mat(HIDDEN, INTER, 700 + layer as u64 * 10, 0.1));
+        tensors.insert(
+            arch.ffn_gate_key(layer),
+            rand_mat(INTER, HIDDEN, 500 + layer as u64 * 10, 0.1),
+        );
+        tensors.insert(
+            arch.ffn_up_key(layer),
+            rand_mat(INTER, HIDDEN, 600 + layer as u64 * 10, 0.1),
+        );
+        tensors.insert(
+            arch.ffn_down_key(layer),
+            rand_mat(HIDDEN, INTER, 700 + layer as u64 * 10, 0.1),
+        );
         // Layer norms
         vectors.insert(arch.input_layernorm_key(layer), vec![1.0; HIDDEN]);
         vectors.insert(arch.post_attention_layernorm_key(layer), vec![1.0; HIDDEN]);
@@ -163,13 +184,34 @@ fn make_non_ple_weights() -> ModelWeights {
     let kv_dim = NUM_KV * HEAD_DIM;
 
     for layer in 0..NUM_LAYERS {
-        tensors.insert(arch.attn_q_key(layer), rand_mat(q_dim, HIDDEN, 100 + layer as u64, 0.1));
-        tensors.insert(arch.attn_k_key(layer), rand_mat(kv_dim, HIDDEN, 200 + layer as u64, 0.1));
-        tensors.insert(arch.attn_v_key(layer), rand_mat(kv_dim, HIDDEN, 300 + layer as u64, 0.1));
-        tensors.insert(arch.attn_o_key(layer), rand_mat(HIDDEN, q_dim, 400 + layer as u64, 0.1));
-        tensors.insert(arch.ffn_gate_key(layer), rand_mat(INTER, HIDDEN, 500 + layer as u64, 0.1));
-        tensors.insert(arch.ffn_up_key(layer), rand_mat(INTER, HIDDEN, 600 + layer as u64, 0.1));
-        tensors.insert(arch.ffn_down_key(layer), rand_mat(HIDDEN, INTER, 700 + layer as u64, 0.1));
+        tensors.insert(
+            arch.attn_q_key(layer),
+            rand_mat(q_dim, HIDDEN, 100 + layer as u64, 0.1),
+        );
+        tensors.insert(
+            arch.attn_k_key(layer),
+            rand_mat(kv_dim, HIDDEN, 200 + layer as u64, 0.1),
+        );
+        tensors.insert(
+            arch.attn_v_key(layer),
+            rand_mat(kv_dim, HIDDEN, 300 + layer as u64, 0.1),
+        );
+        tensors.insert(
+            arch.attn_o_key(layer),
+            rand_mat(HIDDEN, q_dim, 400 + layer as u64, 0.1),
+        );
+        tensors.insert(
+            arch.ffn_gate_key(layer),
+            rand_mat(INTER, HIDDEN, 500 + layer as u64, 0.1),
+        );
+        tensors.insert(
+            arch.ffn_up_key(layer),
+            rand_mat(INTER, HIDDEN, 600 + layer as u64, 0.1),
+        );
+        tensors.insert(
+            arch.ffn_down_key(layer),
+            rand_mat(HIDDEN, INTER, 700 + layer as u64, 0.1),
+        );
         vectors.insert(arch.input_layernorm_key(layer), vec![1.0; HIDDEN]);
         vectors.insert(arch.post_attention_layernorm_key(layer), vec![1.0; HIDDEN]);
     }

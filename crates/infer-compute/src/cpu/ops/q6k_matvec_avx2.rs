@@ -5,7 +5,7 @@
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
 
-use super::q6k_matvec::{Q6K_BLOCK_SIZE, f16_to_f32};
+use super::q6k_matvec::{f16_to_f32, Q6K_BLOCK_SIZE};
 
 /// AVX2-accelerated Q6_K matvec dispatch.
 ///

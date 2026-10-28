@@ -114,7 +114,10 @@ pub struct TargetDelta {
 /// Softmax cross-entropy loss for a 1-D logits vector and a single
 /// target id. Returns `(loss, dlogits)` where `dlogits[j] = softmax[j] - onehot[target][j]`.
 /// Used at the output end — no tape needed since this is the loss itself.
-pub(crate) fn cross_entropy_and_grad(logits: ArrayView1<f32>, target_id: u32) -> (f32, Array1<f32>) {
+pub(crate) fn cross_entropy_and_grad(
+    logits: ArrayView1<f32>,
+    target_id: u32,
+) -> (f32, Array1<f32>) {
     // Numerically stable log-softmax
     let max = logits.fold(f32::NEG_INFINITY, |a, &b| a.max(b));
     let shifted: Array1<f32> = logits.map(|&v| v - max);
@@ -133,7 +136,7 @@ pub(crate) fn cross_entropy_and_grad(logits: ArrayView1<f32>, target_id: u32) ->
 /// `lm_head.weight == embed.weight`, so we use the same matrix.
 pub(crate) fn lm_head_backward(
     embed_weight: ArrayView2<f32>, // (vocab, hidden)
-    dlogits: ArrayView1<f32>,       // (vocab,)
+    dlogits: ArrayView1<f32>,      // (vocab,)
 ) -> Array1<f32> {
     // ∂loss/∂h[i] = Σ_v dlogits[v] · embed[v, i]
     // = embed.T @ dlogits  →  shape (hidden,)
@@ -235,7 +238,11 @@ pub(crate) fn gated_ffn_backward(
     }
     // silu and σ
     let sigma: Array1<f32> = g_pre.map(|&z| 1.0 / (1.0 + (-z).exp()));
-    let g: Array1<f32> = g_pre.iter().zip(sigma.iter()).map(|(&z, &s)| z * s).collect();
+    let g: Array1<f32> = g_pre
+        .iter()
+        .zip(sigma.iter())
+        .map(|(&z, &s)| z * s)
+        .collect();
 
     // d_act = down_w.T @ d_out → shape ffn_dim
     let mut d_act = Array1::<f32>::zeros(ffn_dim);
@@ -311,19 +318,19 @@ pub(crate) fn gated_ffn_backward(
 pub(crate) fn attention_backward_last_pos(
     d_residual_out: ArrayView1<f32>,    // (hidden,) upstream gradient
     h_last: ArrayView1<f32>,            // (hidden,) input residual at last pos
-    _h_norm_last: ArrayView1<f32>,      // (hidden,) normed input at last pos (retained for future use)
-    w_q: ArrayView2<f32>,               // (num_q * head_dim, hidden)
-    w_k: ArrayView2<f32>,               // (num_kv * head_dim, hidden)
-    w_v: ArrayView2<f32>,               // (num_kv * head_dim, hidden)
-    w_o: ArrayView2<f32>,               // (hidden, num_q * head_dim)
+    _h_norm_last: ArrayView1<f32>, // (hidden,) normed input at last pos (retained for future use)
+    w_q: ArrayView2<f32>,          // (num_q * head_dim, hidden)
+    w_k: ArrayView2<f32>,          // (num_kv * head_dim, hidden)
+    w_v: ArrayView2<f32>,          // (num_kv * head_dim, hidden)
+    w_o: ArrayView2<f32>,          // (hidden, num_q * head_dim)
     input_norm_weight: ArrayView1<f32>, // (hidden,)
-    q_rope_last: ArrayView1<f32>,       // (num_q * head_dim,) Q after RoPE at last pos
-    k_rope: ArrayView2<f32>,            // (seq_len, num_kv * head_dim)
-    v: ArrayView2<f32>,                 // (seq_len, num_kv * head_dim)
+    q_rope_last: ArrayView1<f32>,  // (num_q * head_dim,) Q after RoPE at last pos
+    k_rope: ArrayView2<f32>,       // (seq_len, num_kv * head_dim)
+    v: ArrayView2<f32>,            // (seq_len, num_kv * head_dim)
     num_q_heads: usize,
     num_kv_heads: usize,
     head_dim: usize,
-    scale: f32,                         // 1/sqrt(head_dim) or custom
+    scale: f32, // 1/sqrt(head_dim) or custom
     rope_base: f64,
     rotary_fraction: f64,
     seq_len: usize,
@@ -409,9 +416,7 @@ pub(crate) fn attention_backward_last_pos(
         }
 
         // Softmax backward: d_scores[j] = probs[j] * (d_probs[j] - Σ_k probs[k]*d_probs[k])
-        let weighted_sum: f32 = (0..seq_len)
-            .map(|j| probs_buf[j] * d_probs_buf[j])
-            .sum();
+        let weighted_sum: f32 = (0..seq_len).map(|j| probs_buf[j] * d_probs_buf[j]).sum();
         // Reuse scores_buf for d_scores
         for j in 0..seq_len {
             scores_buf[j] = probs_buf[j] * (d_probs_buf[j] - weighted_sum);
@@ -515,12 +520,7 @@ pub(crate) fn attention_backward_last_pos(
     }
 
     // ── Step 6: Input RMSNorm backward ─────────────────────────────────
-    let d_h_from_norm = rmsnorm_backward_pos(
-        h_last,
-        input_norm_weight,
-        d_h_norm.view(),
-        norm_eps,
-    );
+    let d_h_from_norm = rmsnorm_backward_pos(h_last, input_norm_weight, d_h_norm.view(), norm_eps);
 
     // ── Step 7: Skip connection ────────────────────────────────────────
     // h_post = h + o_proj(attention(norm(h)))
@@ -584,9 +584,7 @@ pub fn optimise_target_delta(
     let norm_weight = Array1::from(norm_weight_vec);
     let inv_scale = 1.0 / weights.arch.logits_scaling();
     if weights.arch.final_logit_softcapping().is_some() {
-        return Err(
-            "target-delta opt doesn't yet handle logit softcap — port required".into(),
-        );
+        return Err("target-delta opt doesn't yet handle logit softcap — port required".into());
     }
 
     // Baseline forward (no perturbation) for KL regulariser.
@@ -661,8 +659,12 @@ pub fn optimise_target_delta(
         // RMSNorm backward at the last position:
         // h_pre_norm[-1] is input; norm_weight is scale; d_h_final is upstream grad.
         let last_pre = out.h_pre_norm.row(out.h_pre_norm.nrows() - 1).to_owned();
-        let d_h_pre_norm =
-            rmsnorm_backward_pos(last_pre.view(), norm_weight.view(), d_h_final.view(), RMS_EPS);
+        let d_h_pre_norm = rmsnorm_backward_pos(
+            last_pre.view(),
+            norm_weight.view(),
+            d_h_final.view(),
+            RMS_EPS,
+        );
 
         // For install_layer = n_layers - 1, δ is added directly to
         // h[-1] after the last block. So ∂loss/∂δ = d_h_pre_norm.
@@ -779,17 +781,18 @@ mod tests {
             let g: Array1<f32> = g_pre.map(|&z| z / (1.0 + (-z).exp()));
             let act: Array1<f32> = g.iter().zip(u.iter()).map(|(&a, &b)| a * b).collect();
             (0..down_w.nrows())
-                .map(|k| {
-                    (0..down_w.ncols())
-                        .map(|i| down_w[[k, i]] * act[i])
-                        .sum()
-                })
+                .map(|k| (0..down_w.ncols()).map(|i| down_w[[k, i]] * act[i]).sum())
                 .collect()
         };
         // Loss = sum(out) so d_out = ones
         let d_out = Array1::from_elem(3, 1.0_f32);
-        let dx_analytical =
-            gated_ffn_backward(x.view(), gate_w.view(), up_w.view(), down_w.view(), d_out.view());
+        let dx_analytical = gated_ffn_backward(
+            x.view(),
+            gate_w.view(),
+            up_w.view(),
+            down_w.view(),
+            d_out.view(),
+        );
         let h = 1e-4_f32;
         for i in 0..x.len() {
             let mut xp = x.clone();
@@ -800,7 +803,11 @@ mod tests {
             let lm: f32 = fwd(&xm).iter().sum();
             let num = (lp - lm) / (2.0 * h);
             let err = (dx_analytical[i] - num).abs();
-            assert!(err < 1e-2, "dx[{i}]: analytical {} vs numerical {num}", dx_analytical[i]);
+            assert!(
+                err < 1e-2,
+                "dx[{i}]: analytical {} vs numerical {num}",
+                dx_analytical[i]
+            );
         }
     }
 
@@ -837,7 +844,11 @@ mod tests {
             let loss_m: f32 = fwd(&xm).iter().sum();
             let num = (loss_p - loss_m) / (2.0 * h);
             let err = (dx_analytical[i] - num).abs();
-            assert!(err < 1e-2, "dx[{i}]: analytical {} vs numerical {num} (err {err})", dx_analytical[i]);
+            assert!(
+                err < 1e-2,
+                "dx[{i}]: analytical {} vs numerical {num} (err {err})",
+                dx_analytical[i]
+            );
         }
     }
 
@@ -1042,7 +1053,9 @@ mod tests {
             let d = hidden as f32;
             let ms: f32 = h_last.iter().map(|x| x * x).sum::<f32>() / d;
             let rms = (ms + norm_eps).sqrt();
-            let normed: Array1<f32> = h_last.iter().zip(norm_weight.iter())
+            let normed: Array1<f32> = h_last
+                .iter()
+                .zip(norm_weight.iter())
                 .map(|(&x, &w)| (x / rms) * w)
                 .collect();
             normed
@@ -1162,7 +1175,8 @@ mod tests {
             assert!(
                 rel_err < 0.05 || err < 1e-3,
                 "d_h[{i}]: analytical={} vs numerical={} (abs_err={err}, rel_err={rel_err})",
-                dh_analytical[i], numerical
+                dh_analytical[i],
+                numerical
             );
         }
     }

@@ -108,11 +108,7 @@ impl InferMetaPageV2 {
                 "infer index v2: invalid metapage magic".into(),
             ));
         }
-        let end = self
-            .model_name
-            .iter()
-            .position(|&b| b == 0)
-            .unwrap_or(248);
+        let end = self.model_name.iter().position(|&b| b == 0).unwrap_or(248);
         std::str::from_utf8(&self.model_name[..end])
             .map_err(|e| crate::error::PgInferError::Internal(format!("invalid model name: {e}")))
     }
@@ -149,8 +145,7 @@ impl EmbeddingEntryHeader {
 ///
 /// Returns the number of entries that fit, given the embedding dimension.
 pub fn entries_per_page(embedding_dim: u32) -> usize {
-    let page_content_size =
-        pg_sys::BLCKSZ as usize - std::mem::size_of::<pg_sys::PageHeaderData>();
+    let page_content_size = pg_sys::BLCKSZ as usize - std::mem::size_of::<pg_sys::PageHeaderData>();
     let entry_size = EmbeddingEntryHeader::SIZE + embedding_dim as usize;
     if entry_size == 0 {
         return 0;
@@ -173,7 +168,9 @@ pub fn pages_needed_for_embeddings(num_embeddings: u32, embedding_dim: u32) -> u
 ///
 /// Caller must ensure `index_rel` is a valid, open index relation with at
 /// least one block.
-pub unsafe fn read_metapage_version(index_rel: pg_sys::Relation) -> Result<u32, crate::error::PgInferError> {
+pub unsafe fn read_metapage_version(
+    index_rel: pg_sys::Relation,
+) -> Result<u32, crate::error::PgInferError> {
     let buf = pg_sys::ReadBuffer(index_rel, 0);
     pg_sys::LockBuffer(buf, pg_sys::BUFFER_LOCK_SHARE as i32);
 

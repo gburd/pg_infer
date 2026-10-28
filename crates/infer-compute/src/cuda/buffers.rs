@@ -116,7 +116,8 @@ impl BufferPool {
     /// Upload f32 data from host to a pooled device buffer.
     pub fn upload_f32(&self, data: &[f32]) -> Result<GpuBuffer, super::CudaError> {
         let len = data.len();
-        let slice = self.device
+        let slice = self
+            .device
             .htod_sync_copy(data)
             .map_err(|e| super::CudaError::Transfer(e.to_string()))?;
         Ok(GpuBuffer { slice, len })
@@ -125,7 +126,8 @@ impl BufferPool {
     /// Upload raw bytes from host to a pooled device buffer.
     pub fn upload_bytes(&self, data: &[u8]) -> Result<GpuBufferBytes, super::CudaError> {
         let len = data.len();
-        let slice = self.device
+        let slice = self
+            .device
             .htod_sync_copy(data)
             .map_err(|e| super::CudaError::Transfer(e.to_string()))?;
         Ok(GpuBufferBytes { slice, len })
@@ -133,7 +135,8 @@ impl BufferPool {
 
     /// Download f32 data from device to host.
     pub fn download_f32(&self, buf: &GpuBuffer) -> Result<Vec<f32>, super::CudaError> {
-        let data = self.device
+        let data = self
+            .device
             .dtoh_sync_copy(&buf.slice)
             .map_err(|e| super::CudaError::Transfer(e.to_string()))?;
         // Trim to actual length (buffer may be over-allocated due to bucketing).
@@ -147,7 +150,13 @@ impl BufferPool {
 
     /// Total number of cached buffers across all pools.
     pub fn cached_count(&self) -> usize {
-        let f32_count: usize = self.f32_pool.lock().unwrap().values().map(|v| v.len()).sum();
+        let f32_count: usize = self
+            .f32_pool
+            .lock()
+            .unwrap()
+            .values()
+            .map(|v| v.len())
+            .sum();
         let u8_count: usize = self.u8_pool.lock().unwrap().values().map(|v| v.len()).sum();
         f32_count + u8_count
     }

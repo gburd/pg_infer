@@ -13,8 +13,8 @@
 //! Pre-norm vs post-norm branching lives inside these helpers; callers
 //! pass `has_post_norms` and the appropriate weight buffers.
 
-use std::ffi::c_void;
 use metal::{Buffer, ComputeCommandEncoderRef, ComputePipelineState, MTLSize};
+use std::ffi::c_void;
 
 /// Post-attention residual + pre-FFN norm (+ optional Q8 quant).
 ///
@@ -79,7 +79,10 @@ pub fn encode_post_attn(
             enc.set_buffer(1, Some(&normed), 0);
             enc.set_buffer(2, Some(h_post_attn), h_off);
             enc.set_bytes(3, 4, &hidden_val as *const u32 as *const c_void);
-            enc.dispatch_threads(MTLSize::new(hidden as u64, 1, 1), MTLSize::new(tg_threads, 1, 1));
+            enc.dispatch_threads(
+                MTLSize::new(hidden as u64, 1, 1),
+                MTLSize::new(tg_threads, 1, 1),
+            );
         } else {
             // Pre-norm: residual add first (h + O), then norm below.
             enc.set_compute_pipeline_state(residual_add_pipeline);
@@ -87,7 +90,10 @@ pub fn encode_post_attn(
             enc.set_buffer(1, Some(o_out), h_off);
             enc.set_buffer(2, Some(h_post_attn), h_off);
             enc.set_bytes(3, 4, &hidden_val as *const u32 as *const c_void);
-            enc.dispatch_threads(MTLSize::new(hidden as u64, 1, 1), MTLSize::new(tg_threads, 1, 1));
+            enc.dispatch_threads(
+                MTLSize::new(hidden as u64, 1, 1),
+                MTLSize::new(tg_threads, 1, 1),
+            );
         }
 
         // Pre-FFN rms_norm on h_post_attn → ffn_norm_out (f32).
@@ -157,9 +163,7 @@ pub fn encode_post_ffn(
     let pre_norm_path = !has_post_norms || post_ffn_norm_buf.is_none();
     if pre_norm_path && needs_scale {
         let scale_pipe = scale_pipeline.unwrap();
-        super::layer_scalar::encode(
-            enc, scale_pipe, down_out, seq_len, hidden, ffn_scalar,
-        );
+        super::layer_scalar::encode(enc, scale_pipe, down_out, seq_len, hidden, ffn_scalar);
     }
 
     for pos in 0..seq_len {
@@ -180,9 +184,7 @@ pub fn encode_post_ffn(
                 // Apply scalar to normed FFN output before residual add.
                 if needs_scale {
                     let scale_pipe = scale_pipeline.unwrap();
-                    super::layer_scalar::encode(
-                        enc, scale_pipe, &normed, 1, hidden, ffn_scalar,
-                    );
+                    super::layer_scalar::encode(enc, scale_pipe, &normed, 1, hidden, ffn_scalar);
                 }
 
                 enc.set_compute_pipeline_state(residual_add_pipeline);
@@ -190,7 +192,10 @@ pub fn encode_post_ffn(
                 enc.set_buffer(1, Some(&normed), 0);
                 enc.set_buffer(2, Some(h_next), h_off);
                 enc.set_bytes(3, 4, &hidden_val as *const u32 as *const c_void);
-                enc.dispatch_threads(MTLSize::new(hidden as u64, 1, 1), MTLSize::new(tg_threads, 1, 1));
+                enc.dispatch_threads(
+                    MTLSize::new(hidden as u64, 1, 1),
+                    MTLSize::new(tg_threads, 1, 1),
+                );
                 continue;
             }
         }
@@ -202,6 +207,9 @@ pub fn encode_post_ffn(
         enc.set_buffer(1, Some(down_out), h_off);
         enc.set_buffer(2, Some(h_next), h_off);
         enc.set_bytes(3, 4, &hidden_val as *const u32 as *const c_void);
-        enc.dispatch_threads(MTLSize::new(hidden as u64, 1, 1), MTLSize::new(tg_threads, 1, 1));
+        enc.dispatch_threads(
+            MTLSize::new(hidden as u64, 1, 1),
+            MTLSize::new(tg_threads, 1, 1),
+        );
     }
 }

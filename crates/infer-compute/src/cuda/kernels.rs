@@ -233,7 +233,8 @@ fn ensure_q4k_module(device: &Arc<CudaDevice>) -> Result<(), CudaError> {
     }
     let ptx = cudarc::nvrtc::compile_ptx(Q4K_KERNEL_SRC)
         .map_err(|e| CudaError::KernelLaunch(format!("Q4_K compile: {e}")))?;
-    device.load_ptx(ptx, Q4K_MODULE, &["q4k_matvec"])
+    device
+        .load_ptx(ptx, Q4K_MODULE, &["q4k_matvec"])
         .map_err(|e| CudaError::KernelLaunch(format!("Q4_K load: {e}")))?;
     Ok(())
 }
@@ -245,7 +246,8 @@ fn ensure_q6k_module(device: &Arc<CudaDevice>) -> Result<(), CudaError> {
     }
     let ptx = cudarc::nvrtc::compile_ptx(Q6K_KERNEL_SRC)
         .map_err(|e| CudaError::KernelLaunch(format!("Q6_K compile: {e}")))?;
-    device.load_ptx(ptx, Q6K_MODULE, &["q6k_matvec"])
+    device
+        .load_ptx(ptx, Q6K_MODULE, &["q6k_matvec"])
         .map_err(|e| CudaError::KernelLaunch(format!("Q6_K load: {e}")))?;
     Ok(())
 }
@@ -295,11 +297,14 @@ pub fn q4k_matvec_cuda(
                 superblocks as i32,
                 bytes_per_row as i32,
             ),
-        ).map_err(|e| CudaError::KernelLaunch(format!("q4k launch: {e}")))?;
+        )
+        .map_err(|e| CudaError::KernelLaunch(format!("q4k launch: {e}")))?;
     }
 
     // Synchronize and download
-    device.synchronize().map_err(|e| CudaError::KernelLaunch(format!("sync: {e}")))?;
+    device
+        .synchronize()
+        .map_err(|e| CudaError::KernelLaunch(format!("sync: {e}")))?;
     pool.download_f32(&d_out)
 }
 
@@ -348,10 +353,13 @@ pub fn q6k_matvec_cuda(
                 superblocks as i32,
                 bytes_per_row as i32,
             ),
-        ).map_err(|e| CudaError::KernelLaunch(format!("q6k launch: {e}")))?;
+        )
+        .map_err(|e| CudaError::KernelLaunch(format!("q6k launch: {e}")))?;
     }
 
     // Synchronize and download
-    device.synchronize().map_err(|e| CudaError::KernelLaunch(format!("sync: {e}")))?;
+    device
+        .synchronize()
+        .map_err(|e| CudaError::KernelLaunch(format!("sync: {e}")))?;
     pool.download_f32(&d_out)
 }

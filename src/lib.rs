@@ -11,10 +11,6 @@ mod am_options;
 #[allow(dead_code)]
 mod am_pages;
 mod am_scan;
-#[allow(dead_code)]
-mod hnsw;
-#[allow(dead_code)]
-mod sq8;
 mod backend;
 mod error;
 mod fn_cache;
@@ -28,10 +24,14 @@ mod fn_similar;
 mod fn_walk;
 mod gucs;
 mod helpers;
+#[allow(dead_code)]
+mod hnsw;
 mod interrupt;
 mod model_mgmt;
 mod registry;
 mod relation_classify;
+#[allow(dead_code)]
+mod sq8;
 mod tracing_layer;
 
 // Bootstrap the infer schema and model registry table during CREATE EXTENSION.
@@ -73,8 +73,8 @@ pub extern "C-unwind" fn _PG_init() {
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
 
-    let filter = tracing_subscriber::filter::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| {
+    let filter =
+        tracing_subscriber::filter::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
             let level = gucs::log_level();
             tracing_subscriber::filter::EnvFilter::new(format!("pg_infer={}", level))
         });
@@ -136,20 +136,16 @@ mod tests {
     fn test_guc_default_values() {
         Spi::run("CREATE EXTENSION IF NOT EXISTS pg_infer").expect("CREATE EXTENSION failed");
 
-        let max_mem = Spi::get_one::<String>("SHOW infer.max_memory")
-            .expect("SHOW failed");
+        let max_mem = Spi::get_one::<String>("SHOW infer.max_memory").expect("SHOW failed");
         assert_eq!(max_mem, Some("8192".to_string()));
 
-        let auto_dl = Spi::get_one::<String>("SHOW infer.auto_download")
-            .expect("SHOW failed");
+        let auto_dl = Spi::get_one::<String>("SHOW infer.auto_download").expect("SHOW failed");
         assert_eq!(auto_dl, Some("on".to_string()));
 
-        let data_dir = Spi::get_one::<String>("SHOW infer.data_directory")
-            .expect("SHOW failed");
+        let data_dir = Spi::get_one::<String>("SHOW infer.data_directory").expect("SHOW failed");
         assert_eq!(data_dir, Some("infer".to_string()));
 
-        let gate_thresh = Spi::get_one::<String>("SHOW infer.gate_threshold")
-            .expect("SHOW failed");
+        let gate_thresh = Spi::get_one::<String>("SHOW infer.gate_threshold").expect("SHOW failed");
         assert_eq!(gate_thresh, Some("5".to_string()));
     }
 
@@ -157,32 +153,30 @@ mod tests {
     fn test_set_default_model() {
         Spi::run("CREATE EXTENSION IF NOT EXISTS pg_infer").expect("CREATE EXTENSION failed");
         Spi::run("SET infer.default_model = 'test_model'").expect("SET failed");
-        let val = Spi::get_one::<String>("SHOW infer.default_model")
-            .expect("SHOW failed");
+        let val = Spi::get_one::<String>("SHOW infer.default_model").expect("SHOW failed");
         assert_eq!(val, Some("test_model".to_string()));
     }
 
     #[pg_test]
     fn test_models_table_exists() {
         Spi::run("CREATE EXTENSION IF NOT EXISTS pg_infer").expect("CREATE EXTENSION failed");
-        let count = Spi::get_one::<i64>("SELECT count(*) FROM infer.models")
-            .expect("query failed");
+        let count = Spi::get_one::<i64>("SELECT count(*) FROM infer.models").expect("query failed");
         assert_eq!(count, Some(0));
     }
 
     #[pg_test]
     fn test_infer_models_function() {
         Spi::run("CREATE EXTENSION IF NOT EXISTS pg_infer").expect("CREATE EXTENSION failed");
-        let count = Spi::get_one::<i64>("SELECT count(*) FROM infer_models()")
-            .expect("query failed");
+        let count =
+            Spi::get_one::<i64>("SELECT count(*) FROM infer_models()").expect("query failed");
         assert_eq!(count, Some(0));
     }
 
     #[pg_test]
     fn test_drop_nonexistent_model() {
         Spi::run("CREATE EXTENSION IF NOT EXISTS pg_infer").expect("CREATE EXTENSION failed");
-        let result = Spi::get_one::<String>("SELECT infer_drop_model('nonexistent')")
-            .expect("query failed");
+        let result =
+            Spi::get_one::<String>("SELECT infer_drop_model('nonexistent')").expect("query failed");
         assert!(result.is_some());
     }
 
@@ -233,10 +227,9 @@ mod tests {
     fn test_distance_operator_exists() {
         Spi::run("CREATE EXTENSION IF NOT EXISTS pg_infer").expect("CREATE EXTENSION failed");
 
-        let exists = Spi::get_one::<bool>(
-            "SELECT EXISTS(SELECT 1 FROM pg_operator WHERE oprname = '<~>')",
-        )
-        .expect("query failed");
+        let exists =
+            Spi::get_one::<bool>("SELECT EXISTS(SELECT 1 FROM pg_operator WHERE oprname = '<~>')")
+                .expect("query failed");
         assert_eq!(exists, Some(true));
     }
 
@@ -269,10 +262,9 @@ mod tests {
     #[pg_test]
     fn test_access_method_exists() {
         Spi::run("CREATE EXTENSION IF NOT EXISTS pg_infer").expect("CREATE EXTENSION failed");
-        let exists = Spi::get_one::<bool>(
-            "SELECT EXISTS(SELECT 1 FROM pg_am WHERE amname = 'infer')",
-        )
-        .expect("query failed");
+        let exists =
+            Spi::get_one::<bool>("SELECT EXISTS(SELECT 1 FROM pg_am WHERE amname = 'infer')")
+                .expect("query failed");
         assert_eq!(exists, Some(true));
     }
 
@@ -289,20 +281,18 @@ mod tests {
     #[pg_test]
     fn test_similarity_operator_exists() {
         Spi::run("CREATE EXTENSION IF NOT EXISTS pg_infer").expect("CREATE EXTENSION failed");
-        let exists = Spi::get_one::<bool>(
-            "SELECT EXISTS(SELECT 1 FROM pg_operator WHERE oprname = '<~')",
-        )
-        .expect("query failed");
+        let exists =
+            Spi::get_one::<bool>("SELECT EXISTS(SELECT 1 FROM pg_operator WHERE oprname = '<~')")
+                .expect("query failed");
         assert_eq!(exists, Some(true));
     }
 
     #[pg_test]
     fn test_implies_operator_exists() {
         Spi::run("CREATE EXTENSION IF NOT EXISTS pg_infer").expect("CREATE EXTENSION failed");
-        let exists = Spi::get_one::<bool>(
-            "SELECT EXISTS(SELECT 1 FROM pg_operator WHERE oprname = '@>')",
-        )
-        .expect("query failed");
+        let exists =
+            Spi::get_one::<bool>("SELECT EXISTS(SELECT 1 FROM pg_operator WHERE oprname = '@>')")
+                .expect("query failed");
         assert_eq!(exists, Some(true));
     }
 
@@ -312,10 +302,9 @@ mod tests {
         Spi::run("CREATE TABLE test_docs (id int, title text)").expect("CREATE TABLE");
         // Verify the parser accepts "USING infer" syntax by confirming:
         // 1. The AM exists (parser can resolve the name)
-        let am_ok = Spi::get_one::<bool>(
-            "SELECT EXISTS(SELECT 1 FROM pg_am WHERE amname = 'infer')",
-        )
-        .expect("query failed");
+        let am_ok =
+            Spi::get_one::<bool>("SELECT EXISTS(SELECT 1 FROM pg_am WHERE amname = 'infer')")
+                .expect("query failed");
         assert_eq!(am_ok, Some(true));
         // 2. The default opclass is registered for the AM
         let opc_ok = Spi::get_one::<bool>(

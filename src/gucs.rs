@@ -4,8 +4,7 @@ use pgrx::{GucContext, GucFlags, GucRegistry, GucSetting};
 
 /// Session-level default model name.  When a query function omits the
 /// `model` parameter it falls back to this GUC.
-pub static DEFAULT_MODEL: GucSetting<Option<CString>> =
-    GucSetting::<Option<CString>>::new(None);
+pub static DEFAULT_MODEL: GucSetting<Option<CString>> = GucSetting::<Option<CString>>::new(None);
 
 /// Base directory for cached vindex files, relative to `$PGDATA` unless
 /// an absolute path is given.
@@ -141,8 +140,7 @@ pub static REMOTE_TIMEOUT_MS: GucSetting<i32> = GucSetting::<i32>::new(30_000);
 
 /// Grid discovery URL. Points to a larql-router or a seed server
 /// that exposes `/v1/models` listing available models and their servers.
-pub static GRID_URL: GucSetting<Option<CString>> =
-    GucSetting::<Option<CString>>::new(None);
+pub static GRID_URL: GucSetting<Option<CString>> = GucSetting::<Option<CString>>::new(None);
 
 /// How often (seconds) to poll the grid for topology changes.
 /// Default: 30 seconds.
@@ -391,7 +389,9 @@ pub fn log_level() -> String {
 
 /// Return the resolved default model name, or `None` if unset.
 pub fn default_model() -> Option<String> {
-    DEFAULT_MODEL.get().map(|s| s.to_string_lossy().into_owned())
+    DEFAULT_MODEL
+        .get()
+        .map(|s| s.to_string_lossy().into_owned())
 }
 
 /// Return the configured data directory (never `None` in practice).

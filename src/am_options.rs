@@ -69,7 +69,9 @@ impl InferMetaPage {
 /// # Safety
 ///
 /// Caller must ensure `index_rel` is a valid, open index relation.
-pub unsafe fn read_model_from_metapage(index_rel: pg_sys::Relation) -> Result<String, PgInferError> {
+pub unsafe fn read_model_from_metapage(
+    index_rel: pg_sys::Relation,
+) -> Result<String, PgInferError> {
     let buf = pg_sys::ReadBuffer(index_rel, 0);
     pg_sys::LockBuffer(buf, pg_sys::BUFFER_LOCK_SHARE as i32);
 

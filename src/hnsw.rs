@@ -159,11 +159,7 @@ impl HnswBuilder {
             let m_max = if lc == 0 { self.m_max0 } else { self.m };
 
             // Select best neighbors (simple: take closest M).
-            let neighbors: Vec<u32> = candidates
-                .iter()
-                .take(m_max)
-                .map(|r| r.id)
-                .collect();
+            let neighbors: Vec<u32> = candidates.iter().take(m_max).map(|r| r.id).collect();
 
             // Connect node_id -> neighbors.
             self.nodes[node_id as usize].neighbors[lc] = neighbors.clone();
@@ -267,8 +263,9 @@ impl HnswBuilder {
         // In production this could use thread_rng, but for reproducibility
         // in a PostgreSQL extension we use a deterministic PRNG.
         let seed = self.nodes.len() as u64;
-        let r = ((seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407))
-            as f64)
+        let r = ((seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407)) as f64)
             / (u64::MAX as f64);
         let r = r.clamp(f64::MIN_POSITIVE, 1.0);
         let level = (-r.ln() * self.level_mult).floor() as usize;
@@ -598,12 +595,7 @@ impl HnswSearcher {
     /// `distance_fn` computes the distance from the query to a given node ID.
     /// This allows the caller to provide the actual distance computation
     /// (asymmetric SQ8 from index pages).
-    pub fn search<F>(
-        &self,
-        k: usize,
-        ef: usize,
-        distance_fn: &F,
-    ) -> Vec<HnswResult>
+    pub fn search<F>(&self, k: usize, ef: usize, distance_fn: &F) -> Vec<HnswResult>
     where
         F: Fn(u32) -> f32,
     {
@@ -840,11 +832,8 @@ mod tests {
             let query = gen_vector(dim, (n + q) as u64 * 53 + 13);
 
             // HNSW results.
-            let hnsw_results: Vec<u32> = builder
-                .search(&query, k, ef)
-                .iter()
-                .map(|r| r.id)
-                .collect();
+            let hnsw_results: Vec<u32> =
+                builder.search(&query, k, ef).iter().map(|r| r.id).collect();
 
             // Brute force ground truth.
             let bf_results = brute_force_knn(&query, &embeddings_for_bf, k);
@@ -888,8 +877,8 @@ mod tests {
         let entry_point = builder.entry_point().expect("should have entry point");
 
         // Deserialize.
-        let searcher = HnswSearcher::from_bytes(&data, entry_point)
-            .expect("deserialization should succeed");
+        let searcher =
+            HnswSearcher::from_bytes(&data, entry_point).expect("deserialization should succeed");
 
         // Search using the searcher.
         let query = gen_vector(dim, 999);

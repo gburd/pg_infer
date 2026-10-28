@@ -96,7 +96,9 @@ async fn handle_request(
         .path_and_query()
         .map(|pq| pq.to_string())
         .unwrap_or_default();
-    log.lock().expect("log lock").push((method.clone(), path_and_query.clone()));
+    log.lock()
+        .expect("log lock")
+        .push((method.clone(), path_and_query.clone()));
 
     // Split path and query string.
     let (path, query) = match path_and_query.split_once('?') {
@@ -141,9 +143,7 @@ async fn handle_request(
 
         ("GET", "/v1/walk") => {
             let prompt = query.get("prompt").cloned().unwrap_or_default();
-            let layer_filter: Option<usize> = query
-                .get("layers")
-                .and_then(|s| s.parse().ok());
+            let layer_filter: Option<usize> = query.get("layers").and_then(|s| s.parse().ok());
             let mut hits = vec![
                 serde_json::json!({"layer": 5, "feature": 3401, "gate_score": 31.47, "target": "European"}),
                 serde_json::json!({"layer": 12, "feature": 467, "gate_score": 44.82, "target": "Paris"}),
@@ -171,7 +171,10 @@ async fn handle_request(
             let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap_or_default();
             let top = body.get("top").and_then(|v| v.as_u64()).unwrap_or(5) as usize;
             let mut preds = Vec::new();
-            for (i, tok) in ["Paris", "Lyon", "Nice", "Marseille", "Bordeaux"].iter().enumerate() {
+            for (i, tok) in ["Paris", "Lyon", "Nice", "Marseille", "Bordeaux"]
+                .iter()
+                .enumerate()
+            {
                 if i >= top {
                     break;
                 }
@@ -240,8 +243,7 @@ fn percent_decode(s: &str) -> String {
 #[test]
 fn stats_round_trip() {
     let (base, log, _h) = spawn_mock_server();
-    let client =
-        CancellableClient::connect(&base, Duration::from_secs(5)).expect("client builds");
+    let client = CancellableClient::connect(&base, Duration::from_secs(5)).expect("client builds");
     let cancel = CancelToken::new();
 
     let stats: StatsResponse = client.get_json("/v1/stats", &cancel).expect("stats");
@@ -260,8 +262,7 @@ fn stats_round_trip() {
 #[test]
 fn describe_with_entity_query_param() {
     let (base, log, _h) = spawn_mock_server();
-    let client =
-        CancellableClient::connect(&base, Duration::from_secs(5)).expect("client builds");
+    let client = CancellableClient::connect(&base, Duration::from_secs(5)).expect("client builds");
     let cancel = CancelToken::new();
 
     // Issue the describe URL pg_infer's RemoteBackend builds.
@@ -287,8 +288,7 @@ fn describe_with_entity_query_param() {
 #[test]
 fn walk_all_layers_vs_single_layer() {
     let (base, _log, _h) = spawn_mock_server();
-    let client =
-        CancellableClient::connect(&base, Duration::from_secs(5)).expect("client builds");
+    let client = CancellableClient::connect(&base, Duration::from_secs(5)).expect("client builds");
     let cancel = CancelToken::new();
 
     // All layers
@@ -309,8 +309,7 @@ fn walk_all_layers_vs_single_layer() {
 #[test]
 fn relations_parses() {
     let (base, _log, _h) = spawn_mock_server();
-    let client =
-        CancellableClient::connect(&base, Duration::from_secs(5)).expect("client builds");
+    let client = CancellableClient::connect(&base, Duration::from_secs(5)).expect("client builds");
     let cancel = CancelToken::new();
 
     let resp: RelationsResponse = client
@@ -326,17 +325,14 @@ fn relations_parses() {
 #[test]
 fn infer_post_body_and_parse() {
     let (base, log, _h) = spawn_mock_server();
-    let client =
-        CancellableClient::connect(&base, Duration::from_secs(5)).expect("client builds");
+    let client = CancellableClient::connect(&base, Duration::from_secs(5)).expect("client builds");
     let cancel = CancelToken::new();
 
     let body = serde_json::json!({
         "prompt": "The capital of France is",
         "top": 3,
     });
-    let resp: InferResponse = client
-        .post_json("/v1/infer", body, &cancel)
-        .expect("infer");
+    let resp: InferResponse = client.post_json("/v1/infer", body, &cancel).expect("infer");
     assert_eq!(resp.predictions.len(), 3);
     assert_eq!(resp.predictions[0].token, "Paris");
     assert!(resp.predictions[0].probability > 0.99);
@@ -350,8 +346,7 @@ fn batch_issues_concurrent_requests() {
     use infer_client::{BatchItem, Method};
 
     let (base, log, _h) = spawn_mock_server();
-    let client =
-        CancellableClient::connect(&base, Duration::from_secs(5)).expect("client builds");
+    let client = CancellableClient::connect(&base, Duration::from_secs(5)).expect("client builds");
     let cancel = CancelToken::new();
 
     let items = vec![
@@ -384,8 +379,7 @@ fn batch_issues_concurrent_requests() {
 #[test]
 fn unknown_path_yields_server_error() {
     let (base, _log, _h) = spawn_mock_server();
-    let client =
-        CancellableClient::connect(&base, Duration::from_secs(5)).expect("client builds");
+    let client = CancellableClient::connect(&base, Duration::from_secs(5)).expect("client builds");
     let cancel = CancelToken::new();
 
     let err: Result<serde_json::Value, _> = client.get_json("/v1/bogus", &cancel);

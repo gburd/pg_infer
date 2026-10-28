@@ -8,7 +8,7 @@
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
 
-use super::q4k_matvec::{Q4K_BLOCK_SIZE, f16_to_f32, unpack_scales_mins};
+use super::q4k_matvec::{f16_to_f32, unpack_scales_mins, Q4K_BLOCK_SIZE};
 
 /// AVX2-accelerated Q4_K matvec dispatch.
 ///

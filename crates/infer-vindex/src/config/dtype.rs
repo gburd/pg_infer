@@ -18,7 +18,6 @@ pub enum StorageDtype {
     Ternary,
 }
 
-
 impl std::fmt::Display for StorageDtype {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -55,9 +54,8 @@ pub fn write_floats(
 pub fn encode_floats(data: &[f32], dtype: StorageDtype) -> Vec<u8> {
     match dtype {
         StorageDtype::F32 => {
-            let bytes: &[u8] = unsafe {
-                std::slice::from_raw_parts(data.as_ptr() as *const u8, data.len() * 4)
-            };
+            let bytes: &[u8] =
+                unsafe { std::slice::from_raw_parts(data.as_ptr() as *const u8, data.len() * 4) };
             bytes.to_vec()
         }
         StorageDtype::F16 => infer_models::quant::half::encode_f16(data),
@@ -73,9 +71,8 @@ pub fn encode_floats(data: &[f32], dtype: StorageDtype) -> Vec<u8> {
 pub fn decode_floats(data: &[u8], dtype: StorageDtype) -> Vec<f32> {
     match dtype {
         StorageDtype::F32 => {
-            let floats: &[f32] = unsafe {
-                std::slice::from_raw_parts(data.as_ptr() as *const f32, data.len() / 4)
-            };
+            let floats: &[f32] =
+                unsafe { std::slice::from_raw_parts(data.as_ptr() as *const f32, data.len() / 4) };
             floats.to_vec()
         }
         StorageDtype::F16 => infer_models::quant::half::decode_f16(data),
@@ -117,7 +114,10 @@ pub fn bytes_per_float(dtype: StorageDtype) -> usize {
 /// Input length must be a multiple of 4. Values outside {-1, 0, +1} are
 /// clamped (positive → +1, negative → -1).
 pub fn encode_ternary(data: &[i8]) -> Vec<u8> {
-    debug_assert!(data.len().is_multiple_of(4), "ternary encode requires len % 4 == 0");
+    debug_assert!(
+        data.len().is_multiple_of(4),
+        "ternary encode requires len % 4 == 0"
+    );
     let num_bytes = data.len() / 4;
     let mut packed = vec![0u8; num_bytes];
 
@@ -139,13 +139,21 @@ pub fn decode_ternary(data: &[u8], count: usize) -> Vec<i8> {
     let mut out = Vec::with_capacity(count);
 
     for &byte in data.iter() {
-        if out.len() >= count { break; }
+        if out.len() >= count {
+            break;
+        }
         out.push(bits_to_ternary(byte & 0x03));
-        if out.len() >= count { break; }
+        if out.len() >= count {
+            break;
+        }
         out.push(bits_to_ternary((byte >> 2) & 0x03));
-        if out.len() >= count { break; }
+        if out.len() >= count {
+            break;
+        }
         out.push(bits_to_ternary((byte >> 4) & 0x03));
-        if out.len() >= count { break; }
+        if out.len() >= count {
+            break;
+        }
         out.push(bits_to_ternary((byte >> 6) & 0x03));
     }
     out.truncate(count);
@@ -155,7 +163,10 @@ pub fn decode_ternary(data: &[u8], count: usize) -> Vec<i8> {
 /// Number of packed bytes needed for one feature row of `hidden_size` ternary values.
 pub fn ternary_bytes_per_row(hidden_size: usize) -> usize {
     // 4 values per byte, hidden_size must be multiple of 4
-    debug_assert!(hidden_size.is_multiple_of(4), "hidden_size must be multiple of 4 for ternary packing");
+    debug_assert!(
+        hidden_size.is_multiple_of(4),
+        "hidden_size must be multiple of 4 for ternary packing"
+    );
     hidden_size / 4
 }
 
@@ -167,7 +178,7 @@ fn ternary_to_bits(v: i8) -> u8 {
         1 => 0b01,
         -1 => 0b10,
         x if x > 0 => 0b01, // clamp positive
-        _ => 0b10,           // clamp negative
+        _ => 0b10,          // clamp negative
     }
 }
 

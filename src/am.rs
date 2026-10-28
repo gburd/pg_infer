@@ -20,9 +20,7 @@ use crate::am_scan;
 ///
 /// Registered as `infer_am_handler(internal)` via extension SQL.
 #[pg_extern(sql = false)]
-fn infer_am_handler(
-    _fcinfo: pg_sys::FunctionCallInfo,
-) -> pgrx::PgBox<pg_sys::IndexAmRoutine> {
+fn infer_am_handler(_fcinfo: pg_sys::FunctionCallInfo) -> pgrx::PgBox<pg_sys::IndexAmRoutine> {
     let mut routine = unsafe {
         pgrx::PgBox::<pg_sys::IndexAmRoutine>::alloc_node(pg_sys::NodeTag::T_IndexAmRoutine)
     };
@@ -119,5 +117,10 @@ CREATE OPERATOR CLASS infer_text_ops DEFAULT FOR TYPE text
         OPERATOR 1 <~> (text, text) FOR ORDER BY float_ops;
 "#,
     name = "infer_access_method",
-    requires = [infer_am_handler, infer_distance, infer_similarity, similar_to],
+    requires = [
+        infer_am_handler,
+        infer_distance,
+        infer_similarity,
+        similar_to
+    ],
 );

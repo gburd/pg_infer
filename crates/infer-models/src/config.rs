@@ -43,10 +43,7 @@ pub enum FfnLayerType {
     /// Standard dense FFN (gate + up -> activation -> down).
     Dense,
     /// Mixture of Experts with top-k routing.
-    MoE {
-        num_experts: usize,
-        top_k: usize,
-    },
+    MoE { num_experts: usize, top_k: usize },
 }
 
 /// How expert weights are stored in a MoE model.
@@ -172,7 +169,8 @@ impl ModelConfig {
             if self.num_experts.unwrap_or(0) == 0 {
                 return Err("enable_moe_block is true but num_experts is 0 or missing".into());
             }
-            if self.top_k_experts.unwrap_or(0) == 0 && self.num_experts_per_token.unwrap_or(0) == 0 {
+            if self.top_k_experts.unwrap_or(0) == 0 && self.num_experts_per_token.unwrap_or(0) == 0
+            {
                 return Err("enable_moe_block is true but neither top_k_experts nor num_experts_per_token is set".into());
             }
         }
@@ -180,7 +178,8 @@ impl ModelConfig {
             if lt.len() != self.num_layers {
                 return Err(format!(
                     "layer_types length ({}) != num_layers ({})",
-                    lt.len(), self.num_layers
+                    lt.len(),
+                    self.num_layers
                 ));
             }
         }
@@ -510,7 +509,10 @@ pub trait ModelArchitecture: Send + Sync {
     /// Key for the per-layer input gate projection [ple_dim, hidden].
     fn per_layer_input_gate_key(&self, layer: usize) -> Option<String> {
         if self.has_per_layer_embeddings() {
-            Some(format!("{}per_layer_input_gate.weight", self.layer_prefix(layer)))
+            Some(format!(
+                "{}per_layer_input_gate.weight",
+                self.layer_prefix(layer)
+            ))
         } else {
             None
         }
@@ -519,7 +521,10 @@ pub trait ModelArchitecture: Send + Sync {
     /// Key for the per-layer output projection [hidden, ple_dim].
     fn per_layer_projection_key(&self, layer: usize) -> Option<String> {
         if self.has_per_layer_embeddings() {
-            Some(format!("{}per_layer_projection.weight", self.layer_prefix(layer)))
+            Some(format!(
+                "{}per_layer_projection.weight",
+                self.layer_prefix(layer)
+            ))
         } else {
             None
         }
@@ -528,7 +533,10 @@ pub trait ModelArchitecture: Send + Sync {
     /// Key for the post-PLE norm weight.
     fn post_per_layer_input_norm_key(&self, layer: usize) -> Option<String> {
         if self.has_per_layer_embeddings() {
-            Some(format!("{}post_per_layer_input_norm.weight", self.layer_prefix(layer)))
+            Some(format!(
+                "{}post_per_layer_input_norm.weight",
+                self.layer_prefix(layer)
+            ))
         } else {
             None
         }
@@ -630,13 +638,21 @@ pub trait ModelArchitecture: Send + Sync {
     // ── Packed expert keys (MXFP4 models) ──
 
     /// Packed gate+up projection blocks key (all experts fused, MXFP4).
-    fn packed_gate_up_blocks_key(&self, _layer: usize) -> Option<String> { None }
+    fn packed_gate_up_blocks_key(&self, _layer: usize) -> Option<String> {
+        None
+    }
     /// Packed gate+up projection scales key.
-    fn packed_gate_up_scales_key(&self, _layer: usize) -> Option<String> { None }
+    fn packed_gate_up_scales_key(&self, _layer: usize) -> Option<String> {
+        None
+    }
     /// Packed down projection blocks key.
-    fn packed_down_blocks_key(&self, _layer: usize) -> Option<String> { None }
+    fn packed_down_blocks_key(&self, _layer: usize) -> Option<String> {
+        None
+    }
     /// Packed down projection scales key.
-    fn packed_down_scales_key(&self, _layer: usize) -> Option<String> { None }
+    fn packed_down_scales_key(&self, _layer: usize) -> Option<String> {
+        None
+    }
 
     /// Shared expert FFN gate weight key.
     fn shared_expert_gate_key(&self, _layer: usize) -> Option<String> {

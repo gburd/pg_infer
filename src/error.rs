@@ -15,10 +15,7 @@ pub enum PgInferError {
     #[error("no default model configured — SET infer.default_model first")]
     NoDefaultModel,
 
-    #[cfg_attr(
-        not(feature = "inference"),
-        allow(dead_code)
-    )]
+    #[cfg_attr(not(feature = "inference"), allow(dead_code))]
     #[error("model requires extract level '{needed}' but was built at '{have}'")]
     InsufficientExtractLevel { needed: String, have: String },
 
@@ -55,7 +52,10 @@ pub enum PgInferError {
 pub fn report(e: PgInferError) -> ! {
     match e {
         PgInferError::ModelNotFound { ref name } => {
-            error!("INFER: model '{}' not found — register it with infer_create_model()", name);
+            error!(
+                "INFER: model '{}' not found — register it with infer_create_model()",
+                name
+            );
         }
         PgInferError::NoDefaultModel => {
             error!(
@@ -75,7 +75,10 @@ pub fn report(e: PgInferError) -> ! {
         PgInferError::EmptyPrompt => {
             error!("INFER: prompt is empty after tokenization");
         }
-        PgInferError::PathNotPermitted { ref path, ref allowed } => {
+        PgInferError::PathNotPermitted {
+            ref path,
+            ref allowed,
+        } => {
             error!(
                 "INFER: path '{}' is not under allowed directory '{}'",
                 path, allowed

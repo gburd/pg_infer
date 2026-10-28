@@ -32,16 +32,14 @@ pub unsafe extern "C-unwind" fn infer_ambuild(
     let _ = index_info;
 
     // Determine model name: from reloptions or GUC fallback.
-    let model_name = resolve_model_for_build(index)
-        .unwrap_or_else(|e| pgrx::error!("INFER ambuild: {e}"));
+    let model_name =
+        resolve_model_for_build(index).unwrap_or_else(|e| pgrx::error!("INFER ambuild: {e}"));
 
     // Verify the model is registered (fail fast rather than at scan time).
-    verify_model_exists(&model_name)
-        .unwrap_or_else(|e| pgrx::error!("INFER ambuild: {e}"));
+    verify_model_exists(&model_name).unwrap_or_else(|e| pgrx::error!("INFER ambuild: {e}"));
 
     // Write metapage to block 0.
-    write_metapage(index, &model_name)
-        .unwrap_or_else(|e| pgrx::error!("INFER ambuild: {e}"));
+    write_metapage(index, &model_name).unwrap_or_else(|e| pgrx::error!("INFER ambuild: {e}"));
 
     // Count heap tuples for the build result.
     let heap_tuples = (*(*heap).rd_rel).reltuples as f64;
@@ -60,10 +58,9 @@ pub unsafe extern "C-unwind" fn infer_ambuild(
 /// Called by PostgreSQL. Arguments are valid for the duration of this call.
 #[pg_guard]
 pub unsafe extern "C-unwind" fn infer_ambuildempty(index: pg_sys::Relation) {
-    let model_name = resolve_model_for_build(index)
-        .unwrap_or_else(|e| pgrx::error!("INFER ambuildempty: {e}"));
-    write_metapage(index, &model_name)
-        .unwrap_or_else(|e| pgrx::error!("INFER ambuildempty: {e}"));
+    let model_name =
+        resolve_model_for_build(index).unwrap_or_else(|e| pgrx::error!("INFER ambuildempty: {e}"));
+    write_metapage(index, &model_name).unwrap_or_else(|e| pgrx::error!("INFER ambuildempty: {e}"));
 }
 
 /// Bulk delete: no-op for virtual index.
@@ -229,10 +226,7 @@ unsafe fn write_metapage(index: pg_sys::Relation, model_name: &str) -> Result<()
     let meta = InferMetaPage::new(model_name)?;
 
     // Get or extend the index to have at least one page.
-    let nblocks = pg_sys::RelationGetNumberOfBlocksInFork(
-        index,
-        pg_sys::ForkNumber::MAIN_FORKNUM,
-    );
+    let nblocks = pg_sys::RelationGetNumberOfBlocksInFork(index, pg_sys::ForkNumber::MAIN_FORKNUM);
     let buf = if nblocks == 0 {
         // Extend the relation to create block 0.
         // In PG18, P_NEW is represented as InvalidBlockNumber = 0xFFFFFFFF.
@@ -253,7 +247,8 @@ unsafe fn write_metapage(index: pg_sys::Relation, model_name: &str) -> Result<()
 
     // Use GenericXLog for WAL safety.
     let xlog_state = pg_sys::GenericXLogStart(index);
-    let page = pg_sys::GenericXLogRegisterBuffer(xlog_state, buf, pg_sys::GENERIC_XLOG_FULL_IMAGE as i32);
+    let page =
+        pg_sys::GenericXLogRegisterBuffer(xlog_state, buf, pg_sys::GENERIC_XLOG_FULL_IMAGE as i32);
 
     // Initialize the page.
     pg_sys::PageInit(page, pg_sys::BLCKSZ as usize, 0);
@@ -277,10 +272,8 @@ unsafe fn write_metapage(index: pg_sys::Relation, model_name: &str) -> Result<()
 /// Check if an index has a valid infer metapage.
 #[allow(dead_code)]
 pub unsafe fn has_valid_metapage(index_rel: pg_sys::Relation) -> bool {
-    let nblocks = pg_sys::RelationGetNumberOfBlocksInFork(
-        index_rel,
-        pg_sys::ForkNumber::MAIN_FORKNUM,
-    );
+    let nblocks =
+        pg_sys::RelationGetNumberOfBlocksInFork(index_rel, pg_sys::ForkNumber::MAIN_FORKNUM);
     if nblocks == 0 {
         return false;
     }

@@ -8,7 +8,7 @@
 //! This module handles data format encoding/decoding only.
 //! Compute operations (matvec, vecmat, GPU shaders) are in `infer-compute`.
 
-pub mod half;
 pub mod fp8;
 pub mod ggml;
+pub mod half;
 pub mod mxfp4;

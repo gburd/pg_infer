@@ -9,8 +9,8 @@ use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::sync::Mutex;
 
-use ndarray::Array2;
 use infer_models::TopKEntry;
+use ndarray::Array2;
 
 use crate::error::VindexError;
 
@@ -269,5 +269,4 @@ impl VectorIndex {
 
         Ok(count)
     }
-
 }

@@ -131,10 +131,7 @@ impl QuantizedTensor {
         if row >= self.rows {
             return None;
         }
-        let row_bytes = ggml::tensor_data_size(
-            self.format.as_ggml_type(),
-            self.cols,
-        ).ok()?;
+        let row_bytes = ggml::tensor_data_size(self.format.as_ggml_type(), self.cols).ok()?;
         let start = self.offset + row * row_bytes;
         let end = start + row_bytes;
         if end <= self.offset + self.length {
@@ -213,15 +210,12 @@ pub fn load_gguf_quantized(path: &Path) -> Result<QuantizedModelWeights, ModelEr
 
     for info in &gguf.tensor_infos {
         // Compute absolute offset in the mmap
-        let abs_offset = gguf
-            .data_offset
-            .checked_add(info.offset)
-            .ok_or_else(|| {
-                ModelError::Parse(format!(
-                    "tensor {}: data_offset {} + tensor offset {} overflows u64",
-                    info.name, gguf.data_offset, info.offset,
-                ))
-            })?;
+        let abs_offset = gguf.data_offset.checked_add(info.offset).ok_or_else(|| {
+            ModelError::Parse(format!(
+                "tensor {}: data_offset {} + tensor offset {} overflows u64",
+                info.name, gguf.data_offset, info.offset,
+            ))
+        })?;
 
         let n_elements: u64 = info.dims.iter().product();
         let data_size = ggml::tensor_data_size(info.tensor_type, n_elements as usize)?;
@@ -241,7 +235,10 @@ pub fn load_gguf_quantized(path: &Path) -> Result<QuantizedModelWeights, ModelEr
         if end > mmap.len() {
             return Err(ModelError::Parse(format!(
                 "tensor {} data out of bounds (offset {} + size {} > file {})",
-                info.name, abs_offset, data_size, mmap.len()
+                info.name,
+                abs_offset,
+                data_size,
+                mmap.len()
             )));
         }
 
@@ -308,29 +305,38 @@ mod tests {
         let magic: u32 = 0x46554747;
         file.write_all(&magic.to_le_bytes()).expect("write magic");
         file.write_all(&3u32.to_le_bytes()).expect("write version");
-        file.write_all(&2u64.to_le_bytes()).expect("write n_tensors");
-        file.write_all(&0u64.to_le_bytes()).expect("write n_metadata");
+        file.write_all(&2u64.to_le_bytes())
+            .expect("write n_tensors");
+        file.write_all(&0u64.to_le_bytes())
+            .expect("write n_metadata");
 
         // Tensor 1: 2D Q4_0 weight [4 rows, 32 cols] = 128 elements
         // Q4_0: 18 bytes per 32 elements → 4 rows × 18 bytes/row = 72 bytes
         let name1 = b"blk.0.ffn_gate.weight";
-        file.write_all(&(name1.len() as u64).to_le_bytes()).expect("write name1 len");
+        file.write_all(&(name1.len() as u64).to_le_bytes())
+            .expect("write name1 len");
         file.write_all(name1).expect("write name1");
         file.write_all(&2u32.to_le_bytes()).expect("write n_dims 1");
-        file.write_all(&32u64.to_le_bytes()).expect("write dim0 (cols)");
-        file.write_all(&4u64.to_le_bytes()).expect("write dim1 (rows)");
-        file.write_all(&ggml::TYPE_Q4_0.to_le_bytes()).expect("write type Q4_0");
+        file.write_all(&32u64.to_le_bytes())
+            .expect("write dim0 (cols)");
+        file.write_all(&4u64.to_le_bytes())
+            .expect("write dim1 (rows)");
+        file.write_all(&ggml::TYPE_Q4_0.to_le_bytes())
+            .expect("write type Q4_0");
         file.write_all(&0u64.to_le_bytes()).expect("write offset 0");
 
         // Tensor 2: 1D F32 norm [16 elements] = 64 bytes, starts after tensor 1
         let name2 = b"blk.0.attn_norm.weight";
-        file.write_all(&(name2.len() as u64).to_le_bytes()).expect("write name2 len");
+        file.write_all(&(name2.len() as u64).to_le_bytes())
+            .expect("write name2 len");
         file.write_all(name2).expect("write name2");
         file.write_all(&1u32.to_le_bytes()).expect("write n_dims 2");
         file.write_all(&16u64.to_le_bytes()).expect("write dim0");
-        file.write_all(&ggml::TYPE_F32.to_le_bytes()).expect("write type F32");
+        file.write_all(&ggml::TYPE_F32.to_le_bytes())
+            .expect("write type F32");
         // Tensor 2 offset = 72 (after tensor 1's 72 bytes)
-        file.write_all(&72u64.to_le_bytes()).expect("write offset 72");
+        file.write_all(&72u64.to_le_bytes())
+            .expect("write offset 72");
 
         // Pad to 32-byte alignment for data section
         let pos = file.stream_position().expect("get position");
@@ -344,7 +350,8 @@ mod tests {
             // f16 scale = 1.0 (0x3C00)
             file.write_all(&[0x00, 0x3C]).expect("write scale");
             // 16 bytes of quant data (fill with row index for verification)
-            file.write_all(&[row | (row << 4); 16]).expect("write quants");
+            file.write_all(&[row | (row << 4); 16])
+                .expect("write quants");
         }
 
         // Tensor 2 data: 16 f32 values
@@ -388,7 +395,7 @@ mod tests {
         assert_eq!(row0.len(), 18);
         assert_eq!(row0[0], 0x00); // scale low
         assert_eq!(row0[1], 0x3C); // scale high
-        // Quant bytes for row 0: 0x00 | (0x00 << 4) = 0x00
+                                   // Quant bytes for row 0: 0x00 | (0x00 << 4) = 0x00
         assert_eq!(row0[2], 0x00);
 
         let row3 = gate.row_data(3).expect("row 3");
@@ -454,10 +461,7 @@ mod tests {
         ];
         for (fmt, expected_type) in formats {
             assert_eq!(fmt.as_ggml_type(), expected_type);
-            assert_eq!(
-                GgufQuantFormat::from_ggml_type(expected_type),
-                Some(fmt),
-            );
+            assert_eq!(GgufQuantFormat::from_ggml_type(expected_type), Some(fmt),);
         }
     }
 
@@ -491,18 +495,21 @@ mod tests {
         file.write_all(&0u64.to_le_bytes()).expect("n_metadata");
 
         let name = b"blk.0.ffn_gate.weight";
-        file.write_all(&(name.len() as u64).to_le_bytes()).expect("len");
+        file.write_all(&(name.len() as u64).to_le_bytes())
+            .expect("len");
         file.write_all(name).expect("name");
         file.write_all(&2u32.to_le_bytes()).expect("ndims");
         file.write_all(&32u64.to_le_bytes()).expect("cols");
         file.write_all(&4u64.to_le_bytes()).expect("rows");
-        file.write_all(&ggml::TYPE_Q4_0.to_le_bytes()).expect("type");
+        file.write_all(&ggml::TYPE_Q4_0.to_le_bytes())
+            .expect("type");
         file.write_all(&0u64.to_le_bytes()).expect("offset");
 
         // Pad to alignment, write only 10 bytes (need 72)
         let pos = file.stream_position().expect("pos");
         let aligned = pos.div_ceil(32) * 32;
-        file.write_all(&vec![0u8; (aligned - pos) as usize]).expect("pad");
+        file.write_all(&vec![0u8; (aligned - pos) as usize])
+            .expect("pad");
         file.write_all(&[0u8; 10]).expect("short data");
         file.flush().expect("flush");
 
