@@ -12,7 +12,7 @@ any other way.
 |---|---|
 | Instance | EC2 `m7i.8xlarge` (32 vCPU, 123 GB, x86_64) |
 | pg_infer | 0.1.2-alpha |
-| larql-server | 0.2.0 (`feat/bitnet-serve`) |
+| larql-server | 0.2.0 (`main` -- the BitNet serving and gate-scan work is merged upstream) |
 | PostgreSQL | 18.6 (pgrx-managed) |
 | Rust | 1.98.0 (pinned) |
 | Model | `microsoft/bitnet-b1.58-2B-4T-gguf` / `ggml-model-i2_s.gguf` (1.2 GB) |
@@ -171,7 +171,9 @@ of the layer. At this shape that is ~71 MB per layer per call, so a
 scoring a single feature. The *decode* was already cached; it was purely
 the copy.
 
-Fixed in [gburd/larql `perf/gate-scan`](https://github.com/gburd/larql/tree/perf/gate-scan).
+Fixed in [chrishayuk/larql#482](https://github.com/chrishayuk/larql/pull/482),
+**merged upstream 2026-09-16** -- a stock `larql-server` built from `main`
+now has these numbers with no local patches and no fork branch.
 Correctness is unchanged -- identical edges and scores (`Zone` 332.80 L22
 remains the top edge for `France`), 4736 `larql-vindex` tests pass, and 93
 concurrent queries still return exactly one distinct answer.
