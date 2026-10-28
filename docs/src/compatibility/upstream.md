@@ -12,13 +12,59 @@ Upstream is **<https://github.com/chrishayuk/larql>**.
 
 | Component | Commit | Date | Branch |
 |-----------|--------|------|--------|
-| larql upstream | 23a56db1 | 2026-09-13 | main (PR #476) |
+| larql upstream | 2536bb79 | 2026-10-28 | main (PR #657) |
 
 The wire contract is pinned mechanically, not by prose: the server's own
 OpenAPI document is committed at
 `crates/infer-client/tests/fixtures/larql-openapi.json` and
 `cargo test -p infer-client --test openapi_contract` checks every DTO
 against it. See [Testing Compatibility](#testing-compatibility).
+
+## Sync log: 23a56db1 -> 2536bb79 (2026-10-28)
+
+597 upstream commits, 2844 files, +825k/-165k lines. **Nothing in pg_infer
+needed changing.** Recorded because "we re-synced and the answer was no
+work" is as useful to the next reader as a list of ports, and because the
+check that establishes it is cheap to repeat.
+
+What moved:
+
+| | then | now |
+|---|---|---|
+| `/v1` routes | 65 | 64 (`/v1/walk-ffn` removed -- grid-internal, unused here) |
+| OpenAPI paths | 57 | 57 |
+| OpenAPI schemas | 71 | 72 (`V3Backend` added) |
+| new crates | -- | `larql-continuation-fixture` (test-only cdylib) |
+
+Every schema pg_infer parses is **byte-identical**: `StatsResponse`,
+`DescribeResponse`/`Edge`, `WalkResponse`/`Hit`, `RelationsResponse`/`Entry`,
+`InferResponse`, `WarmupRequest`/`Response`, `ModelsListResponse`/`Entry`,
+`CapabilitiesResponse`, `EmbedRequest`/`Response`, `TokenEncodeResponse`,
+`SelectRequest`/`Response`/`Row`. Verified by generating the spec from
+upstream's own `ApiDoc::openapi()` and diffing property and required-field
+sets per schema, not by reading a changelog.
+
+`/v1/stats` gained one additive key (`refusals`), which unknown-field
+tolerance already handles.
+
+`cargo test -p infer-client` against the regenerated fixture: 36 passed,
+0 failed, including all 16 contract tests.
+
+### Upstream now carries our performance work
+
+[chrishayuk/larql#482](https://github.com/chrishayuk/larql/pull/482) is
+**merged**, so the gate-scan fixes are in upstream `main` rather than
+carried on a fork branch: the `view.dot(vec)` BLAS-sgemv fix, the f16
+score-in-place path, and rayon across layers. A stock `larql-server` built
+from `main` now gives the numbers in
+[BitNet Qualification](../operations/bitnet-qualification.md) without any
+local patches -- `describe()` ~96 ms, ~14 ms with the parallel walk.
+
+[#481](https://github.com/chrishayuk/larql/pull/481) (rustls advisory) is
+also merged. [#478](https://github.com/chrishayuk/larql/pull/478) (nix) and
+[#479](https://github.com/chrishayuk/larql/pull/479) (larql-cloud) remain
+open; both are green and the maintainer has been merging `main` into them
+directly.
 
 ## What We Take from larql
 
@@ -96,7 +142,7 @@ A refusal is cheap; a confident wrong answer is not.
 
 | pg_infer version | larql commit | Server API | Vindex format |
 |-----------------|--------------|------------|---------------|
-| 0.1.2-alpha | 23a56db1+ | /v1 JSON | VINDEX2 (schema 1--2, Q4_K/Q6_K) |
+| 0.1.2-alpha | 2536bb79+ | /v1 JSON | VINDEX2 (schema 1--2, Q4_K/Q6_K) |
 
 ## Sync Procedure
 

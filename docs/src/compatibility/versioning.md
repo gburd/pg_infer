@@ -55,7 +55,7 @@ required fields cause a parse error surfaced as a SQL `ERROR`.
 
 | pg_infer | PostgreSQL | larql-server | Vindex Format | Rust Toolchain |
 |----------|------------|--------------|---------------|----------------|
-| 0.1.2-alpha | 18+ | 23a56db1+ (2026-09-13) | VINDEX2 schema 1--2 (Q4_K/Q6_K) | 1.80+ |
+| 0.1.2-alpha | 18+ | 2536bb79+ (2026-10-28) | VINDEX2 schema 1--2 (Q4_K/Q6_K) | 1.80+ |
 
 ### Vindex Format Versions
 

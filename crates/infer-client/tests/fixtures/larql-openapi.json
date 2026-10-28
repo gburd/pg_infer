@@ -3597,6 +3597,10 @@
           "path": {
             "type": "string",
             "description": "Filesystem path to a VINDEX2 or VINDEX3 container — the same\npath `--vindex-path` already accepts. No registry/name\nresolution yet (`docs/runtime-lifecycle-design.md`'s explicit\nnon-goals for this rung)."
+          },
+          "backend": {
+            "$ref": "#/components/schemas/V3Backend",
+            "description": "VINDEX3 backend; defaults to CPU. Refused for V2 when set to Metal."
           }
         }
       },
@@ -4378,7 +4382,14 @@
         "properties": {
           "metal_compiled": {
             "type": "boolean",
-            "description": "Whether this binary was compiled with Metal-accelerated MoE\nexpert dispatch — a compile-time fact, not a claim that\nMetal is driving the current request."
+            "description": "Whether this binary was compiled with V3 Metal execution or MoE\nexpert dispatch — a compile-time fact, not a claim that\nMetal is driving the current request."
+          },
+          "selected": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Explicitly selected V3 backend, or null for V2/unbound models."
           }
         }
       },
@@ -4512,6 +4523,9 @@
           },
           "backend": {
             "$ref": "#/components/schemas/RuntimeBackend"
+          },
+          "layer_shard": {
+            "description": "Versioned layer-worker binding, or null for a whole-model binding."
           },
           "memory": {
             "$ref": "#/components/schemas/RuntimeMemory"
@@ -4984,6 +4998,14 @@
             "minimum": 0
           }
         }
+      },
+      "V3Backend": {
+        "type": "string",
+        "description": "Backend requested at V3 bind time. An unavailable device is an error;\nexplicit Metal selection never silently becomes CPU execution.",
+        "enum": [
+          "cpu",
+          "metal"
+        ]
       },
       "WalkHit": {
         "type": "object",
