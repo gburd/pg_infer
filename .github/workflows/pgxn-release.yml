@@ -153,15 +153,46 @@ jobs:
           PGXN_PASSWORD: ${{ secrets.PGXN_PASSWORD }}
         run: |
           archive="pg_infer-${{ steps.ver.outputs.version }}.zip"
-          # 2xx/3xx: accepted.  409: this version is already on PGXN, which
-          # makes a re-run of a published tag idempotent rather than fatal.
-          code=$(curl -sS -o /tmp/pgxn_resp.txt -w '%{http_code}' \
+          # Capture headers, not just the status. A bare `3*) accepted` is NOT
+          # safe here: PGXN Manager answers a REJECTED upload with 303 back to
+          # the form (it is a browser app, so it redirects rather than 4xx), so
+          # treating every 3xx as success reports a green publish for an upload
+          # that did not happen -- which is exactly what v0.1.3-alpha did.
+          # The Location distinguishes the two cases, so key off that.
+          code=$(curl -sS -o /tmp/pgxn_resp.txt -D /tmp/pgxn_hdr.txt -w '%{http_code}' \
             --user "$PGXN_USERNAME:$PGXN_PASSWORD" \
             -F "archive=@${archive};type=application/zip" \
             https://manager.pgxn.org/upload)
-          echo "PGXN upload HTTP $code"; cat /tmp/pgxn_resp.txt || true
+          loc=$(grep -i '^location:' /tmp/pgxn_hdr.txt | tr -d '\r' | awk '{print $2}')
+          echo "PGXN upload HTTP $code  Location: ${loc:-none}"
+          echo "--- response headers ---"; cat /tmp/pgxn_hdr.txt || true
+          echo "--- response body ---";    cat /tmp/pgxn_resp.txt || true
           case "$code" in
-            2*|3*) echo "PGXN upload accepted." ;;
-            409)   echo "::warning::this version is already on PGXN; skipping." ;;
-            *)     echo "::error::PGXN upload failed (HTTP $code) -- check PGXN_USERNAME/PGXN_PASSWORD and META.json"; exit 1 ;;
+            2*) echo "PGXN upload accepted." ;;
+            409) echo "::warning::this version is already on PGXN; skipping." ;;
+            3*)
+              # /auth or /upload means "back to the form": not published.
+              case "$loc" in
+                */upload|*/auth*|"")
+                  echo "::error::PGXN redirected back to the upload form (HTTP $code -> ${loc:-no Location}); the upload was REJECTED, not published. The body above carries the reason."
+                  exit 1 ;;
+                *) echo "PGXN upload accepted (redirected to $loc)." ;;
+              esac ;;
+            *) echo "::error::PGXN upload failed (HTTP $code) -- check PGXN_USERNAME/PGXN_PASSWORD and META.json"; exit 1 ;;
           esac
+
+      # A green upload step is not proof of publication. Ask PGXN.
+      - name: Verify the release is actually on PGXN
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          VER="${{ steps.ver.outputs.version }}"
+          for i in $(seq 1 10); do
+            code=$(curl -s -o /tmp/dist.json -w '%{http_code}' https://api.pgxn.org/dist/pg_infer.json)
+            if [ "$code" = "200" ] && grep -q "\"$VER\"" /tmp/dist.json; then
+              echo "pg_infer $VER is live on PGXN."; exit 0
+            fi
+            echo "not indexed yet (HTTP $code, attempt $i/10); PGXN indexing is not instant"
+            sleep 30
+          done
+          echo "::error::pg_infer $VER is not on PGXN five minutes after a reportedly successful upload"
+          exit 1
