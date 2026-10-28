@@ -42,4 +42,13 @@ jobs:
         run: cargo pgrx init --pg18 download
 
       - name: Run pgrx tests
-        run: cargo pgrx test pg18
+        run: |
+          # Swatinem/rust-cache restores target/, and pgrx puts its test cluster
+          # in target/test-pgdata/<ver>. A cached datadir is not a valid cluster,
+          # so pg_ctl start fails with "is not a database cluster directory", the
+          # first test hard-aborts holding the test mutex, and every remaining
+          # test reports "Could not obtain test mutex". Proven by the logs: the
+          # one run that passed says "No cache found", every failing run says
+          # "Cache restored". Start clean; pgrx initdb's it in seconds.
+          rm -rf target/test-pgdata
+          cargo pgrx test pg18
