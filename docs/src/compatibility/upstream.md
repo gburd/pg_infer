@@ -12,7 +12,7 @@ Upstream is **<https://github.com/chrishayuk/larql>**.
 
 | Component | Commit | Date | Branch |
 |-----------|--------|------|--------|
-| larql upstream | 2536bb79 | 2026-10-28 | main (PR #657) |
+| larql upstream | 3b5dd3d2 | 2026-11-18 | main (PR #878) |
 
 The wire contract is pinned mechanically, not by prose: the server's own
 OpenAPI document is committed at
@@ -65,6 +65,60 @@ also merged. [#478](https://github.com/chrishayuk/larql/pull/478) (nix) and
 [#479](https://github.com/chrishayuk/larql/pull/479) (larql-cloud) remain
 open; both are green and the maintainer has been merging `main` into them
 directly.
+
+## Sync log: 2536bb79 -> 3b5dd3d2 (2026-11-18)
+
+737 upstream commits.  **No pg_infer code changes needed**, for the second
+sync running.  The fork was 0 ahead and 1334 behind, so bringing it current
+was a clean fast-forward with no merge commit and no conflicts.
+
+| | then | now |
+|---|---|---|
+| `/v1` routes | 66 | 66 |
+| OpenAPI paths | 57 | 57 |
+| OpenAPI schemas | 72 | 72 |
+| new crates | -- | none |
+
+One schema moved: `ModelEntry` gained an optional `aliases` array (the
+`--model-alias` names a request's `model` field may use).  pg_infer has no
+`ModelEntry` type and no `deny_unknown_fields` anywhere in infer-client, so
+the field is inert here.  Every other schema is byte-identical, including
+all 12 that pg_infer parses.
+
+`cargo test -p infer-client`: 36 passed, including all 16 contract tests.
+
+### LQL overlaps us, and that is worth watching
+
+Upstream's largest theme since the last sync (25 of the merge PRs) is
+`larql-lql`, the Lazarus Query Language: a SQL-like surface over the same
+container and graph operations pg_infer exposes as SQL functions.  Its
+statement set overlaps ours almost one-for-one -- DESCRIBE, WALK, SELECT,
+INFER, SHOW RELATIONS/LAYERS/FEATURES/MODELS, STATS, DIFF, EXPLAIN.
+
+It does **not** make pg_infer redundant, and the reason is structural
+rather than a matter of maturity.  LQL reaches the network through
+`POST /v1/query`, whose response is:
+
+```rust
+pub struct QueryResponse {
+    pub profile: String,
+    pub lines: Vec<String>,   // the session's output lines, in order
+}
+```
+
+Human-readable lines, not typed rows.  A SQL extension needs columns with
+types to join, filter, and plan against; re-parsing rendered text inside
+the server would be a worse contract than the typed `/v1/describe` and
+`/v1/walk` endpoints pg_infer already consumes.  The capability profile is
+also deliberately narrow: `PublicExplorer` serves browse and introspection
+and refuses every mutation by construction, so the half of LQL pg_infer
+lacks (EXTRACT, COMPILE, INSERT, UPDATE WEIGHTS, the patch and verify
+families) is not reachable over HTTP at all.
+
+So the division of labour is the one we already have: LQL is the operator's
+REPL against a local container, pg_infer is the typed SQL surface for
+applications.  What would change the calculus is `/v1/query` gaining a
+structured result shape; that is the thing to watch for on the next sync.
 
 ## What We Take from larql
 
@@ -142,7 +196,7 @@ A refusal is cheap; a confident wrong answer is not.
 
 | pg_infer version | larql commit | Server API | Vindex format |
 |-----------------|--------------|------------|---------------|
-| 0.1.3-alpha | 2536bb79+ | /v1 JSON | VINDEX2 (schema 1--2, Q4_K/Q6_K) |
+| 0.1.3-alpha | 3b5dd3d2+ | /v1 JSON | VINDEX2 (schema 1--2, Q4_K/Q6_K) |
 
 ## Sync Procedure
 
