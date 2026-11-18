@@ -30,6 +30,7 @@ mod interrupt;
 mod model_mgmt;
 mod registry;
 mod relation_classify;
+mod relation_laya;
 #[allow(dead_code)]
 mod sq8;
 mod tracing_layer;
