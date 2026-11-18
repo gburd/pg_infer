@@ -55,7 +55,31 @@ required fields cause a parse error surfaced as a SQL `ERROR`.
 
 | pg_infer | PostgreSQL | larql-server | Vindex Format | Rust Toolchain |
 |----------|------------|--------------|---------------|----------------|
-| 0.1.3-alpha | 18+ | 3b5dd3d2+ (2026-11-18) | VINDEX2 schema 1--2 (Q4_K/Q6_K) | 1.80+ |
+| 0.1.3-alpha | 18, 19 | 3b5dd3d2+ (2026-11-18) | VINDEX2 schema 1--2 (Q4_K/Q6_K) | 1.80+ |
+
+### PostgreSQL 19
+
+Built and tested on 19 as of 2026-11-18, where the newest release is
+**rc2** -- there is no 19.0 GA tarball yet, so treat 19 support as ready
+rather than shipped.  Both majors run the same 55 pgrx tests in CI
+(`pg: [18, 19]`).
+
+Two PG19 source changes reach an index access method, and pg_infer handles
+both without a behaviour change:
+
+- `table_beginscan()` takes a new trailing `flags` bitmask.  It is OR'd on
+  top of the internal defaults earlier versions always applied
+  (`SO_TYPE_SEQSCAN | SO_ALLOW_STRAT | SO_ALLOW_SYNC | SO_ALLOW_PAGEMODE`),
+  so passing 0 requests exactly the PG18 behaviour.
+- `BUFFER_LOCK_*` became a `BufferLockMode` enum over `c_uint`, where it
+  had been plain `#define`s reaching `LockBuffer()` as a signed `c_int`.
+  The eight call sites go through `am_pages::lock_buffer()`, which casts to
+  the parameter's own type and so compiles on both.  The values are
+  unchanged.
+
+This also required pgrx 0.17 -> 0.19.4: 0.17 has no `pg19` feature at all.
+pgrx 0.19 drops the `pgrx_embed!` macro and the `src/bin/pgrx_embed.rs`
+binary that called it, so that file is gone.
 
 ### Vindex Format Versions
 

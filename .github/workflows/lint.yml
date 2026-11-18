@@ -47,7 +47,7 @@ jobs:
       - name: Install system deps
         run: |
           sudo apt-get update -qq && sudo apt-get install -y libopenblas-dev libreadline-dev zlib1g-dev pkg-config
-          cargo install cargo-pgrx --version 0.17.0 --locked
+          cargo install cargo-pgrx --version 0.19.4 --locked
           cargo pgrx init --pg18 download
 
       - name: Clippy (pg_infer extension)

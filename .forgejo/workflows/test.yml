@@ -25,30 +25,41 @@ jobs:
         run: cargo test --workspace --exclude pg_infer
 
   test-pgrx:
-    name: pgrx Integration Tests
+    name: pgrx Integration Tests (PG ${{ matrix.pg }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 19 is rc2 as of 2026-11-18, not GA. It is in the matrix because the
+        # pgrx 0.19 bump makes it build and pass today, so a later PG19 API
+        # change gets caught here rather than after it ships.
+        pg: [18, 19]
     steps:
       - uses: actions/checkout@v4
 
-      - uses: https://codeberg.org/TheAwitworker/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
 
       - name: Install system deps
         run: sudo apt-get update -qq && sudo apt-get install -y libopenblas-dev libreadline-dev zlib1g-dev pkg-config
 
       - name: Install cargo-pgrx
-        run: cargo install cargo-pgrx --version 0.17.0 --locked
+        run: cargo install cargo-pgrx --version 0.19.4 --locked
 
-      - name: Initialize pgrx (PostgreSQL 18)
-        run: cargo pgrx init --pg18 download
+      - name: Initialize pgrx (PostgreSQL ${{ matrix.pg }})
+        run: cargo pgrx init --pg${{ matrix.pg }} download
 
       - name: Run pgrx tests
         run: |
           # Swatinem/rust-cache restores target/, and pgrx puts its test cluster
-          # in target/test-pgdata/<ver>. A cached datadir is not a valid cluster,
-          # so pg_ctl start fails with "is not a database cluster directory", the
-          # first test hard-aborts holding the test mutex, and every remaining
-          # test reports "Could not obtain test mutex". Proven by the logs: the
-          # one run that passed says "No cache found", every failing run says
-          # "Cache restored". Start clean; pgrx initdb's it in seconds.
+          # in target/test-pgdata/<ver>. A cached datadir from an earlier run is
+          # not a valid cluster -- PG_VERSION and friends are not cache-restored
+          # faithfully -- so pg_ctl start fails with "is not a database cluster
+          # directory", the first test hard-aborts holding the test mutex, and
+          # every remaining test reports "Could not obtain test mutex". That is
+          # why the first run after adding the cache passed and every later one
+          # failed on identical code. Start from a clean datadir; pgrx initdb's
+          # it in seconds.
           rm -rf target/test-pgdata
-          cargo pgrx test pg18
+          cargo pgrx test pg${{ matrix.pg }}

@@ -73,7 +73,7 @@ pub unsafe fn read_model_from_metapage(
     index_rel: pg_sys::Relation,
 ) -> Result<String, PgInferError> {
     let buf = pg_sys::ReadBuffer(index_rel, 0);
-    pg_sys::LockBuffer(buf, pg_sys::BUFFER_LOCK_SHARE as i32);
+    crate::am_pages::lock_buffer(buf, pg_sys::BUFFER_LOCK_SHARE);
 
     let page = pg_sys::BufferGetPage(buf);
     let data = pg_sys::PageGetContents(page) as *const InferMetaPage;

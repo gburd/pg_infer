@@ -244,6 +244,13 @@ unsafe fn compute_ranked_results(
     let mut tids: Vec<pg_sys::ItemPointerData> = Vec::new();
 
     let snapshot = pg_sys::GetActiveSnapshot();
+    // PG19 added a caller-supplied `flags` bitmask to table_beginscan().  It is
+    // OR'd on top of the same internal defaults earlier versions always applied
+    // (SO_TYPE_SEQSCAN | SO_ALLOW_STRAT | SO_ALLOW_SYNC | SO_ALLOW_PAGEMODE),
+    // so 0 asks for exactly the PG18 behaviour.
+    #[cfg(feature = "pg19")]
+    let table_scan = pg_sys::table_beginscan(heap_rel, snapshot, 0, std::ptr::null_mut(), 0);
+    #[cfg(not(feature = "pg19"))]
     let table_scan = pg_sys::table_beginscan(heap_rel, snapshot, 0, std::ptr::null_mut());
 
     // Allocate a reusable slot for the scan.
@@ -480,7 +487,7 @@ unsafe fn read_hnsw_pages(
 
     for blkno in meta.hnsw_pages_start..meta.hnsw_pages_end {
         let buf = pg_sys::ReadBuffer(index_rel, blkno);
-        pg_sys::LockBuffer(buf, pg_sys::BUFFER_LOCK_SHARE as i32);
+        crate::am_pages::lock_buffer(buf, pg_sys::BUFFER_LOCK_SHARE);
         let page = pg_sys::BufferGetPage(buf);
         let content = pg_sys::PageGetContents(page) as *const u8;
         let slice = std::slice::from_raw_parts(content, content_size);
@@ -501,7 +508,7 @@ unsafe fn read_embedding_pages(
 
     for blkno in meta.embed_pages_start..meta.embed_pages_end {
         let buf = pg_sys::ReadBuffer(index_rel, blkno);
-        pg_sys::LockBuffer(buf, pg_sys::BUFFER_LOCK_SHARE as i32);
+        crate::am_pages::lock_buffer(buf, pg_sys::BUFFER_LOCK_SHARE);
         let page = pg_sys::BufferGetPage(buf);
         let content = pg_sys::PageGetContents(page) as *const u8;
         let slice = std::slice::from_raw_parts(content, content_size);

@@ -38,20 +38,17 @@ categories = ["database", "science"]
 [lib]
 crate-type = ["cdylib", "lib"]
 
-[[bin]]
-name = "pgrx_embed_pg_infer"
-path = "./src/bin/pgrx_embed.rs"
-
 [features]
 default = ["pg18"]
 pg18 = ["pgrx/pg18", "pgrx-tests/pg18"]
+pg19 = ["pgrx/pg19", "pgrx-tests/pg19"]
 pg_test = []
 # Enable the infer() function.  Pulls in infer-inference which depends on
 # wasmtime + protobuf-src (heavy C++ build).
 inference = ["dep:infer-inference"]
 
 [dependencies]
-pgrx = "0.17.0"
+pgrx = "0.19.4"
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
@@ -73,7 +70,7 @@ infer-client = { path = "crates/infer-client" }
 infer-inference = { path = "crates/infer-inference", optional = true }
 
 [dev-dependencies]
-pgrx-tests = "0.17.0"
+pgrx-tests = "0.19.4"
 
 [profile.release]
 opt-level = 3

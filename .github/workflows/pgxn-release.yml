@@ -134,7 +134,7 @@ jobs:
           # and zlib. Without them: "configure: error: readline library not found".
           sudo apt-get install -y --no-install-recommends \
             libopenblas-dev libreadline-dev zlib1g-dev pkg-config
-          cargo install cargo-pgrx --version 0.17.0 --locked
+          cargo install cargo-pgrx --version 0.19.4 --locked
           cargo pgrx init --pg18 download
           cargo test --workspace --exclude pg_infer
 

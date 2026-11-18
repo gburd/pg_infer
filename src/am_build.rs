@@ -237,11 +237,11 @@ unsafe fn write_metapage(index: pg_sys::Relation, model_name: &str) -> Result<()
             pg_sys::ReadBufferMode::RBM_NORMAL,
             std::ptr::null_mut(),
         );
-        pg_sys::LockBuffer(buf, pg_sys::BUFFER_LOCK_EXCLUSIVE as i32);
+        crate::am_pages::lock_buffer(buf, pg_sys::BUFFER_LOCK_EXCLUSIVE);
         buf
     } else {
         let buf = pg_sys::ReadBuffer(index, 0);
-        pg_sys::LockBuffer(buf, pg_sys::BUFFER_LOCK_EXCLUSIVE as i32);
+        crate::am_pages::lock_buffer(buf, pg_sys::BUFFER_LOCK_EXCLUSIVE);
         buf
     };
 
@@ -279,7 +279,7 @@ pub unsafe fn has_valid_metapage(index_rel: pg_sys::Relation) -> bool {
     }
 
     let buf = pg_sys::ReadBuffer(index_rel, 0);
-    pg_sys::LockBuffer(buf, pg_sys::BUFFER_LOCK_SHARE as i32);
+    crate::am_pages::lock_buffer(buf, pg_sys::BUFFER_LOCK_SHARE);
 
     let page = pg_sys::BufferGetPage(buf);
     let data = pg_sys::PageGetContents(page) as *const InferMetaPage;

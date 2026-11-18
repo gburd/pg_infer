@@ -15,6 +15,22 @@ use pgrx::pg_sys;
 
 use crate::am_options::INFER_META_MAGIC;
 
+/// Take a buffer lock, spelling the mode in whatever integer type this
+/// server version's `LockBuffer` expects.
+///
+/// PG18 and earlier expose `BUFFER_LOCK_*` as plain `#define`s, so the mode
+/// parameter is a signed `c_int`.  PG19 turns them into a `BufferLockMode`
+/// enum whose underlying type is `c_uint`, which makes a hardcoded `as i32`
+/// a type error.  Casting from the constant to the parameter's own type
+/// compiles on both without a `cfg` per call site, and the values are
+/// unchanged (UNLOCK 0, SHARE 1, EXCLUSIVE 3), so behaviour is identical.
+///
+/// NB: callers must already hold a pin on `buf`.
+#[inline]
+pub(crate) unsafe fn lock_buffer(buf: pg_sys::Buffer, mode: u32) {
+    pg_sys::LockBuffer(buf, mode as _);
+}
+
 /// Version 2 metapage magic stays the same; the `version` field discriminates.
 pub const INFER_META_VERSION_V2: u32 = 2;
 
@@ -172,7 +188,7 @@ pub unsafe fn read_metapage_version(
     index_rel: pg_sys::Relation,
 ) -> Result<u32, crate::error::PgInferError> {
     let buf = pg_sys::ReadBuffer(index_rel, 0);
-    pg_sys::LockBuffer(buf, pg_sys::BUFFER_LOCK_SHARE as i32);
+    lock_buffer(buf, pg_sys::BUFFER_LOCK_SHARE);
 
     let page = pg_sys::BufferGetPage(buf);
     let data = pg_sys::PageGetContents(page) as *const InferMetaPageV2;
@@ -199,7 +215,7 @@ pub unsafe fn read_metapage_v2(
     index_rel: pg_sys::Relation,
 ) -> Result<InferMetaPageV2, crate::error::PgInferError> {
     let buf = pg_sys::ReadBuffer(index_rel, 0);
-    pg_sys::LockBuffer(buf, pg_sys::BUFFER_LOCK_SHARE as i32);
+    lock_buffer(buf, pg_sys::BUFFER_LOCK_SHARE);
 
     let page = pg_sys::BufferGetPage(buf);
     let data = pg_sys::PageGetContents(page) as *const InferMetaPageV2;
