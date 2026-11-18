@@ -30,7 +30,6 @@ mod interrupt;
 mod model_mgmt;
 mod registry;
 mod relation_classify;
-mod relation_laya;
 #[allow(dead_code)]
 mod sq8;
 mod tracing_layer;
@@ -222,6 +221,69 @@ mod tests {
                 func_name
             );
         }
+    }
+
+    /// The score columns must not be named `confidence`, and the gate-score
+    /// functions must agree on one name.
+    ///
+    /// These columns carry an unnormalised, model-dependent gate magnitude
+    /// (BitNet b1.58 reaches 300+ where Gemma-class weights sit at 20--45), so
+    /// calling one `confidence` invited callers to read it as a probability
+    /// and to port thresholds between models.  `describe()` and
+    /// `describe_many()` returned exactly that, while `walk()` said
+    /// `activation` and `nearest_to()` said `score` -- four names for one
+    /// quantity, against a SQL reference that said `gate_score` throughout.
+    ///
+    /// NB: `infer_show_features` keeps `score` and `infer_diff` keeps
+    /// `score_a`/`score_b`; both match the reference, and diff's suffixes
+    /// distinguish the two models being compared.
+    #[pg_test]
+    fn test_score_columns_are_not_called_confidence() {
+        Spi::run("CREATE EXTENSION IF NOT EXISTS pg_infer").expect("CREATE EXTENSION failed");
+
+        // pg_get_function_result() renders the OUT parameter names, which is
+        // what a caller actually sees as column headings.
+        let result_of = |func: &str| -> String {
+            Spi::get_one::<String>(&format!(
+                "SELECT pg_get_function_result(oid) FROM pg_proc \
+                 WHERE proname = '{func}' LIMIT 1"
+            ))
+            .expect("query failed")
+            .unwrap_or_default()
+        };
+
+        for func in &[
+            "describe",
+            "describe_many",
+            "describe_layers",
+            "walk",
+            "nearest_to",
+        ] {
+            let sig = result_of(func);
+            assert!(
+                !sig.contains("confidence"),
+                "{func} exposes a column named 'confidence'; it is a raw gate \
+                 score, so it must be 'gate_score': {sig}"
+            );
+            assert!(
+                sig.contains("gate_score"),
+                "{func} should name its score column 'gate_score': {sig}"
+            );
+        }
+
+        // No function anywhere should call a raw score `confidence`.
+        let offenders = Spi::get_one::<i64>(
+            "SELECT count(*) FROM pg_proc p \
+             JOIN pg_namespace n ON n.oid = p.pronamespace \
+             WHERE n.nspname = 'public' \
+               AND pg_get_function_result(p.oid) LIKE '%confidence%'",
+        )
+        .expect("query failed");
+        assert_eq!(
+            offenders,
+            Some(0),
+            "some function still returns a column named 'confidence'"
+        );
     }
 
     #[pg_test]

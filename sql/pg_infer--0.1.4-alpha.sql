@@ -1,4 +1,4 @@
--- pg_infer extension installation SQL (version 1.0.0)
+-- pg_infer extension installation SQL (version 0.1.4-alpha)
 --
 -- This file captures the complete DDL that CREATE EXTENSION pg_infer executes.
 -- It is generated from the extension_sql! macros in the Rust source code and
@@ -43,9 +43,28 @@ CREATE TABLE IF NOT EXISTS infer.models (
 -- The following functions are created by pgrx during CREATE EXTENSION.
 -- They are documented here for reference but not re-declared (pgrx handles it).
 --
+--
+-- A NOTE ON SCORES.  Every float8 named `gate_score` (or `score`) in these
+-- signatures is an UNNORMALISED, MODEL-DEPENDENT magnitude: a dot product
+-- between a pooled embedding and a gate vector.  It is not a probability and
+-- it has no fixed range.  Gemma-class weights put the interesting band around
+-- 20--45; BitNet b1.58 reaches 300+ for the same kind of edge.  So thresholds
+-- do not transfer between models, and scores from two different models are
+-- not comparable.  Rank by them; do not read them as confidences.
+--
+-- similar_to() additionally returns one of TWO quantities: the strongest
+-- shared gate activation when the inputs have a feature in common, and
+-- otherwise the embedding cosine scaled by 10 (bounded by +/-10).  Those two
+-- are not on a common scale.
+--
+-- infer() is the exception: its `probability` column is a genuine softmax
+-- over the whole vocabulary, so the full distribution sums to 1 (the returned
+-- top-k rows are a slice of it and will not).  Note it reflects any
+-- temperature and logit softcap the vindex configures, so it is the model's
+-- calibrated-as-trained distribution rather than a raw one.
 -- Query functions:
 --   walk(prompt text, top int DEFAULT 20, model text DEFAULT NULL)
---       RETURNS TABLE(layer int, feature int, gate_score float8, concept text, also text)
+--       RETURNS TABLE(layer int, feature int, gate_score float8, concept text)
 --
 --   describe(entity text, threshold float8 DEFAULT NULL, model text DEFAULT NULL)
 --       RETURNS TABLE(relation text, target text, gate_score float8, layer int)
@@ -60,11 +79,16 @@ CREATE TABLE IF NOT EXISTS infer.models (
 --
 --   implies(subject text, object text, model text DEFAULT NULL) RETURNS bool
 --
+--   describe_many(entities text[], model text DEFAULT NULL,
+--                 threshold float8 DEFAULT NULL)
+--       RETURNS TABLE(entity text, relation text, target text,
+--                     gate_score float8, layer int)
+--
 --   describe_layers(entity text, model text DEFAULT NULL, threshold float8 DEFAULT NULL)
 --       RETURNS TABLE(layer int, feature int, target text, gate_score float8, also text)
 --
 --   nearest_to(entity text, layer int, top int DEFAULT 10, model text DEFAULT NULL)
---       RETURNS TABLE(layer int, feature int, gate_score float8, concept text, also text)
+--       RETURNS TABLE(feature int, token text, gate_score float8, also text)
 --
 -- Explain/introspection:
 --   infer_explain_walk(prompt text, top int DEFAULT 20, model text DEFAULT NULL)
@@ -82,7 +106,8 @@ CREATE TABLE IF NOT EXISTS infer.models (
 --       RETURNS TABLE(relation text, count int, max_score float8, layers text, examples text)
 --
 --   infer_diff(a text, b text, top int DEFAULT 10, model text DEFAULT NULL)
---       RETURNS TABLE(layer int, feature int, token text, score_a float8, score_b float8, delta float8)
+--       RETURNS TABLE(layer int, feature int, token_a text, token_b text,
+--                     score_a float8, score_b float8, status text)
 --
 -- Model management:
 --   infer_create_model(model_name text, source text, extract_level text DEFAULT 'browse')

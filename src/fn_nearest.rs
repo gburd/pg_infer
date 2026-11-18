@@ -30,7 +30,7 @@ fn nearest_to(
         (
             name!(feature, i32),
             name!(token, String),
-            name!(score, f64),
+            name!(gate_score, f64),
             name!(also, String),
         ),
     >,

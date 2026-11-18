@@ -7,14 +7,29 @@ use crate::registry;
 /// Semantic similarity between two texts using the model's internal
 /// representation.
 ///
-/// Returns the maximum gate activation score across all layers, computed
-/// by averaging token embeddings for each input and taking the dot
-/// product with gate vectors.  Higher scores indicate stronger semantic
-/// association.
+/// Returns an UNNORMALISED, MODEL-DEPENDENT magnitude, not a probability and
+/// not a bounded similarity.  Two different quantities can come back here,
+/// which callers have to know about:
+///
+/// - When the two inputs activate at least one gate feature in common, the
+///   result is the strongest shared gate activation, on the same open-ended
+///   scale as `gate_score` elsewhere.  Its range depends on the model: a
+///   Gemma-class vindex lands around 20--45, while BitNet b1.58 reaches 300+.
+/// - When they share no feature, there is no gate magnitude to report, so the
+///   result falls back to the embedding cosine scaled by 10, which is bounded
+///   by +/-10 and is NOT comparable with the gate scale above.
+///
+/// NB: because of that fallback, a threshold tuned on one model (or on one
+/// pair of inputs) does not transfer.  Compare scores only against other
+/// scores from the same model, and treat the ordering as meaningful rather
+/// than the absolute value.  [`similar_to_many`] ranks candidates against one
+/// query and is the better tool when a caller wants a comparison.
 ///
 /// ```sql
 /// SELECT similar_to('France', 'Paris');        -- high score
 /// SELECT similar_to('France', 'banana');       -- low score
+/// -- 15.0 is a Gemma-class figure; calibrate per model rather than
+/// -- copying it.
 /// SELECT * FROM products
 ///     WHERE similar_to(category, 'AI') > 15.0;
 /// ```
@@ -152,13 +167,21 @@ pub(crate) fn similar_to_impl(
         max
     };
 
-    // Combine embedding cosine similarity with gate activation overlap.
-    // The gate score dominates when features overlap; cosine provides
-    // a baseline when they don't.
+    // Two different quantities can be returned here, and they are NOT on a
+    // common scale despite what the x10 below suggests.  A shared gate
+    // activation is an unbounded dot-product magnitude (20--45 on Gemma-class
+    // weights, 300+ on BitNet b1.58); a cosine is bounded by +/-1, so x10
+    // bounds the fallback at +/-10.  The factor only stops the fallback
+    // reading as negligible next to a typical gate score; it does not make the
+    // two commensurable, and no single factor could, since the gate scale
+    // moves with the model.
+    //
+    // Kept as-is rather than normalised because every threshold users have
+    // already tuned depends on it; the doc comment states the hazard instead.
     let score = if max_shared_score > 0.0 {
         max_shared_score as f64
     } else {
-        cosine * 10.0 // scale cosine to comparable range
+        cosine * 10.0
     };
 
     Ok(score)
@@ -249,6 +272,7 @@ pub(crate) fn similar_to_with_precomputed(
         }
     }
 
+    // Same two-scale hazard as `similar_to_impl`; see the note there.
     Ok(if max_shared_score > 0.0 {
         max_shared_score as f64
     } else {

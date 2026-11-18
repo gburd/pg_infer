@@ -24,7 +24,7 @@ fn walk(
         (
             name!(layer, i32),
             name!(feature, i32),
-            name!(activation, f64),
+            name!(gate_score, f64),
             name!(concept, String),
         ),
     >,
@@ -124,7 +124,7 @@ fn infer_explain_walk(
             name!(layer, i32),
             name!(band, String),
             name!(feature, i32),
-            name!(activation, f64),
+            name!(gate_score, f64),
             name!(token, String),
             name!(also, String),
         ),

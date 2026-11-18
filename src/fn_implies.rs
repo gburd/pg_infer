@@ -5,8 +5,11 @@ use crate::registry;
 /// Test whether the model's knowledge supports a directional relationship
 /// from `subject` to `object`.
 ///
-/// Internally runs `describe(subject)` and checks whether `object` appears
-/// as a target with confidence above a threshold.
+/// Runs `describe(subject)` and reports whether `object` appears among the
+/// targets, matched case-insensitively.  Note there is no confidence test
+/// here: the filtering has already happened inside `describe()`, via the gate
+/// threshold and its coherence check, so this is a membership question and
+/// not a comparison against a score.
 ///
 /// ```sql
 /// SELECT implies('France', 'Paris');         -- true

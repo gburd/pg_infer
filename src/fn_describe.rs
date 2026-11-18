@@ -37,7 +37,7 @@ fn describe(
         (
             name!(relation, String),
             name!(target, String),
-            name!(confidence, f64),
+            name!(gate_score, f64),
             name!(layer, i32),
         ),
     >,
@@ -362,7 +362,7 @@ fn describe_many(
             name!(entity, String),
             name!(relation, String),
             name!(target, String),
-            name!(confidence, f64),
+            name!(gate_score, f64),
             name!(layer, i32),
         ),
     >,
