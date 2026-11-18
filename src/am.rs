@@ -50,6 +50,7 @@ fn infer_am_handler(_fcinfo: pg_sys::FunctionCallInfo) -> pgrx::PgBox<pg_sys::In
     routine.amvacuumcleanup = Some(am_build::infer_amvacuumcleanup);
     routine.amcostestimate = Some(am_cost::infer_amcostestimate);
     routine.amoptions = Some(am_build::infer_amoptions);
+    routine.amvalidate = Some(am_build::infer_amvalidate);
     routine.ambeginscan = Some(am_scan::infer_ambeginscan);
     routine.amrescan = Some(am_scan::infer_amrescan);
     routine.amgettuple = Some(am_scan::infer_amgettuple);

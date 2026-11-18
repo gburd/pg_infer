@@ -141,6 +141,29 @@ pub unsafe extern "C-unwind" fn infer_aminsert(
 ///
 /// PostgreSQL calls this during CREATE INDEX to validate WITH options.
 /// We accept everything and return the raw bytea for `rd_options`.
+/// `amvalidate`: sanity-check an operator class at `ALTER OPERATOR FAMILY`
+/// and `CREATE INDEX` time.
+///
+/// Returning true accepts the class.  A thorough AM cross-checks the family's
+/// operators, support procedures and signatures here; `infer` has exactly one
+/// strategy (`<~>` distance ordering) and no support procedures, which the
+/// extension SQL fixes at install time, so there is nothing a user can
+/// misconfigure for us to reject.
+///
+/// This callback is NOT optional, even though nothing here needs it: PG19's
+/// `GetIndexAmRoutine()` asserts every required callback is non-NULL
+/// (`amapi.c`), so leaving it unset aborted the backend under an
+/// assert-enabled build.  Earlier versions happened not to call it for this
+/// AM, which is why the omission went unnoticed.
+///
+/// # Safety
+///
+/// Called by PostgreSQL with a valid operator-class OID.
+#[pg_guard]
+pub unsafe extern "C-unwind" fn infer_amvalidate(_opclassoid: pg_sys::Oid) -> bool {
+    true
+}
+
 /// Actual parsing happens in `extract_model_from_options`.
 ///
 /// # Safety
