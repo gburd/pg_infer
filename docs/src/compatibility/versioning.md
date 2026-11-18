@@ -12,7 +12,7 @@ pg_infer uses [semantic versioning](https://semver.org/) (major.minor.patch):
 - **Minor**: New SQL functions, new GUCs, new backend capabilities
 - **Patch**: Bug fixes, performance improvements, internal refactors
 
-Current version: **0.1.3-alpha**
+Current version: **0.1.4-alpha**
 
 ## larql Server Compatibility
 
@@ -55,7 +55,7 @@ required fields cause a parse error surfaced as a SQL `ERROR`.
 
 | pg_infer | PostgreSQL | larql-server | Vindex Format | Rust Toolchain |
 |----------|------------|--------------|---------------|----------------|
-| 0.1.3-alpha | 18, 19 | 3b5dd3d2+ (2026-11-18) | VINDEX2 schema 1--2 (Q4_K/Q6_K) | 1.80+ |
+| 0.1.4-alpha | 18, 19 | 3b5dd3d2+ (2026-11-18) | VINDEX2 schema 1--2 (Q4_K/Q6_K) | 1.80+ |
 
 ### PostgreSQL 19
 
