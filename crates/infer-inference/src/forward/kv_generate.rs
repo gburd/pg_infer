@@ -333,13 +333,13 @@ where
 
     // ── Prefill ──
     let mut h = embed_tokens_pub(weights, prompt_ids);
-    for layer in 0..num_layers {
+    for (layer, slot) in cache.layers.iter_mut().enumerate() {
         let (h_post_attn, k_rope, v) = match run_attention_with_kv_backend(weights, &h, layer, None)
         {
             Some(t) => t,
             None => return Vec::new(),
         };
-        cache.layers[layer] = Some((k_rope, v));
+        *slot = Some((k_rope, v));
         let (h_out, _) = run_ffn(weights, &h_post_attn, layer, ffn, false);
         h = h_out;
     }
@@ -366,20 +366,19 @@ where
         let h_new = embed_tokens_pub(weights, &[current_id]);
         let abs_position = cache.next_position;
         let mut h_step = h_new;
-        for layer in 0..num_layers {
-            let kv_entry = cache.layers[layer].as_ref();
+        for (layer, slot) in cache.layers.iter_mut().enumerate() {
             let (h_post_attn, new_kv) = match run_attention_block_decode_step_backend(
                 weights,
                 &h_step,
                 layer,
-                kv_entry,
+                slot.as_ref(),
                 abs_position,
                 None,
             ) {
                 Some(t) => t,
                 None => return generated,
             };
-            cache.layers[layer] = Some(new_kv);
+            *slot = Some(new_kv);
             let (h_out, _) = run_ffn(weights, &h_post_attn, layer, ffn, false);
             h_step = h_out;
         }
