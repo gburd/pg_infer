@@ -857,6 +857,22 @@ impl Backend for RemoteBackend {
 /// similarity heuristic in fn_similar::similar_to_impl: for every
 /// feature that fires in both, the contribution is `min(score_a,
 /// score_b)`; the result is the max across all such features.
+/// The strongest gate activation the two walks share, or 0.0 when they
+/// share none.
+///
+/// NB: this diverges from the local backend deliberately.  `similar_to_impl`
+/// falls back to `cosine - 1.0` when there is no shared feature, which both
+/// orders the no-overlap cases among themselves and keeps them below every
+/// gate-backed score.  Reproducing that here would cost two extra round
+/// trips per call (`/v1/token/encode` then `/v1/embed`, for each side) on a
+/// path whose whole point is to be one batched request, so the remote
+/// backend returns a flat 0.0 instead.
+///
+/// Consequence for callers: 0.0 means "no shared feature" on both backends,
+/// and a positive score means the same thing on both.  Only the ordering
+/// *within* the no-overlap group differs -- remote cannot distinguish
+/// "unrelated" from "similar embeddings but no shared feature".  A
+/// `WHERE similar_to(...) > 0` filter behaves identically either way.
 fn overlap_max(hits_a: &[infer_client::WalkHit], hits_b: &[infer_client::WalkHit]) -> f64 {
     let mut b_map: HashMap<(usize, usize), f32> = HashMap::new();
     for h in hits_b {

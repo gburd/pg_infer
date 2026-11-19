@@ -20,7 +20,54 @@ less formally -- "the SQL API and the vindex format may change between
 releases".  Once the first non-alpha release lands, a column rename becomes
 a major bump like any other signature change.
 
-Current version: **0.1.5-alpha**
+Current version: **0.1.6-alpha**
+
+### Changed similarity scale (0.1.6-alpha)
+
+`similar_to()` returned one of two quantities with no relationship between
+them: the strongest shared gate activation when the two inputs activated a
+feature in common, and otherwise the embedding cosine times 10.  Because a
+cosine of 0.95 scored 9.5, it outranked a real-but-weak gate activation of
+3.0 -- so **which branch fired, rather than how similar the texts were,
+decided the ranking**, including through the `<~>` operator and the index
+access method.
+
+The no-shared-feature case now returns `cosine - 1.0`, in `[-2, 0]`:
+
+| case | before | after |
+|---|---|---|
+| shares a gate feature | `max_shared_score` (> 0) | unchanged |
+| no shared feature | `cosine * 10.0` (up to +10) | `cosine - 1.0` (in `[-2, 0]`) |
+
+The positive band is untouched, so a threshold tuned against it
+(`WHERE similar_to(...) > 15.0`) keeps its meaning.  What changes is that
+the fallback can no longer reach into that band, and the sign now carries
+information: **positive means the model's own features connect the two
+inputs; zero or negative means they do not, and you are seeing raw
+embedding geometry instead.**
+
+If you were relying on the fallback being positive, the equivalent filter
+is now a sign test:
+
+```sql
+-- before: "some similarity", which silently included cosine-only pairs
+SELECT * FROM products WHERE similar_to(category, 'AI') > 0;
+-- after: the same query now means "a real learned association",
+-- which is what it was always intended to mean.
+```
+
+`score_to_distance()` changed with it, from `1 / (1 + score)` to
+`1 / (3 + score)`.  The old form had a pole at -1, inside the new score
+range, and mapped every non-positive score to `f64::MAX`, which collapsed
+all cosine-only rows to one distance and discarded their order.  The new
+form is finite, positive, and strictly decreasing across the whole range,
+which is the property `ORDER BY ... <~> ...` depends on.
+
+Note the remote backend returns a flat `0.0` where the local backend
+returns `cosine - 1.0`: reproducing the cosine would cost two extra round
+trips per call.  Both agree that positive means a shared feature and that
+`> 0` filters identically; only the ordering among no-overlap pairs
+differs.
 
 ### Renamed result columns
 
@@ -91,14 +138,29 @@ required fields cause a parse error surfaced as a SQL `ERROR`.
 
 | pg_infer | PostgreSQL | larql-server | Vindex Format | Rust Toolchain |
 |----------|------------|--------------|---------------|----------------|
-| 0.1.5-alpha | 18, 19 | 3b5dd3d2+ (2026-11-18) | VINDEX2 schema 1--2 (Q4_K/Q6_K) | 1.80+ |
+| 0.1.6-alpha | 18, 19 | 3b5dd3d2+ (2026-11-18) | VINDEX2 schema 1--2 (Q4_K/Q6_K) | 1.80+ |
 
 ### PostgreSQL 19
 
-Built and tested on 19 as of 2026-11-18, where the newest release is
-**rc2** -- there is no 19.0 GA tarball yet, so treat 19 support as ready
-rather than shipped.  Both majors run the same 55 pgrx tests in CI
-(`pg: [18, 19]`).
+**PostgreSQL 19.0 is GA, and pg_infer is tested against it.**  Earlier
+releases of this chapter described 19 support as "ready rather than
+shipped" because only release candidates existed; that caveat is gone.
+Both majors run the same pgrx suite in CI (`pg: [18, 19]`).
+
+One wrinkle worth knowing if you build from source: `cargo pgrx init
+--pg19 download` still fetches **19rc2**, not 19.0.  The tarball URL is
+hardcoded in pgrx and is unchanged as of pgrx 0.20.0, so the download path
+lags the release.  To test against GA, build it yourself and register that
+build instead:
+
+```sh
+cargo pgrx init --pg19 /path/to/pg19.0/bin/pg_config
+```
+
+pg_infer's own verification does exactly that, and additionally configures
+PostgreSQL with `--enable-cassert`, which is how the missing `amvalidate`
+callback was caught: an assert-disabled build silently tolerates the NULL
+that PG19's new assertions exist to find.
 
 Two PG19 source changes reach an index access method, and pg_infer handles
 both without a behaviour change:

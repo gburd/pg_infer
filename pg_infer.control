@@ -1,5 +1,5 @@
 comment = 'Query transformer model weights as SQL relations'
-default_version = '0.1.5-alpha'
+default_version = '0.1.6-alpha'
 module_pathname = '$libdir/pg_infer'
 relocatable = false
 superuser = true

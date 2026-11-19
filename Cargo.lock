@@ -1916,7 +1916,7 @@ dependencies = [
 
 [[package]]
 name = "infer-client"
-version = "0.1.5-alpha"
+version = "0.1.6-alpha"
 dependencies = [
  "bytes",
  "http-body-util",
@@ -1934,7 +1934,7 @@ dependencies = [
 
 [[package]]
 name = "infer-compute"
-version = "0.1.5-alpha"
+version = "0.1.6-alpha"
 dependencies = [
  "blas-src",
  "cc",
@@ -1951,7 +1951,7 @@ dependencies = [
 
 [[package]]
 name = "infer-core"
-version = "0.1.5-alpha"
+version = "0.1.6-alpha"
 dependencies = [
  "assert_approx_eq",
  "reqwest",
@@ -1963,7 +1963,7 @@ dependencies = [
 
 [[package]]
 name = "infer-inference"
-version = "0.1.5-alpha"
+version = "0.1.6-alpha"
 dependencies = [
  "anyhow",
  "assert_approx_eq",
@@ -1990,7 +1990,7 @@ dependencies = [
 
 [[package]]
 name = "infer-models"
-version = "0.1.5-alpha"
+version = "0.1.6-alpha"
 dependencies = [
  "memmap2",
  "ndarray",
@@ -2004,7 +2004,7 @@ dependencies = [
 
 [[package]]
 name = "infer-vindex"
-version = "0.1.5-alpha"
+version = "0.1.6-alpha"
 dependencies = [
  "base64 0.22.1",
  "criterion",
@@ -2764,7 +2764,7 @@ dependencies = [
 
 [[package]]
 name = "pg_infer"
-version = "0.1.5-alpha"
+version = "0.1.6-alpha"
 dependencies = [
  "half 2.7.1",
  "infer-client",

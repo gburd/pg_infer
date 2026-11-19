@@ -7,27 +7,35 @@ use crate::registry;
 /// Semantic similarity between two texts using the model's internal
 /// representation.
 ///
-/// Returns an UNNORMALISED, MODEL-DEPENDENT magnitude, not a probability and
-/// not a bounded similarity.  Two different quantities can come back here,
-/// which callers have to know about:
+/// Returns an UNNORMALISED, MODEL-DEPENDENT magnitude: higher means more
+/// similar, but it is not a probability and has no fixed upper bound.  The
+/// sign tells you which kind of evidence it rests on:
 ///
-/// - When the two inputs activate at least one gate feature in common, the
-///   result is the strongest shared gate activation, on the same open-ended
-///   scale as `gate_score` elsewhere.  Its range depends on the model: a
-///   Gemma-class vindex lands around 20--45, while BitNet b1.58 reaches 300+.
-/// - When they share no feature, there is no gate magnitude to report, so the
-///   result falls back to the embedding cosine scaled by 10, which is bounded
-///   by +/-10 and is NOT comparable with the gate scale above.
+/// - **Positive** -- the two inputs activate at least one gate feature in
+///   common, and the result is the strongest such shared activation, on the
+///   same open-ended scale as `gate_score` elsewhere.  The range depends on
+///   the model: a Gemma-class vindex lands around 20--45, BitNet b1.58
+///   reaches 300+.
+/// - **Zero or negative** -- the model's features connect the two inputs
+///   nowhere, so there is no gate magnitude to report and the result falls
+///   back to `cosine - 1.0`, in `[-2, 0]`.  That band sits entirely below
+///   the positive one, so a gate-backed match always outranks a
+///   cosine-only one, and cosine ordering is preserved within the band.
 ///
-/// NB: because of that fallback, a threshold tuned on one model (or on one
-/// pair of inputs) does not transfer.  Compare scores only against other
-/// scores from the same model, and treat the ordering as meaningful rather
-/// than the absolute value.  [`similar_to_many`] ranks candidates against one
-/// query and is the better tool when a caller wants a comparison.
+/// A sign change is therefore meaningful: it marks the point where the
+/// model stopped recognising a connection.  Treat a negative score as "no
+/// learned association, here is the raw geometry instead".
+///
+/// NB: thresholds do not transfer between models, because the positive band
+/// is scaled by the model's own gate magnitudes.  Compare scores only
+/// against others from the same model.  [`similar_to_many`] ranks candidates
+/// against one query and is the better tool when a caller wants a comparison.
 ///
 /// ```sql
-/// SELECT similar_to('France', 'Paris');        -- high score
-/// SELECT similar_to('France', 'banana');       -- low score
+/// SELECT similar_to('France', 'Paris');        -- positive, shares features
+/// SELECT similar_to('France', 'banana');       -- likely negative
+/// -- Require a real learned association, not just embedding geometry:
+/// SELECT * FROM products WHERE similar_to(category, 'AI') > 0;
 /// -- 15.0 is a Gemma-class figure; calibrate per model rather than
 /// -- copying it.
 /// SELECT * FROM products
@@ -167,21 +175,29 @@ pub(crate) fn similar_to_impl(
         max
     };
 
-    // Two different quantities can be returned here, and they are NOT on a
-    // common scale despite what the x10 below suggests.  A shared gate
-    // activation is an unbounded dot-product magnitude (20--45 on Gemma-class
-    // weights, 300+ on BitNet b1.58); a cosine is bounded by +/-1, so x10
-    // bounds the fallback at +/-10.  The factor only stops the fallback
-    // reading as negligible next to a typical gate score; it does not make the
-    // two commensurable, and no single factor could, since the gate scale
-    // moves with the model.
+    // The two branches answer different questions, and the old `cosine * 10`
+    // let the weaker answer outrank the stronger one.  A shared gate feature
+    // means the model's own learned features connect these two texts; a bare
+    // cosine means they did not, and the raw embeddings merely point a
+    // similar way.  The second is strictly weaker evidence, but at x10 a
+    // cosine of 0.95 scored 9.5 and beat a real-but-weak gate activation of
+    // 3.0.  Which branch fired, rather than how similar the texts were,
+    // decided the ranking.
     //
-    // Kept as-is rather than normalised because every threshold users have
-    // already tuned depends on it; the doc comment states the hazard instead.
+    // So the fallback now lands in a band strictly below every value the gate
+    // branch can produce.  Gate scores are > 0 by construction (the branch
+    // only fires when `max_shared_score` exceeds zero), and `cosine - 1.0` is
+    // in [-2, 0], so the two can never interleave while cosine ordering is
+    // preserved inside the fallback band.
+    //
+    // NB: the gate branch is byte-for-byte unchanged, so thresholds already
+    // tuned against it (`WHERE similar_to(...) > 15.0`) keep their meaning.
+    // Only the no-shared-feature case moves, and it moves from a misleading
+    // positive number to a clearly-weaker negative one.
     let score = if max_shared_score > 0.0 {
         max_shared_score as f64
     } else {
-        cosine * 10.0
+        cosine - 1.0
     };
 
     Ok(score)
@@ -272,24 +288,35 @@ pub(crate) fn similar_to_with_precomputed(
         }
     }
 
-    // Same two-scale hazard as `similar_to_impl`; see the note there.
+    // Same two-band scheme as `similar_to_impl`; see the note there.
     Ok(if max_shared_score > 0.0 {
         max_shared_score as f64
     } else {
-        cosine * 10.0
+        cosine - 1.0
     })
 }
 
-/// Convert a similarity score to a distance value.
+/// Convert a similarity score to a distance value, for `<~>` and the index
+/// access method's ordering.
 ///
-/// Maps to `[0, 1)` range, monotonically decreasing with increasing score.
-/// Avoids the discontinuity of `1/score` near zero.
+/// Strictly decreasing in `score` across the whole range a score can take,
+/// which is what the index AM relies on: ordering by distance ascending has
+/// to equal ordering by score descending, or `ORDER BY ... <~> ...` returns
+/// rows in the wrong order.
+///
+/// `1 / (3 + score)` rather than the earlier `1 / (1 + score)` because
+/// [`similar_to_impl`]'s no-shared-feature fallback now returns
+/// `cosine - 1.0`, i.e. down to -2.  The old form had its pole at -1, inside
+/// that range: it went to infinity there and NEGATIVE below, which would have
+/// inverted the order for the most dissimilar pairs.  Moving the pole to -3
+/// keeps the result finite and positive for every score >= -2, and the
+/// branch that mapped `score <= 0` to `f64::MAX` is gone -- it collapsed
+/// every fallback row to one distance and threw away their ordering.
+///
+/// Scores above zero land in `(0, 1/3)` and fallback scores in `[1/3, 1]`,
+/// so a gate-backed match always sorts ahead of a cosine-only one.
 pub(crate) fn score_to_distance(score: f64) -> f64 {
-    if score <= 0.0 {
-        f64::MAX
-    } else {
-        1.0 / (1.0 + score)
-    }
+    1.0 / (3.0 + score)
 }
 
 /// Distance function for the `<~>` operator (lower = more similar).
@@ -364,5 +391,76 @@ pub(crate) fn cosine_similarity(a: &Array1<f32>, b: &Array1<f32>) -> f64 {
         0.0
     } else {
         (dot / (norm_a * norm_b)) as f64
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::score_to_distance;
+
+    /// The smallest and largest scores each branch can emit.
+    ///
+    /// The gate branch is open-ended above and strictly positive; the
+    /// fallback is `cosine - 1.0` for a cosine in [-1, 1], so [-2, 0].
+    const GATE: &[f64] = &[0.001, 3.0, 25.0, 332.8, 1.0e6];
+    const FALLBACK: &[f64] = &[0.0, -0.01, -0.05, -0.5, -1.0, -2.0];
+
+    #[test]
+    fn distance_is_finite_and_positive_over_the_whole_range() {
+        for &s in GATE.iter().chain(FALLBACK) {
+            let d = score_to_distance(s);
+            assert!(
+                d.is_finite() && d > 0.0,
+                "score {s} gave a distance of {d}; the index AM needs a \
+                 finite positive distance for every score"
+            );
+        }
+    }
+
+    #[test]
+    fn distance_ascending_equals_score_descending() {
+        // This is the property the index access method depends on: it orders
+        // by distance and promises the caller score order.
+        let mut scores: Vec<f64> = GATE.iter().chain(FALLBACK).copied().collect();
+        scores.sort_by(|a, b| b.partial_cmp(a).unwrap());
+        let mut by_distance = scores.clone();
+        by_distance.sort_by(|a, b| {
+            score_to_distance(*a)
+                .partial_cmp(&score_to_distance(*b))
+                .unwrap()
+        });
+        assert_eq!(
+            scores, by_distance,
+            "ordering by distance ascending must match score descending"
+        );
+    }
+
+    /// The bug this replaced: `cosine * 10.0` let a cosine-only pair outrank
+    /// a weaker-but-real gate match, so the branch decided the ranking.
+    #[test]
+    fn every_gate_score_outranks_every_fallback_score() {
+        let weakest_gate = GATE.iter().copied().fold(f64::MAX, f64::min);
+        let strongest_fallback = FALLBACK.iter().copied().fold(f64::MIN, f64::max);
+        assert!(
+            weakest_gate > strongest_fallback,
+            "the weakest gate score ({weakest_gate}) must still beat the \
+             strongest fallback ({strongest_fallback})"
+        );
+        // And the same ordering must survive the distance mapping.
+        assert!(score_to_distance(weakest_gate) < score_to_distance(strongest_fallback));
+    }
+
+    #[test]
+    fn fallback_preserves_cosine_ordering() {
+        // Within the fallback band, a higher cosine must still rank higher;
+        // the old `score <= 0 -> f64::MAX` branch collapsed all of these.
+        let cosines = [1.0, 0.99, 0.5, 0.0, -1.0];
+        let distances: Vec<f64> = cosines.iter().map(|c| score_to_distance(c - 1.0)).collect();
+        for w in distances.windows(2) {
+            assert!(
+                w[0] < w[1],
+                "a higher cosine must give a smaller distance: {w:?}"
+            );
+        }
     }
 }

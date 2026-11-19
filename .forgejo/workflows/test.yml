@@ -30,9 +30,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 19 is rc2 as of 2026-11-18, not GA. It is in the matrix because the
-        # pgrx 0.19 bump makes it build and pass today, so a later PG19 API
-        # change gets caught here rather than after it ships.
+        # PostgreSQL 19.0 is GA. Note `pgrx init --pg19 download` still
+        # fetches 19rc2 -- the tarball URL is hardcoded in pgrx and has not
+        # moved as of 0.20.0 -- so this leg tests rc2 while release
+        # verification builds 19.0 from source and registers it explicitly.
+        # Close enough to catch API drift; not a substitute for the GA run.
         pg: [18, 19]
     steps:
       - uses: actions/checkout@v4
