@@ -12,7 +12,43 @@ pg_infer uses [semantic versioning](https://semver.org/) (major.minor.patch):
 - **Minor**: New SQL functions, new GUCs, new backend capabilities
 - **Patch**: Bug fixes, performance improvements, internal refactors
 
-Current version: **0.1.4-alpha**
+During the `0.x` alpha that strategy is relaxed in one direction: a renamed
+result column ships as a MINOR bump rather than a major one, because there
+are no upgrade scripts yet (see [Upgrading pg_infer](#upgrading-pg_infer-extension-only))
+and a version bump is already a reinstall.  META.json says the same thing
+less formally -- "the SQL API and the vindex format may change between
+releases".  Once the first non-alpha release lands, a column rename becomes
+a major bump like any other signature change.
+
+Current version: **0.1.5-alpha**
+
+### Renamed result columns
+
+| release | function(s) | was | now |
+|---|---|---|---|
+| 0.1.5-alpha | `describe`, `describe_many` | `confidence` | `gate_score` |
+| 0.1.5-alpha | `walk` | `activation` | `gate_score` |
+| 0.1.5-alpha | `nearest_to` | `score` | `gate_score` |
+
+One quantity had four names across the surface, and `confidence` was the
+actively misleading one: it holds an unnormalised dot product between a
+pooled embedding and a gate vector, whose scale moves with the model (20--45
+on Gemma-class weights, 300+ on BitNet b1.58).  Reading it as a probability,
+or carrying a threshold from one model to another, both gave wrong answers.
+
+Queries that referenced the old names by position (`SELECT * FROM
+describe(...)`) are unaffected.  Queries naming the column need a one-word
+edit:
+
+```sql
+-- before
+SELECT target, confidence FROM describe('France');
+-- after
+SELECT target, gate_score FROM describe('France');
+```
+
+`infer_show_features` still returns `score` and `infer_diff` still returns
+`score_a`/`score_b`; neither changed.
 
 ## larql Server Compatibility
 
@@ -55,7 +91,7 @@ required fields cause a parse error surfaced as a SQL `ERROR`.
 
 | pg_infer | PostgreSQL | larql-server | Vindex Format | Rust Toolchain |
 |----------|------------|--------------|---------------|----------------|
-| 0.1.4-alpha | 18, 19 | 3b5dd3d2+ (2026-11-18) | VINDEX2 schema 1--2 (Q4_K/Q6_K) | 1.80+ |
+| 0.1.5-alpha | 18, 19 | 3b5dd3d2+ (2026-11-18) | VINDEX2 schema 1--2 (Q4_K/Q6_K) | 1.80+ |
 
 ### PostgreSQL 19
 

@@ -1,4 +1,4 @@
--- pg_infer extension installation SQL (version 0.1.4-alpha)
+-- pg_infer extension installation SQL (version 0.1.5-alpha)
 --
 -- This file captures the complete DDL that CREATE EXTENSION pg_infer executes.
 -- It is generated from the extension_sql! macros in the Rust source code and
