@@ -978,11 +978,28 @@ mod tests {
             let v = r.as_ref().expect("ok slot");
             assert_eq!(v["path"], format!("/item/{i}"));
         }
-        // A generous upper bound: well under 10× serial latency.
+        // Concurrency is the property under test, so compare against a
+        // MEASURED serial baseline rather than a wall-clock constant.  An
+        // absolute bound makes this test fail whenever a shared CI runner is
+        // busy: it tripped on a release run at 452 ms against a 200 ms bound
+        // while the batch itself was plainly concurrent, and the same commit
+        // passed the same suite minutes earlier.
+        let serial_start = std::time::Instant::now();
+        let _ = client
+            .get_json::<serde_json::Value>("/item/0", &cancel)
+            .expect("serial probe");
+        let one_request = serial_start.elapsed();
+
+        // Ten 30 ms requests in series would cost ~10x one request.  Allow a
+        // generous 5x: enough slack for a loaded runner, still far from the
+        // 10x a serial implementation could not beat.
+        let serial_bound = one_request * 5;
         assert!(
-            elapsed < Duration::from_millis(200),
-            "batch took {:?} (expected <200ms for 10 x 30ms concurrent)",
-            elapsed
+            elapsed < serial_bound,
+            "batch of 10 took {elapsed:?}; one request takes {one_request:?}, \
+             so serial would be ~{:?} and the bound is {serial_bound:?}. \
+             The requests do not look concurrent.",
+            one_request * 10,
         );
 
         drop(client);
