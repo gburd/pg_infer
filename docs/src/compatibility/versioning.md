@@ -34,6 +34,29 @@ pg_infer-<version>-pg18-x86_64-linux.tar.gz
 pg_infer-<version>-pg19-x86_64-linux.tar.gz
 ```
 
+Each unpacks to `lib/` and `share/extension/` with an `INSTALL.md`.  Pick
+the tarball matching your server's major: a pgrx extension is bound to the
+major it was compiled against.
+
+**Glibc and OpenSSL caveat.**  These are built on `ubuntu-latest`, and the
+`.so` links `libssl`/`libcrypto` dynamically (`native-tls`, reached through
+`reqwest`).  It therefore needs an OpenSSL 3.x exporting the same symbols
+Ubuntu's does.  Debian and Ubuntu are fine.  **Fedora is not**: its OpenSSL
+drops ciphers Ubuntu exports, and `CREATE EXTENSION` fails with
+
+```
+could not load library ".../pg_infer.so": undefined symbol: EVP_sm4_cfb128
+```
+
+That is a distro ABI mismatch, not a pg_infer fault -- the same source
+builds and loads cleanly on Fedora when compiled there.  On any distro the
+prebuilt binary rejects, build from source:
+
+```sh
+cargo install cargo-pgrx --version 0.19.4 --locked
+cargo pgrx install --release
+```
+
 Two bugs had to be fixed for the 19 leg to work at all, and both would have
 produced a plausible-looking release:
 

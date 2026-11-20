@@ -102,10 +102,18 @@ jobs:
           {
             printf '# pg_infer %s for PostgreSQL %s\n\n' \
               "${VERSION}" "${{ matrix.pg_version }}"
-            printf 'Built against PostgreSQL %s on x86_64 Linux. A pgrx\n' \
+            printf 'Built against PostgreSQL %s on x86_64 Linux\n' \
               "${{ matrix.pg_version }}"
-            printf 'extension is tied to the major it was compiled for; do\n'
-            printf 'not use this with a different major.\n\n'
+            printf '(ubuntu-latest). A pgrx extension is tied to the major it\n'
+            printf 'was compiled for; do not use this with a different major.\n\n'
+            printf 'This .so links libssl/libcrypto DYNAMICALLY (via\n'
+            printf 'native-tls), so it needs an OpenSSL 3.x whose exported\n'
+            printf 'symbols match the build distro. Debian and Ubuntu work.\n'
+            printf 'Fedora does NOT: its OpenSSL omits some ciphers Ubuntu\n'
+            printf 'exports, and loading fails with e.g. "undefined symbol:\n'
+            printf 'EVP_sm4_cfb128". On such a distro, build from source:\n'
+            printf '    cargo install cargo-pgrx --version 0.19.4 --locked\n'
+            printf '    cargo pgrx install --release\n\n'
             printf '    sudo install -m 755 lib/pg_infer.so "$(pg_config --pkglibdir)/"\n'
             printf '    sudo install -m 644 share/extension/* "$(pg_config --sharedir)/extension/"\n\n'
             printf 'Then, in the database:\n\n'
