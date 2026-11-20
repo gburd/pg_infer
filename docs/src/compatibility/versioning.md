@@ -193,15 +193,36 @@ releases of this chapter described 19 support as "ready rather than
 shipped" because only release candidates existed; that caveat is gone.
 Both majors run the same pgrx suite in CI (`pg: [18, 19]`).
 
-One wrinkle worth knowing if you build from source: `cargo pgrx init
---pg19 download` still fetches **19rc2**, not 19.0.  The tarball URL is
-hardcoded in pgrx and is unchanged as of pgrx 0.20.0, so the download path
-lags the release.  To test against GA, build it yourself and register that
-build instead:
+Two toolchains lag the release, and both need a workaround if you build
+from source.
+
+**pgrx.**  `cargo pgrx init --pg19 download` still fetches **19rc2**, not
+19.0: the tarball URL is hardcoded in pgrx and unchanged as of 0.20.0.  To
+test against GA, build it yourself and register that build:
 
 ```sh
 cargo pgrx init --pg19 /path/to/pg19.0/bin/pg_config
 ```
+
+**nixpkgs.**  The `nixos-unstable` channel also still serves 19rc2; the
+bump to 19.0 landed on master as `bacf73b39` the day after GA and has not
+reached a channel yet.  The flake therefore carries a second nixpkgs input
+pinned to that commit, purely so `nix develop .#pg19` offers GA rather
+than a release candidate.  Fold it back into the main input once the
+channel catches up -- it is a one-line deletion.
+
+The dev shell handles both for you:
+
+```sh
+nix develop            # PG18 is the default pg_config
+nix develop .#pg19     # PG19.0 GA
+```
+
+Both majors are present in either shell, so pgrx can register them
+together (the shell prints the exact command).  Note nixpkgs strips the
+`pg_config` binary from its PostgreSQL outputs and ships it as a separate
+`postgresql_NN.pg_config` package, which is what the flake puts on PATH;
+the server outputs alone give you `initdb` and `psql` but no `pg_config`.
 
 pg_infer's own verification does exactly that, and additionally configures
 PostgreSQL with `--enable-cassert`, which is how the missing `amvalidate`

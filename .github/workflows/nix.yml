@@ -1,0 +1,90 @@
+name: Nix
+
+# The flake had rotted: its header advertised `nix build` and
+# `nix flake check`, neither of which it actually defined, and its nixpkgs
+# pin went 193 days stale -- old enough that `cargo-pgrx` resolved to 0.17
+# against a workspace on 0.19. Nothing noticed because no workflow ever
+# evaluated it. This one does.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/nix.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/nix.yml'
+  # The lock can go stale without the repo changing, so check it on a
+  # schedule too. Monday 07:00 UTC.
+  schedule:
+    - cron: '0 7 * * 1'
+  workflow_dispatch:
+
+jobs:
+  flake:
+    name: Flake
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Evaluate every output
+        run: nix flake show --all-systems
+
+      - name: nix flake check
+        run: nix flake check --print-build-logs
+
+      - name: nix build
+        run: nix build --print-build-logs
+
+      - name: Formatting
+        run: nix fmt -- --check flake.nix
+
+      # The point of the shell is a working pgrx setup, so assert it rather
+      # than assuming: each shell must hand back a pg_config for its own
+      # major, and `cargo pgrx init` must accept both.
+      - name: The dev shell provides both majors
+        run: |
+          p18=$(nix develop .#pg18 --command pg_config --version)
+          p19=$(nix develop .#pg19 --command pg_config --version)
+          echo "pg18 shell: $p18"
+          echo "pg19 shell: $p19"
+          case "$p18" in 'PostgreSQL 18'*) ;; *) echo "::error::pg18 shell gave '$p18'"; exit 1 ;; esac
+          case "$p19" in 'PostgreSQL 19'*) ;; *) echo "::error::pg19 shell gave '$p19'"; exit 1 ;; esac
+
+      # PostgreSQL 19.0 is GA. nixpkgs' channels lagged the bump, which is
+      # why the flake carries a second pinned input; this fails if that pin
+      # ever slides back to a release candidate.
+      - name: PostgreSQL 19 is GA, not a release candidate
+        run: |
+          v=$(nix develop .#pg19 --command pg_config --version)
+          case "$v" in
+            *rc*|*beta*)
+              echo "::error::pg19 shell is serving a pre-release: $v"
+              exit 1 ;;
+          esac
+          echo "ok: $v"
+
+      - name: cargo pgrx init accepts both majors
+        run: |
+          nix develop --command bash -c '
+            set -euo pipefail
+            export PGRX_HOME="$(mktemp -d)"
+            p18=$(nix develop .#pg18 --command command -v pg_config)
+            p19=$(nix develop .#pg19 --command command -v pg_config)
+            cargo pgrx init --pg18 "$p18" --pg19 "$p19"
+            cargo pgrx info pg-config pg18
+            cargo pgrx info pg-config pg19
+          '
