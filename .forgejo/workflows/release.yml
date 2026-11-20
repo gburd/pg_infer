@@ -14,7 +14,9 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        pg_version: [18]
+        # Every major pg_infer claims to support needs a binary here,
+        # or the release page silently offers PG18 only.
+        pg_version: [18, 19]
     steps:
       - uses: actions/checkout@v4
 
@@ -35,22 +37,68 @@ jobs:
           # PostgreSQL (16), and pgrx derives the feature name from the
           # pg_config it is given, so it then demands a `pg16` feature this
           # crate does not declare. Use the install pgrx just built.
-          shopt -s nullglob
-          cfgs=($HOME/.pgrx/${{ matrix.pg_version }}.*/pgrx-install/bin/pg_config)
-          if [ ${#cfgs[@]} -ne 1 ]; then
-            echo "::error::expected exactly one pgrx pg_config for PG ${{ matrix.pg_version }}, found ${#cfgs[@]}: ${cfgs[*]:-none}"
+          # Ask pgrx where its pg_config is, rather than globbing ~/.pgrx.
+          # Globbing is wrong twice over: the directory is named for the
+          # version pgrx installed (`18.7`, or `19rc2` while PG19's tarball
+          # was a release candidate), and a build registered from OUTSIDE
+          # pgrx -- `cargo pgrx init --pg19 /path/to/pg_config`, which is how
+          # a GA PostgreSQL 19 gets tested -- creates NO directory there at
+          # all. `info pg-config` answers correctly in both cases.
+          PGC=$(cargo pgrx info pg-config pg${{ matrix.pg_version }})
+          if [ -z "$PGC" ] || [ ! -x "$PGC" ]; then
+            echo "::error::cargo pgrx has no usable pg_config for pg${{ matrix.pg_version }} (got '${PGC:-}')"
             exit 1
           fi
-          echo "using ${cfgs[0]} ($(${cfgs[0]} --version))"
-          cargo pgrx package --pg-config "${cfgs[0]}"
+          echo "using $PGC ($("$PGC" --version))"
+          cargo pgrx package --pg-config "$PGC"
 
       - name: Package artifact
         run: |
           VERSION=${GITHUB_REF_NAME#v}
           ARTIFACT="pg_infer-${VERSION}-pg${{ matrix.pg_version }}-x86_64-linux"
           mkdir -p "${ARTIFACT}"
-          cp -r target/release/pg_infer-pg${{ matrix.pg_version }}/* "${ARTIFACT}/" 2>/dev/null || true
+          # `|| true` here used to swallow a wrong path and ship an EMPTY
+          # tarball, which looks like a successful release. Fail instead.
+          src="target/release/pg_infer-pg${{ matrix.pg_version }}"
+          if [ ! -d "$src" ]; then
+            echo "::error::$src does not exist; cargo pgrx package wrote somewhere else"
+            ls -d target/release/pg_infer-* 2>/dev/null || true
+            exit 1
+          fi
+          # `cargo pgrx package` mirrors the BUILDER's absolute prefix into
+          # the staging dir, so a naive copy ships paths like
+          # `home/runner/.pgrx/18.7/pgrx-install/lib/...` -- meaningless on
+          # the user's machine and different again when PG19 is a build we
+          # registered from elsewhere. Flatten to the layout a user can act
+          # on, and tell them where it goes.
+          so=$(find "$src" -name 'pg_infer.so' | head -1)
+          sql=$(find "$src" -name 'pg_infer--*.sql' | head -1)
+          ctl=$(find "$src" -name 'pg_infer.control' | head -1)
+          for f in "$so" "$sql" "$ctl"; do
+            if [ -z "$f" ]; then
+              echo "::error::incomplete package in $src (need .so, install sql, and .control)"
+              find "$src" -type f | head -20
+              exit 1
+            fi
+          done
+          mkdir -p "${ARTIFACT}/lib" "${ARTIFACT}/share/extension"
+          cp "$so" "${ARTIFACT}/lib/"
+          cp "$sql" "$ctl" "${ARTIFACT}/share/extension/"
+          {
+            printf '# pg_infer %s for PostgreSQL %s\n\n' \
+              "${VERSION}" "${{ matrix.pg_version }}"
+            printf 'Built against PostgreSQL %s on x86_64 Linux. A pgrx\n' \
+              "${{ matrix.pg_version }}"
+            printf 'extension is tied to the major it was compiled for; do\n'
+            printf 'not use this with a different major.\n\n'
+            printf '    sudo install -m 755 lib/pg_infer.so "$(pg_config --pkglibdir)/"\n'
+            printf '    sudo install -m 644 share/extension/* "$(pg_config --sharedir)/extension/"\n\n'
+            printf 'Then, in the database:\n\n'
+            printf '    CREATE EXTENSION pg_infer;\n'
+          } > "${ARTIFACT}/INSTALL.md"
           tar czf "${ARTIFACT}.tar.gz" "${ARTIFACT}"
+          echo "packaged $(du -h "${ARTIFACT}.tar.gz" | cut -f1)"
+          tar tzf "${ARTIFACT}.tar.gz"
 
       - name: Create Release
         uses: https://code.forgejo.org/forgejo/release-action@v2

@@ -20,7 +20,30 @@ less formally -- "the SQL API and the vindex format may change between
 releases".  Once the first non-alpha release lands, a column rename becomes
 a major bump like any other signature change.
 
-Current version: **0.1.6-alpha**
+Current version: **0.1.7-alpha**
+
+### Prebuilt binaries for both majors (0.1.7-alpha)
+
+Release pages through 0.1.6-alpha carried a PG18 binary only, even though
+0.1.6-alpha declared PostgreSQL 19 support: the release workflow's matrix
+was `pg_version: [18]`.  Anyone on 19 had to build from source.  The matrix
+is now `[18, 19]`, so each release attaches:
+
+```
+pg_infer-<version>-pg18-x86_64-linux.tar.gz
+pg_infer-<version>-pg19-x86_64-linux.tar.gz
+```
+
+Two bugs had to be fixed for the 19 leg to work at all, and both would have
+produced a plausible-looking release:
+
+- The pg_config lookup globbed `$HOME/.pgrx/<major>.*`, which matches
+  `18.7` but not `19rc2` -- pgrx names the directory after whatever it
+  installed, and its PG19 tarball is still a release candidate.  The glob
+  now anchors on the major alone.
+- The packaging step ended in `cp -r ... || true`, so a wrong path shipped
+  an EMPTY tarball and the job still passed.  It now fails if the source
+  directory is missing or if no `pg_infer.so` lands in the artifact.
 
 ### Changed similarity scale (0.1.6-alpha)
 
@@ -138,7 +161,7 @@ required fields cause a parse error surfaced as a SQL `ERROR`.
 
 | pg_infer | PostgreSQL | larql-server | Vindex Format | Rust Toolchain |
 |----------|------------|--------------|---------------|----------------|
-| 0.1.6-alpha | 18, 19 | 3b5dd3d2+ (2026-11-18) | VINDEX2 schema 1--2 (Q4_K/Q6_K) | 1.80+ |
+| 0.1.7-alpha | 18, 19 | 3b5dd3d2+ (2026-11-18) | VINDEX2 schema 1--2 (Q4_K/Q6_K) | 1.80+ |
 
 ### PostgreSQL 19
 
