@@ -897,7 +897,15 @@ mod tests {
         let ready_server = ready.clone();
 
         let handle = std::thread::spawn(move || {
-            let rt = tokio::runtime::Builder::new_current_thread()
+            // A multi_thread runtime, not current_thread.  The handlers only
+            // await a timer, so one thread suffices in principle -- but on a
+            // contended CI runner the accept loop and the spawned handlers
+            // compete for that single thread, the 30 ms timers stop
+            // overlapping, and the batch measures as serial.  That is the
+            // mock server starving, not the client failing to pipeline, and
+            // it is what made this test look flaky.
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(4)
                 .enable_all()
                 .build()
                 .expect("rt");
