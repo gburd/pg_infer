@@ -20,7 +20,7 @@ less formally -- "the SQL API and the vindex format may change between
 releases".  Once the first non-alpha release lands, a column rename becomes
 a major bump like any other signature change.
 
-Current version: **0.1.7-alpha**
+Current version: **0.1.8-alpha**
 
 ### Prebuilt binaries for both majors (0.1.7-alpha)
 
@@ -184,7 +184,7 @@ required fields cause a parse error surfaced as a SQL `ERROR`.
 
 | pg_infer | PostgreSQL | larql-server | Vindex Format | Rust Toolchain |
 |----------|------------|--------------|---------------|----------------|
-| 0.1.7-alpha | 18, 19 | 3b5dd3d2+ (2026-11-18) | VINDEX2 schema 1--2 (Q4_K/Q6_K) | 1.80+ |
+| 0.1.8-alpha | 18, 19 | 3b5dd3d2+ (2026-11-18) | VINDEX2 schema 1--2 (Q4_K/Q6_K) | 1.80+ |
 
 ### PostgreSQL 19
 
