@@ -79,12 +79,19 @@ jobs:
 
       - name: cargo pgrx init accepts both majors
         run: |
-          nix develop --command bash -c '
+          # Resolve both pg_configs BEFORE entering the shell. A nested
+          # `nix develop` inside the outer one inherits its environment and
+          # has clobbered PGRX_HOME; and `--command command -v` cannot work
+          # at all, since `command` is a shell builtin that nix tries to
+          # exec (exit 127).
+          p18=$(nix develop .#pg18 --command bash -c 'command -v pg_config')
+          p19=$(nix develop .#pg19 --command bash -c 'command -v pg_config')
+          echo "pg18 -> $p18"
+          echo "pg19 -> $p19"
+          nix develop --command bash -c "
             set -euo pipefail
-            export PGRX_HOME="$(mktemp -d)"
-            p18=$(nix develop .#pg18 --command command -v pg_config)
-            p19=$(nix develop .#pg19 --command command -v pg_config)
-            cargo pgrx init --pg18 "$p18" --pg19 "$p19"
+            export PGRX_HOME=\"\$(mktemp -d)\"
+            cargo pgrx init --pg18 '$p18' --pg19 '$p19'
             cargo pgrx info pg-config pg18
             cargo pgrx info pg-config pg19
-          '
+          "
